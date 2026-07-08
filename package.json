@@ -1,0 +1,13 @@
+{
+  "name": "farmacia-pos",
+  "version": "0.1.0",
+  "description": "Sistema punto de venta para farmacias multi-sucursal",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "express": "^4.21.2"
+  }
+}

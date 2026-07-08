@@ -1,0 +1,4 @@
+node_modules/
+farmacia.db
+farmacia.db-shm
+farmacia.db-wal

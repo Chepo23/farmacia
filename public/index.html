@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Farmacia POS</title>
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <header class="barra-superior">
+    <div class="marca">💊 Farmacia POS</div>
+    <nav class="menu">
+      <button class="pestania activa" data-seccion="venta">Venta <small>F2</small></button>
+      <button class="pestania" data-seccion="productos">Productos <small>F5</small></button>
+      <button class="pestania" data-seccion="clientes">Clientes <small>F6</small></button>
+      <button class="pestania" data-seccion="corte">Corte <small>F7</small></button>
+      <button class="pestania" data-seccion="reportes">Reportes <small>F8</small></button>
+      <button class="pestania solo-admin" data-seccion="admin" hidden>Administración</button>
+    </nav>
+    <div class="info-sesion">
+      <span id="info-usuario"></span>
+      <button id="boton-salir" class="boton chico">Salir</button>
+    </div>
+  </header>
+
+  <!-- ============ VENTA ============ -->
+  <main id="seccion-venta" class="seccion activa">
+    <div class="zona-venta">
+      <div class="captura-venta">
+        <input type="text" id="entrada-codigo" class="entrada-codigo"
+               placeholder="Escanea el código de barras o escribe y presiona Enter…" autocomplete="off">
+        <div class="ayuda-teclas">
+          <span><b>F3</b> Buscar producto</span>
+          <span><b>3*</b>código = cantidad 3</span>
+          <span><b>Supr</b> Quitar renglón</span>
+          <span><b>F12</b> Cobrar</span>
+          <span><b>F4</b> Cancelar venta</span>
+        </div>
+        <div class="contenedor-tabla">
+          <table class="tabla tabla-venta">
+            <thead>
+              <tr><th class="col-cant">Cantidad</th><th>Descripción</th><th class="num">Precio</th><th class="num">Importe</th><th></th></tr>
+            </thead>
+            <tbody id="cuerpo-venta"></tbody>
+          </table>
+        </div>
+      </div>
+      <aside class="panel-total">
+        <div class="etiqueta-total">TOTAL</div>
+        <div id="total-venta" class="total-grande">$0.00</div>
+        <div id="articulos-venta" class="conteo-articulos">0 artículos</div>
+        <button id="boton-cobrar" class="boton exito grande">COBRAR (F12)</button>
+        <button id="boton-buscar" class="boton primario">Buscar producto (F3)</button>
+        <button id="boton-cancelar-venta" class="boton peligro-suave">Cancelar venta (F4)</button>
+      </aside>
+    </div>
+  </main>
+
+  <!-- ============ PRODUCTOS ============ -->
+  <main id="seccion-productos" class="seccion">
+    <div class="encabezado-seccion">
+      <h2>Productos e inventario</h2>
+      <div class="acciones">
+        <input type="text" id="buscar-productos" class="entrada" placeholder="Buscar por nombre o código…">
+        <button id="boton-bajo-minimo" class="boton advertencia">Bajo mínimo</button>
+        <button id="boton-nuevo-producto" class="boton primario">+ Nuevo producto</button>
+      </div>
+    </div>
+    <div class="contenedor-tabla">
+      <table class="tabla">
+        <thead id="encabezado-productos"></thead>
+        <tbody id="cuerpo-productos"></tbody>
+      </table>
+    </div>
+  </main>
+
+  <!-- ============ CLIENTES ============ -->
+  <main id="seccion-clientes" class="seccion">
+    <div class="encabezado-seccion">
+      <h2>Clientes y crédito</h2>
+      <div class="acciones">
+        <input type="text" id="buscar-clientes" class="entrada" placeholder="Buscar cliente…">
+        <button id="boton-nuevo-cliente" class="boton primario">+ Nuevo cliente</button>
+      </div>
+    </div>
+    <div class="contenedor-tabla">
+      <table class="tabla">
+        <thead><tr><th>Nombre</th><th>Teléfono</th><th>Sucursal</th><th class="num">Límite</th><th class="num">Debe</th><th></th></tr></thead>
+        <tbody id="cuerpo-clientes"></tbody>
+      </table>
+    </div>
+  </main>
+
+  <!-- ============ CORTE ============ -->
+  <main id="seccion-corte" class="seccion">
+    <div class="encabezado-seccion"><h2>Corte de caja</h2></div>
+    <div class="zona-corte">
+      <div class="tarjeta">
+        <h3>Desde el último corte</h3>
+        <table class="tabla-simple">
+          <tr><td>Ventas en efectivo</td><td class="num" id="corte-efectivo">$0.00</td></tr>
+          <tr><td>Abonos recibidos</td><td class="num" id="corte-abonos">$0.00</td></tr>
+          <tr><td>Ventas con tarjeta</td><td class="num" id="corte-tarjeta">$0.00</td></tr>
+          <tr><td>Ventas a crédito (fiado)</td><td class="num" id="corte-credito">$0.00</td></tr>
+          <tr><td>Número de ventas</td><td class="num" id="corte-num">0</td></tr>
+        </table>
+        <hr>
+        <label>Fondo de caja (con lo que abrió la caja)
+          <input type="number" id="corte-fondo" class="entrada num" step="0.01" min="0" value="0">
+        </label>
+        <label>Efectivo contado en caja
+          <input type="number" id="corte-contado" class="entrada num" step="0.01" min="0" value="0">
+        </label>
+        <div class="fila-esperado">Efectivo esperado: <b id="corte-esperado">$0.00</b></div>
+        <button id="boton-hacer-corte" class="boton exito grande">Realizar corte</button>
+      </div>
+      <div class="tarjeta">
+        <h3>Cortes anteriores</h3>
+        <div class="contenedor-tabla">
+          <table class="tabla">
+            <thead><tr><th>Fecha</th><th>Usuario</th><th class="num">Efectivo</th><th class="num">Tarjeta</th><th class="num">Crédito</th><th class="num">Contado</th><th class="num">Diferencia</th></tr></thead>
+            <tbody id="cuerpo-cortes"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- ============ REPORTES ============ -->
+  <main id="seccion-reportes" class="seccion">
+    <div class="encabezado-seccion">
+      <h2>Reportes de ventas</h2>
+      <div class="acciones">
+        <label>Del <input type="date" id="reporte-desde" class="entrada"></label>
+        <label>al <input type="date" id="reporte-hasta" class="entrada"></label>
+        <select id="reporte-sucursal" class="entrada solo-admin" hidden></select>
+        <button id="boton-generar-reporte" class="boton primario">Generar</button>
+      </div>
+    </div>
+    <div class="tarjetas-resumen">
+      <div class="tarjeta-dato"><small>Total vendido</small><b id="rep-total">$0.00</b></div>
+      <div class="tarjeta-dato"><small>Ganancia</small><b id="rep-ganancia">$0.00</b></div>
+      <div class="tarjeta-dato"><small>Ventas</small><b id="rep-num">0</b></div>
+      <div class="tarjeta-dato"><small>Efectivo</small><b id="rep-efectivo">$0.00</b></div>
+      <div class="tarjeta-dato"><small>Tarjeta</small><b id="rep-tarjeta">$0.00</b></div>
+      <div class="tarjeta-dato"><small>Crédito</small><b id="rep-credito">$0.00</b></div>
+    </div>
+    <div class="zona-reportes">
+      <div class="tarjeta">
+        <h3>Por día</h3>
+        <table class="tabla"><thead><tr><th>Día</th><th class="num">Ventas</th><th class="num">Total</th></tr></thead><tbody id="rep-por-dia"></tbody></table>
+      </div>
+      <div class="tarjeta">
+        <h3>Por sucursal</h3>
+        <table class="tabla"><thead><tr><th>Sucursal</th><th class="num">Ventas</th><th class="num">Total</th></tr></thead><tbody id="rep-por-sucursal"></tbody></table>
+      </div>
+      <div class="tarjeta">
+        <h3>Productos más vendidos</h3>
+        <table class="tabla"><thead><tr><th>Producto</th><th class="num">Cantidad</th><th class="num">Importe</th></tr></thead><tbody id="rep-mas-vendidos"></tbody></table>
+      </div>
+    </div>
+  </main>
+
+  <!-- ============ ADMINISTRACIÓN ============ -->
+  <main id="seccion-admin" class="seccion">
+    <div class="encabezado-seccion"><h2>Administración</h2></div>
+    <div class="zona-admin">
+      <div class="tarjeta">
+        <h3>Usuarios <button id="boton-nuevo-usuario" class="boton primario chico">+ Nuevo</button></h3>
+        <table class="tabla">
+          <thead><tr><th>Nombre</th><th>Usuario</th><th>Rol</th><th>Sucursal</th><th></th></tr></thead>
+          <tbody id="cuerpo-usuarios"></tbody>
+        </table>
+      </div>
+      <div class="tarjeta">
+        <h3>Sucursales <button id="boton-nueva-sucursal" class="boton primario chico">+ Nueva</button></h3>
+        <table class="tabla">
+          <thead><tr><th>Nombre</th><th>Dirección</th><th>Teléfono</th><th></th></tr></thead>
+          <tbody id="cuerpo-sucursales"></tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <!-- ============ MODALES ============ -->
+  <div id="fondo-modal" class="fondo-modal" hidden>
+    <div id="contenido-modal" class="modal"></div>
+  </div>
+
+  <div id="aviso" class="aviso" hidden></div>
+
+  <!-- Ticket para imprimir -->
+  <div id="ticket" class="ticket"></div>
+
+  <script src="js/app.js"></script>
+  <script src="js/venta.js"></script>
+  <script src="js/productos.js"></script>
+  <script src="js/clientes.js"></script>
+  <script src="js/corte.js"></script>
+  <script src="js/reportes.js"></script>
+  <script src="js/admin.js"></script>
+</body>
+</html>

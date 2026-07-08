@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Farmacia POS — Iniciar sesión</title>
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body class="pantalla-login">
+  <form id="form-login" class="tarjeta-login">
+    <h1>💊 Farmacia POS</h1>
+    <p class="subtitulo">Punto de venta multi-sucursal</p>
+    <label>Usuario
+      <input type="text" id="usuario" autocomplete="username" autofocus required>
+    </label>
+    <label>Contraseña
+      <input type="password" id="password" autocomplete="current-password" required>
+    </label>
+    <div id="error-login" class="mensaje-error" hidden></div>
+    <button type="submit" class="boton primario grande">Entrar</button>
+  </form>
+  <script>
+    document.getElementById('form-login').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const error = document.getElementById('error-login');
+      error.hidden = true;
+      const r = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          usuario: document.getElementById('usuario').value,
+          password: document.getElementById('password').value,
+        }),
+      });
+      if (r.ok) {
+        location.href = '/';
+      } else {
+        const datos = await r.json().catch(() => ({}));
+        error.textContent = datos.error || 'No se pudo iniciar sesión';
+        error.hidden = false;
+      }
+    });
+  </script>
+</body>
+</html>
