@@ -18,7 +18,7 @@ async function cargarAdmin() {
         <td>${escaparHtml(u.sucursal)}</td>
         <td style="white-space:nowrap">
           <button class="boton chico" data-accion="editar" data-id="${u.id}">Editar</button>
-          <button class="boton chico peligro-suave" data-accion="eliminar" data-id="${u.id}">✕</button>
+          <button class="boton chico peligro-suave" data-accion="eliminar" data-id="${u.id}" title="Eliminar"><svg class="icono"><use href="#i-basura"/></svg></button>
         </td>
       </tr>`
     )

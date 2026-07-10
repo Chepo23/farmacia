@@ -31,7 +31,7 @@ async function cargarProductos() {
         <td style="white-space:nowrap">
           <button class="boton chico" data-accion="inventario" data-id="${p.id}">Inventario</button>
           <button class="boton chico" data-accion="editar" data-id="${p.id}">Editar</button>
-          <button class="boton chico peligro-suave" data-accion="eliminar" data-id="${p.id}">✕</button>
+          <button class="boton chico peligro-suave" data-accion="eliminar" data-id="${p.id}" title="Eliminar"><svg class="icono"><use href="#i-basura"/></svg></button>
         </td>
       </tr>`;
     })

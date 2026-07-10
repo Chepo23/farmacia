@@ -32,8 +32,8 @@ function pintarVenta() {
         <td class="col-cant"><input type="number" class="cantidad" min="0.01" step="any" value="${r.cantidad}" data-indice="${i}"></td>
         <td>${escaparHtml(r.producto.descripcion)}</td>
         <td class="num">${dinero(precio)}</td>
-        <td class="num">${dinero(importe)}</td>
-        <td><button class="boton-quitar" data-indice="${i}" title="Quitar">✕</button></td>
+        <td class="num col-importe">${dinero(importe)}</td>
+        <td><button class="boton-quitar" data-indice="${i}" title="Quitar renglón"><svg class="icono"><use href="#i-x"/></svg></button></td>
       </tr>`;
     })
     .join('');
@@ -273,7 +273,7 @@ function mostrarVentaTerminada({ ventaId, folio, cambio }) {
     <div class="cambio-grande">${dinero(cambio)}</div>
     <div class="pie">
       <button class="boton" id="terminada-cerrar">Cerrar (Esc)</button>
-      <button class="boton primario grande" id="terminada-imprimir">Imprimir ticket (Enter)</button>
+      <button class="boton primario grande" id="terminada-imprimir"><svg class="icono"><use href="#i-imprimir"/></svg>Imprimir ticket (Enter)</button>
     </div>
   `);
   modal.querySelector('#terminada-cerrar').addEventListener('click', cerrarModal);
