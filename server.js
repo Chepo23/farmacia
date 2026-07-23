@@ -13,6 +13,7 @@ app.use('/api/clientes', requiereSesion, require('./src/routes/clientes'));
 app.use('/api/cortes', requiereSesion, require('./src/routes/cortes'));
 app.use('/api/reportes', requiereSesion, require('./src/routes/reportes'));
 app.use('/api/admin', requiereSesion, require('./src/routes/admin'));
+app.use('/api/departamentos', requiereSesion, require('./src/routes/departamentos'));
 
 // Errores no controlados: responder JSON en lugar de HTML
 app.use((err, req, res, next) => {

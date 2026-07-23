@@ -5,7 +5,7 @@ const router = express.Router();
 
 const camposProducto = `
   p.id, p.codigo_barras, p.descripcion, p.departamento, p.precio_costo,
-  p.precio_venta, p.precio_mayoreo, p.cantidad_mayoreo, p.usa_inventario`;
+  p.precio_venta, p.precio_mayoreo, p.usa_inventario`;
 
 function conExistencias(producto) {
   const existencias = db
@@ -39,7 +39,7 @@ router.get('/buscar', (req, res) => {
               COALESCE((SELECT existencia FROM inventario i
                         WHERE i.producto_id = p.id AND i.sucursal_id = ?), 0) AS existencia_local
        FROM productos p
-       WHERE p.activo = 1 AND (p.descripcion LIKE ? OR p.codigo_barras LIKE ?)
+       WHERE p.activo = 1 AND p.es_comun = 0 AND (p.descripcion LIKE ? OR p.codigo_barras LIKE ?)
        ORDER BY p.descripcion LIMIT 50`
     )
     .all(req.usuario.sucursal_id, q, q);
@@ -52,7 +52,7 @@ router.get('/', (req, res) => {
   const productos = db
     .prepare(
       `SELECT ${camposProducto} FROM productos p
-       WHERE p.activo = 1 AND (p.descripcion LIKE ? OR p.codigo_barras LIKE ?)
+       WHERE p.activo = 1 AND p.es_comun = 0 AND (p.descripcion LIKE ? OR p.codigo_barras LIKE ?)
        ORDER BY p.descripcion LIMIT 200`
     )
     .all(q, q);
@@ -71,7 +71,6 @@ function validarProducto(body) {
     precio_costo: Number(body.precio_costo) || 0,
     precio_venta: precioVenta,
     precio_mayoreo: body.precio_mayoreo ? Number(body.precio_mayoreo) : null,
-    cantidad_mayoreo: body.cantidad_mayoreo ? Number(body.cantidad_mayoreo) : null,
     usa_inventario: body.usa_inventario === false ? 0 : 1,
   };
 }
@@ -83,9 +82,9 @@ router.post('/', (req, res) => {
     const info = db
       .prepare(
         `INSERT INTO productos (codigo_barras, descripcion, departamento, precio_costo,
-           precio_venta, precio_mayoreo, cantidad_mayoreo, usa_inventario)
+           precio_venta, precio_mayoreo, usa_inventario)
          VALUES (@codigo_barras, @descripcion, @departamento, @precio_costo,
-           @precio_venta, @precio_mayoreo, @cantidad_mayoreo, @usa_inventario)`
+           @precio_venta, @precio_mayoreo, @usa_inventario)`
       )
       .run(datos);
     res.json({ ok: true, id: info.lastInsertRowid });
@@ -105,8 +104,7 @@ router.put('/:id', (req, res) => {
       .prepare(
         `UPDATE productos SET codigo_barras = @codigo_barras, descripcion = @descripcion,
            departamento = @departamento, precio_costo = @precio_costo, precio_venta = @precio_venta,
-           precio_mayoreo = @precio_mayoreo, cantidad_mayoreo = @cantidad_mayoreo,
-           usa_inventario = @usa_inventario
+           precio_mayoreo = @precio_mayoreo, usa_inventario = @usa_inventario
          WHERE id = @id AND activo = 1`
       )
       .run({ ...datos, id: req.params.id });

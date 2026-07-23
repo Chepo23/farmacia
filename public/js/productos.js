@@ -38,8 +38,12 @@ async function cargarProductos() {
     .join('');
 }
 
-function formularioProducto(p = {}) {
+async function formularioProducto(p = {}) {
   const esNuevo = !p.id;
+  const departamentos = await api('/api/departamentos');
+  // Si el producto trae un departamento que ya no está en la lista, se conserva como opción
+  const nombres = departamentos.map((d) => d.nombre);
+  if (p.departamento && !nombres.includes(p.departamento)) nombres.unshift(p.departamento);
   const modal = abrirModal(`
     <h3>${esNuevo ? 'Nuevo producto' : 'Editar producto'}</h3>
     <div class="fila">
@@ -47,7 +51,12 @@ function formularioProducto(p = {}) {
         <input type="text" id="prod-codigo" value="${escaparHtml(p.codigo_barras || '')}" placeholder="Escanéalo aquí">
       </label>
       <label>Departamento
-        <input type="text" id="prod-departamento" value="${escaparHtml(p.departamento || '')}" placeholder="Ej. Analgésicos">
+        <select id="prod-departamento">
+          <option value="">Sin departamento</option>
+          ${nombres
+            .map((n) => `<option value="${escaparHtml(n)}" ${n === p.departamento ? 'selected' : ''}>${escaparHtml(n)}</option>`)
+            .join('')}
+        </select>
       </label>
     </div>
     <label>Descripción
@@ -58,8 +67,7 @@ function formularioProducto(p = {}) {
       <label>Precio de venta <input type="number" id="prod-venta" step="0.01" min="0" value="${p.precio_venta ?? ''}"></label>
     </div>
     <div class="fila">
-      <label>Precio de mayoreo (opcional) <input type="number" id="prod-mayoreo" step="0.01" min="0" value="${p.precio_mayoreo ?? ''}"></label>
-      <label>A partir de (piezas) <input type="number" id="prod-cant-mayoreo" step="any" min="0" value="${p.cantidad_mayoreo ?? ''}"></label>
+      <label>Precio de mayoreo (opcional, se aplica con F11 en la venta) <input type="number" id="prod-mayoreo" step="0.01" min="0" value="${p.precio_mayoreo ?? ''}"></label>
     </div>
     <label style="flex-direction:row; align-items:center; gap:8px">
       <input type="checkbox" id="prod-inventario" ${p.usa_inventario === 0 ? '' : 'checked'} style="width:auto">
@@ -86,7 +94,6 @@ function formularioProducto(p = {}) {
           precio_costo: modal.querySelector('#prod-costo').value,
           precio_venta: modal.querySelector('#prod-venta').value,
           precio_mayoreo: modal.querySelector('#prod-mayoreo').value,
-          cantidad_mayoreo: modal.querySelector('#prod-cant-mayoreo').value,
           usa_inventario: modal.querySelector('#prod-inventario').checked,
         },
       });

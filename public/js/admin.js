@@ -1,13 +1,23 @@
-// Administración: usuarios y sucursales (solo admin)
-const Admin = { usuarios: [], sucursales: [] };
+// Administración: usuarios, sucursales y departamentos (solo admin)
+const Admin = { usuarios: [], sucursales: [], departamentos: [] };
 
 async function cargarAdmin() {
   if (App.usuario.rol !== 'admin') return;
-  [Admin.usuarios, Admin.sucursales] = await Promise.all([
+  [Admin.usuarios, Admin.sucursales, Admin.departamentos] = await Promise.all([
     api('/api/admin/usuarios'),
     api('/api/admin/sucursales'),
+    api('/api/departamentos'),
   ]);
   App.sucursales = Admin.sucursales;
+
+  document.getElementById('cuerpo-departamentos').innerHTML = Admin.departamentos
+    .map(
+      (d) => `<tr>
+        <td>${escaparHtml(d.nombre)}</td>
+        <td><button class="boton chico peligro-suave" data-accion="eliminar" data-id="${d.id}" title="Eliminar"><svg class="icono"><use href="#i-basura"/></svg></button></td>
+      </tr>`
+    )
+    .join('') || '<tr><td colspan="2">Todavía no hay departamentos</td></tr>';
 
   document.getElementById('cuerpo-usuarios').innerHTML = Admin.usuarios
     .map(
@@ -127,8 +137,54 @@ function formularioSucursal(s = {}) {
   });
 }
 
+function formularioDepartamento() {
+  const modal = abrirModal(`
+    <h3>Nuevo departamento</h3>
+    <label>Nombre <input type="text" id="dep-nombre" placeholder="Ej. Analgésicos"></label>
+    <div id="dep-error" class="mensaje-error" hidden></div>
+    <div class="pie">
+      <button class="boton" id="dep-cancelar">Cancelar</button>
+      <button class="boton exito" id="dep-guardar">Guardar</button>
+    </div>
+  `);
+  modal.querySelector('#dep-cancelar').addEventListener('click', cerrarModal);
+  async function guardar() {
+    const errorEl = modal.querySelector('#dep-error');
+    errorEl.hidden = true;
+    try {
+      await api('/api/departamentos', {
+        method: 'POST',
+        body: { nombre: modal.querySelector('#dep-nombre').value },
+      });
+      cerrarModal();
+      aviso('Departamento guardado', 'exito');
+      cargarAdmin();
+    } catch (err) {
+      errorEl.textContent = err.message;
+      errorEl.hidden = false;
+    }
+  }
+  modal.querySelector('#dep-guardar').addEventListener('click', guardar);
+  modal.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.target.tagName !== 'BUTTON') { e.preventDefault(); guardar(); }
+  });
+}
+
+document.getElementById('cuerpo-departamentos').addEventListener('click', async (e) => {
+  const boton = e.target.closest('button[data-accion="eliminar"]');
+  if (!boton) return;
+  const departamento = Admin.departamentos.find((d) => d.id === Number(boton.dataset.id));
+  if (!departamento) return;
+  if (confirm(`¿Eliminar el departamento "${departamento.nombre}"? Los productos que lo usan lo conservan.`)) {
+    await api('/api/departamentos/' + departamento.id, { method: 'DELETE' });
+    aviso('Departamento eliminado');
+    cargarAdmin();
+  }
+});
+
 document.getElementById('boton-nuevo-usuario').addEventListener('click', () => formularioUsuario());
 document.getElementById('boton-nueva-sucursal').addEventListener('click', () => formularioSucursal());
+document.getElementById('boton-nuevo-departamento').addEventListener('click', formularioDepartamento);
 
 document.getElementById('cuerpo-usuarios').addEventListener('click', async (e) => {
   const boton = e.target.closest('button[data-accion]');

@@ -6,9 +6,13 @@ async function cargarCorte() {
   document.getElementById('corte-efectivo').textContent = dinero(Corte.pendiente.efectivo);
   document.getElementById('corte-abonos').textContent = dinero(Corte.pendiente.abonos);
   document.getElementById('corte-tarjeta').textContent = dinero(Corte.pendiente.tarjeta);
+  document.getElementById('corte-dolares').textContent = dinero(Corte.pendiente.dolares);
   document.getElementById('corte-credito').textContent = dinero(Corte.pendiente.credito);
   document.getElementById('corte-num').textContent = Corte.pendiente.num_ventas;
-  actualizarEsperado();
+  document.getElementById('corte-fondo').textContent = dinero(Corte.pendiente.fondo_caja);
+  document.getElementById('corte-esperado').textContent = dinero(
+    Corte.pendiente.fondo_caja + Corte.pendiente.efectivo + Corte.pendiente.abonos
+  );
 
   const cortes = await api('/api/cortes');
   document.getElementById('cuerpo-cortes').innerHTML = cortes
@@ -16,42 +20,21 @@ async function cargarCorte() {
       (c) => `<tr>
         <td>${escaparHtml(c.fecha)}</td>
         <td>${escaparHtml(c.usuario)}</td>
+        <td class="num">${dinero(c.fondo_caja)}</td>
         <td class="num">${dinero(c.total_efectivo)}</td>
         <td class="num">${dinero(c.total_tarjeta)}</td>
         <td class="num">${dinero(c.total_credito)}</td>
-        <td class="num">${dinero(c.efectivo_contado)}</td>
-        <td class="num ${c.diferencia < 0 ? 'texto-rojo' : 'texto-verde'}">${dinero(c.diferencia)}</td>
+        <td class="num">${c.num_ventas}</td>
       </tr>`
     )
     .join('');
 }
 
-function actualizarEsperado() {
-  if (!Corte.pendiente) return;
-  const fondo = Number(document.getElementById('corte-fondo').value) || 0;
-  const esperado = fondo + Corte.pendiente.efectivo + Corte.pendiente.abonos;
-  document.getElementById('corte-esperado').textContent = dinero(esperado);
-}
-
-document.getElementById('corte-fondo').addEventListener('input', actualizarEsperado);
-
 document.getElementById('boton-hacer-corte').addEventListener('click', async () => {
-  const fondo = Number(document.getElementById('corte-fondo').value) || 0;
-  const contado = Number(document.getElementById('corte-contado').value) || 0;
-  if (!confirm('¿Realizar el corte de caja? Las ventas pendientes quedarán cerradas en este corte.')) return;
+  if (!confirm('¿Realizar el corte de caja? Las ventas pendientes quedarán cerradas en este corte y al volver a entrar se pedirá una nueva apertura.')) return;
   try {
-    const r = await api('/api/cortes', {
-      method: 'POST',
-      body: { fondo_caja: fondo, efectivo_contado: contado },
-    });
-    const dif = r.diferencia;
-    aviso(
-      dif === 0
-        ? 'Corte realizado. La caja cuadró exacta. ✔'
-        : `Corte realizado. Diferencia: ${dinero(dif)} (${dif > 0 ? 'sobrante' : 'faltante'})`,
-      dif < 0 ? 'error' : 'exito'
-    );
-    document.getElementById('corte-contado').value = 0;
+    const r = await api('/api/cortes', { method: 'POST' });
+    aviso(`Corte realizado. Efectivo esperado en caja: ${dinero(r.esperado)}`, 'exito');
     cargarCorte();
   } catch (err) {
     aviso(err.message, 'error');

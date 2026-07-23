@@ -55,7 +55,8 @@
                placeholder="Escanea el código de barras o escribe y presiona Enter…" autocomplete="off">
         <div class="ayuda-teclas">
           <span><b>F3</b> Buscar producto</span>
-          <span><b>3*</b>código = cantidad 3</span>
+          <span><b>Ins</b> Artículo común</span>
+          <span><b>F11</b> Precio mayoreo</span>
           <span><b>Supr</b> Quitar renglón</span>
           <span><b>F12</b> Cobrar</span>
           <span><b>F4</b> Cancelar venta</span>
@@ -72,10 +73,16 @@
       <aside class="panel-total">
         <div class="etiqueta-total">TOTAL</div>
         <div id="total-venta" class="total-grande">$0.00</div>
+        <div id="total-dolares" class="conteo-articulos"></div>
         <div id="articulos-venta" class="conteo-articulos">0 artículos</div>
+        <div id="indicador-mayoreo" class="indicador-mayoreo" hidden>PRECIO DE MAYOREO (F11)</div>
         <button id="boton-cobrar" class="boton exito grande"><svg class="icono"><use href="#i-cobrar"/></svg>COBRAR (F12)</button>
         <button id="boton-buscar" class="boton primario"><svg class="icono"><use href="#i-buscar"/></svg>Buscar producto (F3)</button>
+        <button id="boton-articulo-comun" class="boton primario"><svg class="icono"><use href="#i-mas"/></svg>Artículo común (Ins)</button>
         <button id="boton-cancelar-venta" class="boton peligro-suave"><svg class="icono"><use href="#i-x"/></svg>Cancelar venta (F4)</button>
+        <hr>
+        <button id="boton-reimprimir" class="boton"><svg class="icono"><use href="#i-imprimir"/></svg>Reimprimir último ticket</button>
+        <button id="boton-ventas-dia" class="boton"><svg class="icono"><use href="#i-archivo"/></svg>Ventas del día</button>
       </aside>
     </div>
   </main>
@@ -109,7 +116,7 @@
     </div>
     <div class="contenedor-tabla">
       <table class="tabla">
-        <thead><tr><th>Nombre</th><th>Teléfono</th><th>Sucursal</th><th class="num">Límite</th><th class="num">Debe</th><th></th></tr></thead>
+        <thead><tr><th>Nombre</th><th>Teléfono</th><th>Sucursal</th><th>Crédito</th><th class="num">Límite</th><th class="num">Debe</th><th></th></tr></thead>
         <tbody id="cuerpo-clientes"></tbody>
       </table>
     </div>
@@ -125,16 +132,12 @@
           <tr><td>Ventas en efectivo</td><td class="num" id="corte-efectivo">$0.00</td></tr>
           <tr><td>Abonos recibidos</td><td class="num" id="corte-abonos">$0.00</td></tr>
           <tr><td>Ventas con tarjeta</td><td class="num" id="corte-tarjeta">$0.00</td></tr>
+          <tr><td>Ventas en dólares (equivalente en pesos)</td><td class="num" id="corte-dolares">$0.00</td></tr>
           <tr><td>Ventas a crédito (fiado)</td><td class="num" id="corte-credito">$0.00</td></tr>
           <tr><td>Número de ventas</td><td class="num" id="corte-num">0</td></tr>
         </table>
         <hr>
-        <label>Fondo de caja (con lo que abrió la caja)
-          <input type="number" id="corte-fondo" class="entrada num" step="0.01" min="0" value="0">
-        </label>
-        <label>Efectivo contado en caja
-          <input type="number" id="corte-contado" class="entrada num" step="0.01" min="0" value="0">
-        </label>
+        <div class="fila-esperado">Fondo de caja (apertura): <b id="corte-fondo">$0.00</b></div>
         <div class="fila-esperado">Efectivo esperado: <b id="corte-esperado">$0.00</b></div>
         <button id="boton-hacer-corte" class="boton exito grande">Realizar corte</button>
       </div>
@@ -142,7 +145,7 @@
         <h3>Cortes anteriores</h3>
         <div class="contenedor-tabla">
           <table class="tabla">
-            <thead><tr><th>Fecha</th><th>Usuario</th><th class="num">Efectivo</th><th class="num">Tarjeta</th><th class="num">Crédito</th><th class="num">Contado</th><th class="num">Diferencia</th></tr></thead>
+            <thead><tr><th>Fecha</th><th>Usuario</th><th class="num">Fondo</th><th class="num">Efectivo</th><th class="num">Tarjeta</th><th class="num">Crédito</th><th class="num">Ventas</th></tr></thead>
             <tbody id="cuerpo-cortes"></tbody>
           </table>
         </div>
@@ -201,6 +204,14 @@
         <table class="tabla">
           <thead><tr><th>Nombre</th><th>Dirección</th><th>Teléfono</th><th></th></tr></thead>
           <tbody id="cuerpo-sucursales"></tbody>
+        </table>
+      </div>
+      <div class="tarjeta">
+        <h3>Departamentos <button id="boton-nuevo-departamento" class="boton primario chico"><svg class="icono"><use href="#i-mas"/></svg>Nuevo</button></h3>
+        <p><small>Los departamentos son los mismos en todas las sucursales y se eligen al registrar un producto.</small></p>
+        <table class="tabla">
+          <thead><tr><th>Nombre</th><th></th></tr></thead>
+          <tbody id="cuerpo-departamentos"></tbody>
         </table>
       </div>
     </div>

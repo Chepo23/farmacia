@@ -32,6 +32,12 @@ CREATE TABLE IF NOT EXISTS sesiones (
   creada TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
 
+CREATE TABLE IF NOT EXISTS departamentos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  nombre TEXT NOT NULL UNIQUE,
+  activo INTEGER NOT NULL DEFAULT 1
+);
+
 CREATE TABLE IF NOT EXISTS productos (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   codigo_barras TEXT UNIQUE,
@@ -42,6 +48,7 @@ CREATE TABLE IF NOT EXISTS productos (
   precio_mayoreo REAL,
   cantidad_mayoreo REAL,
   usa_inventario INTEGER NOT NULL DEFAULT 1,
+  es_comun INTEGER NOT NULL DEFAULT 0,
   activo INTEGER NOT NULL DEFAULT 1
 );
 
@@ -69,8 +76,20 @@ CREATE TABLE IF NOT EXISTS clientes (
   nombre TEXT NOT NULL,
   telefono TEXT DEFAULT '',
   limite_credito REAL NOT NULL DEFAULT 0,
+  notas TEXT DEFAULT '',
+  credito_autorizado INTEGER NOT NULL DEFAULT 0,
   sucursal_id INTEGER NOT NULL REFERENCES sucursales(id),
   activo INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS aperturas_caja (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sucursal_id INTEGER NOT NULL REFERENCES sucursales(id),
+  usuario_id INTEGER NOT NULL REFERENCES usuarios(id),
+  fondo_caja REAL NOT NULL DEFAULT 0,
+  tipo_cambio REAL NOT NULL DEFAULT 0,
+  corte_id INTEGER REFERENCES cortes(id),
+  fecha TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
 
 CREATE TABLE IF NOT EXISTS ventas (
@@ -79,10 +98,15 @@ CREATE TABLE IF NOT EXISTS ventas (
   sucursal_id INTEGER NOT NULL REFERENCES sucursales(id),
   usuario_id INTEGER NOT NULL REFERENCES usuarios(id),
   cliente_id INTEGER REFERENCES clientes(id),
-  forma_pago TEXT NOT NULL CHECK (forma_pago IN ('efectivo', 'tarjeta', 'credito')),
+  forma_pago TEXT NOT NULL CHECK (forma_pago IN ('efectivo', 'tarjeta', 'credito', 'dolar', 'mixto')),
   total REAL NOT NULL,
   pago REAL NOT NULL DEFAULT 0,
   cambio REAL NOT NULL DEFAULT 0,
+  pago_usd REAL,
+  tipo_cambio REAL,
+  pago_efectivo REAL,
+  pago_tarjeta REAL,
+  nota TEXT DEFAULT '',
   corte_id INTEGER,
   fecha TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
@@ -123,6 +147,54 @@ CREATE TABLE IF NOT EXISTS cortes (
   fecha TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
 `);
+
+// Migraciones para bases de datos creadas antes de estas columnas
+for (const columna of [
+  "ALTER TABLE clientes ADD COLUMN notas TEXT DEFAULT ''",
+  'ALTER TABLE clientes ADD COLUMN credito_autorizado INTEGER NOT NULL DEFAULT 0',
+  'ALTER TABLE sesiones ADD COLUMN apertura_id INTEGER REFERENCES aperturas_caja(id)',
+  'ALTER TABLE productos ADD COLUMN es_comun INTEGER NOT NULL DEFAULT 0',
+  'ALTER TABLE cortes ADD COLUMN total_dolares REAL NOT NULL DEFAULT 0',
+]) {
+  try { db.exec(columna); } catch { /* la columna ya existe */ }
+}
+
+// Reconstruir la tabla ventas si fue creada con el CHECK viejo de formas de pago
+// (SQLite no permite modificar un CHECK con ALTER TABLE)
+const defVentas = db
+  .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'ventas'")
+  .get().sql;
+if (!defVentas.includes('mixto')) {
+  db.pragma('foreign_keys = OFF');
+  db.exec(`
+    BEGIN;
+    CREATE TABLE ventas_nueva (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      folio INTEGER NOT NULL,
+      sucursal_id INTEGER NOT NULL REFERENCES sucursales(id),
+      usuario_id INTEGER NOT NULL REFERENCES usuarios(id),
+      cliente_id INTEGER REFERENCES clientes(id),
+      forma_pago TEXT NOT NULL CHECK (forma_pago IN ('efectivo', 'tarjeta', 'credito', 'dolar', 'mixto')),
+      total REAL NOT NULL,
+      pago REAL NOT NULL DEFAULT 0,
+      cambio REAL NOT NULL DEFAULT 0,
+      pago_usd REAL,
+      tipo_cambio REAL,
+      pago_efectivo REAL,
+      pago_tarjeta REAL,
+      nota TEXT DEFAULT '',
+      corte_id INTEGER,
+      fecha TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+    );
+    INSERT INTO ventas_nueva (id, folio, sucursal_id, usuario_id, cliente_id, forma_pago, total, pago, cambio, corte_id, fecha)
+      SELECT id, folio, sucursal_id, usuario_id, cliente_id, forma_pago, total, pago, cambio, corte_id, fecha FROM ventas;
+    DROP TABLE ventas;
+    ALTER TABLE ventas_nueva RENAME TO ventas;
+    CREATE INDEX IF NOT EXISTS idx_ventas_sucursal_fecha ON ventas(sucursal_id, fecha);
+    COMMIT;
+  `);
+  db.pragma('foreign_keys = ON');
+}
 
 function seed() {
   const haySucursales = db.prepare('SELECT COUNT(*) AS n FROM sucursales').get().n;

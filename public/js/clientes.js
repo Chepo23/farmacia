@@ -10,6 +10,7 @@ async function cargarClientes() {
         <td>${escaparHtml(c.nombre)}</td>
         <td>${escaparHtml(c.telefono)}</td>
         <td>${escaparHtml(c.sucursal)}</td>
+        <td class="${c.credito_autorizado ? 'texto-verde' : 'texto-rojo'}">${c.credito_autorizado ? 'Sí' : 'No'}</td>
         <td class="num">${c.limite_credito > 0 ? dinero(c.limite_credito) : 'Sin límite'}</td>
         <td class="num ${c.saldo > 0 ? 'texto-rojo' : ''}">${dinero(c.saldo)}</td>
         <td style="white-space:nowrap">
@@ -30,6 +31,13 @@ function formularioCliente(c = {}) {
       <label>Teléfono <input type="text" id="cli-telefono" value="${escaparHtml(c.telefono || '')}"></label>
       <label>Límite de crédito (0 = sin límite) <input type="number" id="cli-limite" step="0.01" min="0" value="${c.limite_credito ?? 0}"></label>
     </div>
+    <label>Notas
+      <textarea id="cli-notas" rows="3" placeholder="Observaciones sobre el cliente…">${escaparHtml(c.notas || '')}</textarea>
+    </label>
+    <label style="flex-direction:row; align-items:center; gap:8px">
+      <input type="checkbox" id="cli-credito" ${c.credito_autorizado ? 'checked' : ''} style="width:auto">
+      Crédito autorizado (puede comprar fiado)
+    </label>
     <div id="cli-error" class="mensaje-error" hidden></div>
     <div class="pie">
       <button class="boton" id="cli-cancelar">Cancelar</button>
@@ -47,6 +55,8 @@ function formularioCliente(c = {}) {
           nombre: modal.querySelector('#cli-nombre').value,
           telefono: modal.querySelector('#cli-telefono').value,
           limite_credito: modal.querySelector('#cli-limite').value,
+          notas: modal.querySelector('#cli-notas').value,
+          credito_autorizado: modal.querySelector('#cli-credito').checked,
         },
       });
       cerrarModal();
@@ -74,11 +84,20 @@ async function estadoDeCuenta(clienteId) {
     </div>
     <div id="abono-error" class="mensaje-error" hidden></div>
     <div class="fila">
-      <div style="flex:1">
+      <div style="flex:1.4">
         <h4>Compras a crédito</h4>
         <div class="contenedor-tabla">
-          <table class="tabla"><thead><tr><th>Fecha</th><th class="num">Folio</th><th class="num">Total</th></tr></thead>
-          <tbody>${c.cargos.map((v) => `<tr><td>${escaparHtml(v.fecha)}</td><td class="num">${v.folio}</td><td class="num">${dinero(v.total)}</td></tr>`).join('') || '<tr><td colspan="3">Sin compras a crédito</td></tr>'}</tbody></table>
+          <table class="tabla"><thead><tr><th>Fecha</th><th class="num">Folio</th><th>Productos</th><th class="num">Total</th></tr></thead>
+          <tbody>${c.cargos
+            .map(
+              (v) => `<tr>
+                <td>${escaparHtml(v.fecha)}</td>
+                <td class="num">${v.folio}</td>
+                <td>${v.partidas.map((p) => `${p.cantidad} x ${escaparHtml(p.descripcion)} (${dinero(p.importe)})`).join('<br>')}</td>
+                <td class="num">${dinero(v.total)}</td>
+              </tr>`
+            )
+            .join('') || '<tr><td colspan="4">Sin compras a crédito</td></tr>'}</tbody></table>
         </div>
       </div>
       <div style="flex:1">
@@ -89,8 +108,12 @@ async function estadoDeCuenta(clienteId) {
         </div>
       </div>
     </div>
-    <div class="pie"><button class="boton" onclick="cerrarModal()">Cerrar</button></div>
+    <div class="pie">
+      <button class="boton primario" id="estado-imprimir"><svg class="icono"><use href="#i-imprimir"/></svg>Imprimir estado de cuenta</button>
+      <button class="boton" onclick="cerrarModal()">Cerrar</button>
+    </div>
   `);
+  modal.querySelector('#estado-imprimir').addEventListener('click', () => imprimirEstadoDeCuenta(c));
   modal.querySelector('#abono-guardar').addEventListener('click', async () => {
     const errorEl = modal.querySelector('#abono-error');
     errorEl.hidden = true;
@@ -110,6 +133,43 @@ async function estadoDeCuenta(clienteId) {
       errorEl.hidden = false;
     }
   });
+}
+
+// Imprime el estado de cuenta del cliente en formato de ticket
+function imprimirEstadoDeCuenta(c) {
+  const ticket = document.getElementById('ticket');
+  ticket.innerHTML = `
+    <h4>ESTADO DE CUENTA</h4>
+    <div class="centro">${escaparHtml(App.usuario.sucursal)}</div>
+    <div class="centro">${new Date().toLocaleString('es-MX')}</div>
+    <hr>
+    <table>
+      <tr><td>Cliente</td><td class="num">${escaparHtml(c.nombre)}</td></tr>
+      ${c.telefono ? `<tr><td>Teléfono</td><td class="num">${escaparHtml(c.telefono)}</td></tr>` : ''}
+      <tr><td>Límite de crédito</td><td class="num">${c.limite_credito > 0 ? dinero(c.limite_credito) : 'Sin límite'}</td></tr>
+      <tr class="total"><td>SALDO PENDIENTE</td><td class="num">${dinero(c.saldo)}</td></tr>
+    </table>
+    <hr>
+    <div>COMPRAS A CRÉDITO:</div>
+    ${c.cargos
+      .map(
+        (v) => `
+        <div>${escaparHtml(v.fecha)} — Folio ${v.folio}</div>
+        <table>
+          ${v.partidas.map((p) => `<tr><td>${p.cantidad} x ${escaparHtml(p.descripcion)}</td><td class="num">${dinero(p.importe)}</td></tr>`).join('')}
+          <tr class="total"><td>Total</td><td class="num">${dinero(v.total)}</td></tr>
+        </table>`
+      )
+      .join('<hr>') || '<div>Sin compras a crédito</div>'}
+    <hr>
+    <div>ABONOS:</div>
+    <table>
+      ${c.abonos.map((a) => `<tr><td>${escaparHtml(a.fecha)}</td><td class="num">${dinero(a.monto)}</td></tr>`).join('') || '<tr><td>Sin abonos</td></tr>'}
+    </table>
+    <hr>
+    <div class="centro">Documento informativo — no es comprobante fiscal</div>
+  `;
+  window.print();
 }
 
 document.getElementById('boton-nuevo-cliente').addEventListener('click', () => formularioCliente());

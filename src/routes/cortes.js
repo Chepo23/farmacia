@@ -10,37 +10,87 @@ function fechaUltimoCorte(sucursalId) {
   );
 }
 
-// Resumen de lo vendido desde el último corte (para la pantalla de corte)
-function resumenPendiente(sucursalId) {
-  const ventas = db
+// Última apertura de caja de la sucursal aún sin corte (para el fondo del corte)
+function aperturaActual(sucursalId) {
+  return db
     .prepare(
-      `SELECT forma_pago, COUNT(*) AS num, COALESCE(SUM(total), 0) AS total
-       FROM ventas WHERE sucursal_id = ? AND corte_id IS NULL
-       GROUP BY forma_pago`
+      `SELECT * FROM aperturas_caja
+       WHERE sucursal_id = ? AND corte_id IS NULL
+       ORDER BY id DESC LIMIT 1`
     )
-    .all(sucursalId);
-  const porForma = { efectivo: 0, tarjeta: 0, credito: 0 };
-  let numVentas = 0;
-  for (const v of ventas) {
-    porForma[v.forma_pago] = v.total;
-    numVentas += v.num;
-  }
+    .get(sucursalId);
+}
+
+// Apertura registrada en ESTA sesión: cada inicio de sesión debe capturar la suya
+function aperturaDeSesion(token) {
+  return db
+    .prepare(
+      `SELECT a.* FROM sesiones se
+       JOIN aperturas_caja a ON a.id = se.apertura_id
+       WHERE se.token = ?`
+    )
+    .get(token);
+}
+
+// Consultar la apertura de la sesión (para saber si hay que pedirla al entrar)
+router.get('/apertura', (req, res) => {
+  res.json(aperturaDeSesion(req.sesionToken) || null);
+});
+
+// Registrar la apertura de caja: fondo y tipo de cambio peso/dólar
+router.post('/apertura', (req, res) => {
+  const existente = aperturaDeSesion(req.sesionToken);
+  if (existente) return res.json(existente);
+
+  const fondo = Number(req.body?.fondo_caja);
+  const tipoCambio = Number(req.body?.tipo_cambio);
+  if (!(fondo >= 0)) return res.status(400).json({ error: 'Fondo de caja no válido' });
+  if (!(tipoCambio > 0)) return res.status(400).json({ error: 'Tipo de cambio no válido' });
+
+  const id = db.transaction(() => {
+    const aperturaId = db
+      .prepare(
+        'INSERT INTO aperturas_caja (sucursal_id, usuario_id, fondo_caja, tipo_cambio) VALUES (?, ?, ?, ?)'
+      )
+      .run(req.usuario.sucursal_id, req.usuario.id, fondo, tipoCambio).lastInsertRowid;
+    db.prepare('UPDATE sesiones SET apertura_id = ? WHERE token = ?').run(aperturaId, req.sesionToken);
+    return aperturaId;
+  })();
+  res.json(db.prepare('SELECT * FROM aperturas_caja WHERE id = ?').get(id));
+});
+
+// Resumen de lo vendido desde el último corte (para la pantalla de corte).
+// El pago mixto se reparte entre efectivo y tarjeta; el dólar se reporta aparte.
+function resumenPendiente(sucursalId) {
+  const r = db
+    .prepare(
+      `SELECT COUNT(*) AS num_ventas,
+         COALESCE(SUM(CASE WHEN forma_pago = 'efectivo' THEN total
+                           WHEN forma_pago = 'mixto' THEN pago_efectivo END), 0) AS efectivo,
+         COALESCE(SUM(CASE WHEN forma_pago = 'tarjeta' THEN total
+                           WHEN forma_pago = 'mixto' THEN pago_tarjeta END), 0) AS tarjeta,
+         COALESCE(SUM(CASE WHEN forma_pago = 'credito' THEN total END), 0) AS credito,
+         COALESCE(SUM(CASE WHEN forma_pago = 'dolar' THEN total END), 0) AS dolares
+       FROM ventas WHERE sucursal_id = ? AND corte_id IS NULL`
+    )
+    .get(sucursalId);
   const abonos = db
     .prepare(
       'SELECT COALESCE(SUM(monto), 0) AS total FROM abonos WHERE sucursal_id = ? AND fecha > ?'
     )
     .get(sucursalId, fechaUltimoCorte(sucursalId)).total;
-  return { ...porForma, abonos, num_ventas: numVentas };
+  return { ...r, abonos };
 }
 
 router.get('/pendiente', (req, res) => {
-  res.json(resumenPendiente(req.usuario.sucursal_id));
+  const apertura = aperturaActual(req.usuario.sucursal_id);
+  res.json({ ...resumenPendiente(req.usuario.sucursal_id), fondo_caja: apertura ? apertura.fondo_caja : 0 });
 });
 
 router.post('/', (req, res) => {
   const sucursalId = req.usuario.sucursal_id;
-  const fondo = Number(req.body?.fondo_caja) || 0;
-  const contado = Number(req.body?.efectivo_contado) || 0;
+  const apertura = aperturaActual(sucursalId);
+  const fondo = apertura ? apertura.fondo_caja : 0;
   const resumen = resumenPendiente(sucursalId);
 
   if (resumen.num_ventas === 0 && resumen.abonos === 0) {
@@ -48,25 +98,26 @@ router.post('/', (req, res) => {
   }
 
   const esperado = fondo + resumen.efectivo + resumen.abonos;
-  const diferencia = Math.round((contado - esperado) * 100) / 100;
 
   const corteId = db.transaction(() => {
     const id = db
       .prepare(
         `INSERT INTO cortes (sucursal_id, usuario_id, fondo_caja, total_efectivo, total_tarjeta,
-           total_credito, num_ventas, efectivo_contado, diferencia)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           total_credito, total_dolares, num_ventas, efectivo_contado, diferencia)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0)`
       )
       .run(
         sucursalId, req.usuario.id, fondo,
-        resumen.efectivo + resumen.abonos, resumen.tarjeta, resumen.credito,
-        resumen.num_ventas, contado, diferencia
+        resumen.efectivo + resumen.abonos, resumen.tarjeta, resumen.credito, resumen.dolares,
+        resumen.num_ventas
       ).lastInsertRowid;
     db.prepare('UPDATE ventas SET corte_id = ? WHERE sucursal_id = ? AND corte_id IS NULL').run(id, sucursalId);
+    // La apertura queda ligada al corte: al volver a entrar se pedirá una nueva
+    db.prepare('UPDATE aperturas_caja SET corte_id = ? WHERE sucursal_id = ? AND corte_id IS NULL').run(id, sucursalId);
     return id;
   })();
 
-  res.json({ ok: true, id: corteId, esperado, diferencia });
+  res.json({ ok: true, id: corteId, esperado });
 });
 
 router.get('/', (req, res) => {

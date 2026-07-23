@@ -23,8 +23,10 @@ router.get('/ventas', (req, res) => {
   const resumen = db
     .prepare(
       `SELECT COUNT(*) AS num_ventas, COALESCE(SUM(v.total), 0) AS total_vendido,
-         COALESCE(SUM(CASE WHEN v.forma_pago = 'efectivo' THEN v.total END), 0) AS efectivo,
-         COALESCE(SUM(CASE WHEN v.forma_pago = 'tarjeta' THEN v.total END), 0) AS tarjeta,
+         COALESCE(SUM(CASE WHEN v.forma_pago IN ('efectivo', 'dolar') THEN v.total
+                           WHEN v.forma_pago = 'mixto' THEN v.pago_efectivo END), 0) AS efectivo,
+         COALESCE(SUM(CASE WHEN v.forma_pago = 'tarjeta' THEN v.total
+                           WHEN v.forma_pago = 'mixto' THEN v.pago_tarjeta END), 0) AS tarjeta,
          COALESCE(SUM(CASE WHEN v.forma_pago = 'credito' THEN v.total END), 0) AS credito
        FROM ventas v
        WHERE date(v.fecha) BETWEEN @desde AND @hasta ${filtroSucursal}`

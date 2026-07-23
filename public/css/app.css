@@ -296,3 +296,47 @@ body {
   .panel-total { width: 100%; }
   .zona-corte, .zona-admin, .zona-reportes { grid-template-columns: 1fr; }
 }
+
+/* ---------- Indicador de precio de mayoreo (F11) ---------- */
+.indicador-mayoreo {
+  background: #fff3cd; border: 1px solid #e0c460; color: var(--ambar);
+  font-weight: 700; font-size: 12px; text-align: center;
+  padding: 6px 8px; border-radius: 3px; letter-spacing: .5px;
+}
+
+/* Notas del cliente en el modal */
+.modal textarea {
+  padding: 8px 9px; border: 1px solid #9fb0c2; border-radius: 3px;
+  font-size: 14px; font-family: inherit; resize: vertical;
+}
+.modal textarea:focus { outline: none; border-color: var(--azul); box-shadow: 0 0 0 2px rgba(28,90,158,.18); }
+
+/* Detalle de productos al desplegar una venta del día */
+.fila-detalle > td { background: #f4f8fc; font-size: 13px; padding: 8px 14px; }
+.fila-detalle .tabla-simple td { padding: 2px 6px; }
+
+/* Separador en el panel de total */
+.panel-total hr { border: 0; border-top: 1px solid var(--gris-borde-suave); margin: 4px 0; width: 100%; }
+
+/* ---------- Historial de ventas (estilo Eleventa) ---------- */
+.modal.grande { width: min(980px, 96vw); }
+.historial { display: flex; gap: 14px; align-items: stretch; }
+.historial-lista { flex: 1.2; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.historial-detalle {
+  flex: 1; border: 1px solid var(--gris-borde-suave); border-radius: 4px;
+  padding: 12px; background: #fbfcfe; display: flex; flex-direction: column; gap: 10px;
+}
+.historial-detalle #hv-sin-seleccion { color: var(--texto-suave); text-align: center; margin-top: 30px; }
+.historial-detalle .tabla-simple { width: 100%; font-size: 15px; }
+.historial-detalle .tabla-simple .num { text-align: right; }
+.historial-tabla { max-height: 38vh; overflow-y: auto; }
+.historial-tabla .tabla td { cursor: pointer; }
+.historial-filtros { align-items: flex-end; }
+.venta-credito > td { background: #e6f4ea; }
+.muestra-credito {
+  display: inline-block; width: 12px; height: 12px; background: #e6f4ea;
+  border: 1px solid #9fc7ab; vertical-align: middle; margin-right: 4px;
+}
+@media (max-width: 900px) {
+  .historial { flex-direction: column; }
+}

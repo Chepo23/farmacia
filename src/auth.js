@@ -29,6 +29,7 @@ function requiereSesion(req, res, next) {
   const usuario = usuarioDeSesion(req);
   if (!usuario) return res.status(401).json({ error: 'Sesión no válida' });
   req.usuario = usuario;
+  req.sesionToken = leerToken(req);
   next();
 }
 

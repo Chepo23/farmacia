@@ -11,7 +11,7 @@ router.get('/', (req, res) => {
   const q = `%${(req.query.q || '').trim()}%`;
   const clientes = db
     .prepare(
-      `SELECT c.id, c.nombre, c.telefono, c.limite_credito, c.sucursal_id,
+      `SELECT c.id, c.nombre, c.telefono, c.limite_credito, c.notas, c.credito_autorizado, c.sucursal_id,
               s.nombre AS sucursal, ${consultaSaldo}
        FROM clientes c JOIN sucursales s ON s.id = c.sucursal_id
        WHERE c.activo = 1 AND (c.nombre LIKE ? OR c.telefono LIKE ?)
@@ -25,8 +25,13 @@ router.post('/', (req, res) => {
   const nombre = (req.body?.nombre || '').trim();
   if (!nombre) return res.status(400).json({ error: 'El nombre es obligatorio' });
   const info = db
-    .prepare('INSERT INTO clientes (nombre, telefono, limite_credito, sucursal_id) VALUES (?, ?, ?, ?)')
-    .run(nombre, (req.body.telefono || '').trim(), Number(req.body.limite_credito) || 0, req.usuario.sucursal_id);
+    .prepare(
+      'INSERT INTO clientes (nombre, telefono, limite_credito, notas, credito_autorizado, sucursal_id) VALUES (?, ?, ?, ?, ?, ?)'
+    )
+    .run(
+      nombre, (req.body.telefono || '').trim(), Number(req.body.limite_credito) || 0,
+      (req.body.notas || '').trim(), req.body.credito_autorizado ? 1 : 0, req.usuario.sucursal_id
+    );
   res.json({ ok: true, id: info.lastInsertRowid });
 });
 
@@ -34,8 +39,13 @@ router.put('/:id', (req, res) => {
   const nombre = (req.body?.nombre || '').trim();
   if (!nombre) return res.status(400).json({ error: 'El nombre es obligatorio' });
   const info = db
-    .prepare('UPDATE clientes SET nombre = ?, telefono = ?, limite_credito = ? WHERE id = ? AND activo = 1')
-    .run(nombre, (req.body.telefono || '').trim(), Number(req.body.limite_credito) || 0, req.params.id);
+    .prepare(
+      'UPDATE clientes SET nombre = ?, telefono = ?, limite_credito = ?, notas = ?, credito_autorizado = ? WHERE id = ? AND activo = 1'
+    )
+    .run(
+      nombre, (req.body.telefono || '').trim(), Number(req.body.limite_credito) || 0,
+      (req.body.notas || '').trim(), req.body.credito_autorizado ? 1 : 0, req.params.id
+    );
   if (info.changes === 0) return res.status(404).json({ error: 'Cliente no encontrado' });
   res.json({ ok: true });
 });
@@ -57,6 +67,11 @@ router.get('/:id/estado', (req, res) => {
        WHERE cliente_id = ? AND forma_pago = 'credito' ORDER BY fecha DESC LIMIT 100`
     )
     .all(cliente.id);
+  // Productos comprados en cada venta a crédito
+  const buscarPartidas = db.prepare(
+    'SELECT descripcion, cantidad, precio_unitario, importe FROM venta_detalle WHERE venta_id = ?'
+  );
+  for (const cargo of cargos) cargo.partidas = buscarPartidas.all(cargo.id);
   const abonos = db
     .prepare('SELECT id, fecha, monto, nota FROM abonos WHERE cliente_id = ? ORDER BY fecha DESC LIMIT 100')
     .all(cliente.id);
