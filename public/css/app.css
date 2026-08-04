@@ -266,9 +266,9 @@ body {
 .texto-verde { color: var(--verde-texto); font-weight: 700; }
 
 /* ---------- Ticket (solo al imprimir) ---------- */
-.ticket { display: none; }
+.ticket, .documento { display: none; }
 @media print {
-  body > *:not(.ticket) { display: none !important; }
+  body > *:not(.ticket):not(.documento) { display: none !important; }
   body { background: #fff; }
   .ticket {
     display: block; width: 72mm; font-family: 'Courier New', monospace; font-size: 11px;
@@ -281,6 +281,21 @@ body {
   .ticket .num { text-align: right; white-space: nowrap; }
   .ticket hr { border: 0; border-top: 1px dashed #000; margin: 4px 0; }
   .ticket .total { font-size: 14px; font-weight: bold; }
+
+  /* Documento en hoja normal: no cabe en el ticket de 72mm */
+  body.imprimir-documento .ticket { display: none !important; }
+  body.imprimir-documento .documento { display: block; color: #000; font-size: 11px; }
+  .documento h2 { font-size: 16px; margin: 0 0 2px; }
+  .documento .doc-encabezado { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; }
+  .documento .doc-datos { font-size: 11px; line-height: 1.5; }
+  .documento table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+  .documento th, .documento td { border: 1px solid #000; padding: 3px 5px; text-align: left; }
+  .documento th { background: #eee; font-size: 10px; text-transform: uppercase; }
+  .documento .num { text-align: right; white-space: nowrap; }
+  .documento tfoot td { font-weight: bold; }
+  .documento .doc-firmas { display: flex; gap: 40px; margin-top: 40px; }
+  .documento .doc-firmas div { flex: 1; border-top: 1px solid #000; padding-top: 4px; text-align: center; font-size: 10px; }
+  .documento tr { page-break-inside: avoid; }
 }
 
 @media (max-width: 900px) {
@@ -331,4 +346,90 @@ body {
 }
 @media (max-width: 900px) {
   .historial { flex-direction: column; }
+}
+
+/* ---------- Apoyos entre farmacias ---------- */
+.globo-aviso {
+  background: var(--rojo); color: #fff; border-radius: 10px;
+  min-width: 18px; padding: 1px 6px; font-size: 11px; font-weight: 700; line-height: 16px;
+}
+.franja-aviso {
+  background: #fff3cd; border: 1px solid #e0c460; color: var(--ambar);
+  padding: 10px 14px; border-radius: 4px; margin-bottom: 12px;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  font-weight: 600; flex-wrap: wrap;
+}
+
+.tarjetas-farmacias { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.tarjeta-farmacia {
+  background: #fff; border: 1px solid var(--gris-borde); border-radius: 4px;
+  padding: 12px 16px; min-width: 200px; text-align: left; cursor: pointer;
+  font-family: inherit; color: var(--texto);
+  display: flex; flex-direction: column; gap: 3px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.7);
+}
+.tarjeta-farmacia:hover { border-color: #4f9aa1; background: #e9f5f4; }
+.tarjeta-farmacia b { font-size: 15px; color: var(--azul-oscuro); }
+.tarjeta-farmacia small { color: var(--texto-suave); font-size: 12px; }
+.tarjeta-farmacia .con-borrador { color: var(--ambar); font-weight: 700; }
+.tarjeta-farmacia.nueva { border-style: dashed; align-items: center; justify-content: center; text-align: center; }
+
+.zona-apoyos { display: grid; grid-template-columns: 1.35fr 1fr; gap: 12px; align-items: start; }
+.apoyos-tabla { max-height: 46vh; overflow-y: auto; }
+
+.chip {
+  display: inline-block; padding: 2px 8px; border-radius: 10px;
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px;
+  border: 1px solid;
+}
+.chip.borrador { background: #f3ede0; border-color: #cfc4a8; color: #6b6142; }
+.chip.enviado { background: #fff3cd; border-color: #e0c460; color: var(--ambar); }
+.chip.recibido { background: #e6f4ea; border-color: #9fc7ab; color: var(--verde-texto); }
+.chip.surtido { background: #e6f4ea; border-color: #9fc7ab; color: var(--verde-texto); }
+.chip.cancelado { background: #fdecea; border-color: #eac6c2; color: var(--rojo); }
+.chip.faltante { background: #fdecea; border-color: #eac6c2; color: var(--rojo); }
+
+/* Captura del apoyo (misma idea que la pantalla de venta) */
+.zona-apoyo { display: flex; gap: 12px; align-items: stretch; height: calc(100vh - 56px - 90px); }
+.captura-apoyo { flex: 1; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.captura-apoyo .contenedor-tabla { flex: 1; overflow-y: auto; }
+.encabezado-apoyo {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px;
+}
+.encabezado-apoyo h2 {
+  color: var(--azul-oscuro); font-size: 17px;
+  border-left: 4px solid var(--azul); padding-left: 9px;
+}
+.encabezado-apoyo .rumbo { font-size: 13px; color: var(--texto-suave); }
+.encabezado-apoyo .rumbo b { color: var(--azul-oscuro); font-size: 15px; }
+
+.tabla-apoyo td { font-size: 14px; padding: 7px 9px; }
+.tabla-apoyo input.cantidad {
+  width: 80px; padding: 5px; font-size: 15px; font-family: inherit; text-align: center;
+  border: 1px solid #b3a98f; border-radius: 3px;
+}
+.tabla-apoyo td.col-importe { background: #e9f7ee; color: var(--verde-texto); font-weight: 700; }
+.tabla-apoyo tr.sin-existencia td { background: #fdecea; }
+.tabla-apoyo tr.recien-agregado td { animation: destello 1.1s ease-out; }
+@keyframes destello {
+  from { background: #ffe9a8; }
+  to { background: transparent; }
+}
+
+.panel-apoyo {
+  width: 310px; background: #fff; border: 1px solid var(--gris-borde); border-radius: 4px;
+  padding: 16px; display: flex; flex-direction: column; gap: 10px; overflow-y: auto;
+}
+.panel-apoyo .total-grande { font-size: 40px; }
+.panel-apoyo hr { border: 0; border-top: 1px solid var(--gris-borde-suave); margin: 4px 0; width: 100%; }
+.panel-apoyo .dato-secundario { display: flex; justify-content: space-between; font-size: 13px; color: var(--texto-suave); }
+.panel-apoyo .dato-secundario b { color: var(--texto); }
+.panel-apoyo .empuje { margin-top: auto; }
+
+.vacio { color: var(--texto-suave); text-align: center; padding: 26px 10px; }
+
+@media (max-width: 900px) {
+  .zona-apoyos { grid-template-columns: 1fr; }
+  .zona-apoyo { flex-direction: column; height: auto; }
+  .panel-apoyo { width: 100%; }
 }

@@ -2,7 +2,8 @@ const path = require('path');
 const Database = require('better-sqlite3');
 const { hashPassword } = require('./passwords');
 
-const db = new Database(path.join(__dirname, '..', 'farmacia.db'));
+// FARMACIA_DB permite abrir otra base (por ejemplo una copia para hacer pruebas)
+const db = new Database(process.env.FARMACIA_DB || path.join(__dirname, '..', 'farmacia.db'));
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
@@ -146,6 +147,75 @@ CREATE TABLE IF NOT EXISTS cortes (
   diferencia REAL NOT NULL DEFAULT 0,
   fecha TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
+
+-- ---------- Apoyos entre farmacias ----------
+-- Pedido: lo que una sucursal le solicita a la central (sustituye la foto del cuaderno)
+CREATE TABLE IF NOT EXISTS pedidos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  folio INTEGER NOT NULL,
+  sucursal_id INTEGER NOT NULL REFERENCES sucursales(id),
+  estado TEXT NOT NULL DEFAULT 'borrador'
+    CHECK (estado IN ('borrador', 'enviado', 'surtido', 'cancelado')),
+  nota TEXT DEFAULT '',
+  creado_por INTEGER NOT NULL REFERENCES usuarios(id),
+  creado TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  enviado_por INTEGER REFERENCES usuarios(id),
+  enviado TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_pedidos_estado ON pedidos(estado, sucursal_id);
+
+CREATE TABLE IF NOT EXISTS pedido_detalle (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  pedido_id INTEGER NOT NULL REFERENCES pedidos(id),
+  producto_id INTEGER NOT NULL REFERENCES productos(id),
+  codigo_barras TEXT,
+  descripcion TEXT NOT NULL,
+  cantidad REAL NOT NULL,
+  cantidad_surtida REAL NOT NULL DEFAULT 0
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pedido_detalle_producto
+  ON pedido_detalle(pedido_id, producto_id);
+
+-- Apoyo: la mercancía que la central le manda a una sucursal
+CREATE TABLE IF NOT EXISTS apoyos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  folio INTEGER NOT NULL,
+  origen_id INTEGER NOT NULL REFERENCES sucursales(id),
+  destino_id INTEGER NOT NULL REFERENCES sucursales(id),
+  pedido_id INTEGER REFERENCES pedidos(id),
+  estado TEXT NOT NULL DEFAULT 'borrador'
+    CHECK (estado IN ('borrador', 'enviado', 'recibido', 'cancelado')),
+  nota TEXT DEFAULT '',
+  creado_por INTEGER NOT NULL REFERENCES usuarios(id),
+  creado TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  enviado_por INTEGER REFERENCES usuarios(id),
+  enviado TEXT,
+  recibido_por INTEGER REFERENCES usuarios(id),
+  recibido TEXT,
+  cancelado_por INTEGER REFERENCES usuarios(id),
+  cancelado TEXT,
+  motivo_cancelacion TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_apoyos_destino ON apoyos(destino_id, estado);
+CREATE INDEX IF NOT EXISTS idx_apoyos_origen ON apoyos(origen_id, estado);
+
+-- Los precios se guardan como copia: si mañana cambia el catálogo,
+-- el apoyo sigue mostrando con qué precios se mandó la mercancía
+CREATE TABLE IF NOT EXISTS apoyo_detalle (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  apoyo_id INTEGER NOT NULL REFERENCES apoyos(id),
+  producto_id INTEGER NOT NULL REFERENCES productos(id),
+  codigo_barras TEXT,
+  descripcion TEXT NOT NULL,
+  cantidad REAL NOT NULL,
+  cantidad_recibida REAL,
+  precio_costo REAL NOT NULL DEFAULT 0,
+  precio_venta REAL NOT NULL DEFAULT 0,
+  precio_mayoreo REAL,
+  importe REAL NOT NULL DEFAULT 0
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_apoyo_detalle_producto
+  ON apoyo_detalle(apoyo_id, producto_id);
 `);
 
 // Migraciones para bases de datos creadas antes de estas columnas

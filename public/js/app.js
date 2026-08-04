@@ -93,7 +93,7 @@ document.getElementById('boton-salir').addEventListener('click', async () => {
 
 // Teclas rápidas globales
 document.addEventListener('keydown', (e) => {
-  const teclas = { F2: 'venta', F5: 'productos', F6: 'clientes', F7: 'corte', F8: 'reportes' };
+  const teclas = { F2: 'venta', F5: 'productos', F6: 'clientes', F7: 'corte', F8: 'reportes', F9: 'apoyos' };
   if (teclas[e.key] && !hayModalAbierto()) {
     e.preventDefault();
     mostrarSeccion(teclas[e.key]);

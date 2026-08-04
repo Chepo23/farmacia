@@ -27,13 +27,24 @@ Usuario inicial: **admin** / contraseña: **admin**
 - **Clientes (F6)** — crédito/fiado con límite, estado de cuenta y abonos.
 - **Corte (F7)** — corte de caja: efectivo esperado (fondo + ventas + abonos) contra efectivo contado.
 - **Reportes (F8)** — total vendido, ganancia, por día, por sucursal y productos más vendidos.
+- **Apoyos (F9)** — traspaso de mercancía entre farmacias, sustituye el Excel y las fotos.
+  - La sucursal manda su **pedido**: escanea lo que se le acabó (o usa *Sugerencias*, que ya sabe
+    qué está en cero o bajo mínimo) y lo envía a la central.
+  - La central abre la farmacia, escanea código por código y el sistema trae solo la descripción,
+    costo, precio público, mayoreo e importe (costo × cantidad). Puede partir del pedido recibido.
+  - Al **enviar**, la mercancía sale del inventario de la central y le aparece a la sucursal.
+  - La sucursal **recibe revisando pieza por pieza**: solo lo que confirma entra a su inventario,
+    y los faltantes quedan registrados. Ya no hay que dar de alta los productos: el catálogo es común.
+  - Se imprime en hoja normal (lista completa con precios y firmas de entregó/recibió).
+  - Cancelar un envío regresa la mercancía al inventario de la central.
 - **Administración** (solo rol admin) — usuarios (cajero/administrador por sucursal) y sucursales.
 
 ## Estructura
 
 - `server.js` — servidor Express.
 - `src/db.js` — esquema SQLite (archivo `farmacia.db`, se crea solo).
-- `src/routes/` — API: productos, ventas, clientes, cortes, reportes, admin.
+  Con la variable `FARMACIA_DB` se puede abrir otra base, por ejemplo una copia para pruebas.
+- `src/routes/` — API: productos, ventas, clientes, cortes, reportes, admin, apoyos, pedidos.
 - `public/` — interfaz web (HTML/CSS/JS sin frameworks).
 
 ## Multi-sucursal

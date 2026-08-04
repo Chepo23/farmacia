@@ -26,6 +26,11 @@
     <symbol id="i-imprimir" viewBox="0 0 24 24"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></symbol>
     <symbol id="i-cobrar" viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></symbol>
     <symbol id="i-archivo" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></symbol>
+    <symbol id="i-apoyos" viewBox="0 0 24 24"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></symbol>
+    <symbol id="i-enviar" viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></symbol>
+    <symbol id="i-recibir" viewBox="0 0 24 24"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></symbol>
+    <symbol id="i-atras" viewBox="0 0 24 24"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></symbol>
+    <symbol id="i-lista" viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></symbol>
   </svg>
 
   <header class="barra-superior">
@@ -38,6 +43,7 @@
       <button class="pestania" data-seccion="clientes"><svg class="icono"><use href="#i-clientes"/></svg>Clientes <small>F6</small></button>
       <button class="pestania" data-seccion="corte"><svg class="icono"><use href="#i-corte"/></svg>Corte <small>F7</small></button>
       <button class="pestania" data-seccion="reportes"><svg class="icono"><use href="#i-reportes"/></svg>Reportes <small>F8</small></button>
+      <button class="pestania" data-seccion="apoyos"><svg class="icono"><use href="#i-apoyos"/></svg>Apoyos <small>F9</small><span id="aviso-apoyos" class="globo-aviso" hidden></span></button>
       <button class="pestania solo-admin" data-seccion="admin" hidden><svg class="icono"><use href="#i-admin"/></svg>Administración</button>
     </nav>
     <div class="info-sesion">
@@ -187,6 +193,54 @@
     </div>
   </main>
 
+  <!-- ============ APOYOS ============ -->
+  <main id="seccion-apoyos" class="seccion">
+    <!-- Vista 1: farmacias, apoyos y pedidos -->
+    <div id="apoyos-inicio">
+      <div class="encabezado-seccion">
+        <h2>Apoyos entre farmacias</h2>
+        <div class="acciones">
+          <button id="boton-pedir-apoyo" class="boton primario" hidden><svg class="icono"><use href="#i-lista"/></svg>Pedir apoyo</button>
+          <button id="boton-refrescar-apoyos" class="boton">Actualizar</button>
+        </div>
+      </div>
+
+      <div id="apoyos-por-recibir" class="franja-aviso" hidden></div>
+
+      <div id="apoyos-farmacias" class="tarjetas-farmacias"></div>
+
+      <div class="zona-apoyos">
+        <div class="tarjeta">
+          <h3>Historial de apoyos</h3>
+          <div class="contenedor-tabla apoyos-tabla">
+            <table class="tabla">
+              <thead><tr>
+                <th class="num">Folio</th><th>De</th><th>Para</th><th>Estado</th>
+                <th class="num">Prods.</th><th class="num">Piezas</th><th class="num">Costo</th><th>Fecha</th><th></th>
+              </tr></thead>
+              <tbody id="cuerpo-apoyos"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="tarjeta">
+          <h3 id="titulo-pedidos">Pedidos</h3>
+          <div class="contenedor-tabla apoyos-tabla">
+            <table class="tabla">
+              <thead><tr>
+                <th class="num">Folio</th><th>Farmacia</th><th>Estado</th>
+                <th class="num">Prods.</th><th class="num">Piezas</th><th>Fecha</th><th></th>
+              </tr></thead>
+              <tbody id="cuerpo-pedidos"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Vista 2: captura por código de barras (apoyo o pedido) -->
+    <div id="apoyos-editor" hidden></div>
+  </main>
+
   <!-- ============ ADMINISTRACIÓN ============ -->
   <main id="seccion-admin" class="seccion">
     <div class="encabezado-seccion"><h2>Administración</h2></div>
@@ -226,12 +280,16 @@
   <!-- Ticket para imprimir -->
   <div id="ticket" class="ticket"></div>
 
+  <!-- Documento tamaño carta para imprimir (apoyos y pedidos) -->
+  <div id="documento" class="documento"></div>
+
   <script src="js/app.js"></script>
   <script src="js/venta.js"></script>
   <script src="js/productos.js"></script>
   <script src="js/clientes.js"></script>
   <script src="js/corte.js"></script>
   <script src="js/reportes.js"></script>
+  <script src="js/apoyos.js"></script>
   <script src="js/admin.js"></script>
 </body>
 </html>

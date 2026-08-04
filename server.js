@@ -14,6 +14,8 @@ app.use('/api/cortes', requiereSesion, require('./src/routes/cortes'));
 app.use('/api/reportes', requiereSesion, require('./src/routes/reportes'));
 app.use('/api/admin', requiereSesion, require('./src/routes/admin'));
 app.use('/api/departamentos', requiereSesion, require('./src/routes/departamentos'));
+app.use('/api/apoyos', requiereSesion, require('./src/routes/apoyos'));
+app.use('/api/pedidos', requiereSesion, require('./src/routes/pedidos'));
 
 // Errores no controlados: responder JSON en lugar de HTML
 app.use((err, req, res, next) => {

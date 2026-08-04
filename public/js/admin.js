@@ -101,7 +101,8 @@ function formularioUsuario(u = {}) {
   });
 }
 
-function formularioSucursal(s = {}) {
+// alGuardar permite reutilizar este formulario desde la sección de Apoyos
+function formularioSucursal(s = {}, alGuardar = null) {
   const esNueva = !s.id;
   const modal = abrirModal(`
     <h3>${esNueva ? 'Nueva sucursal' : 'Editar sucursal'}</h3>
@@ -129,7 +130,9 @@ function formularioSucursal(s = {}) {
       });
       cerrarModal();
       aviso('Sucursal guardada', 'exito');
-      cargarAdmin();
+      App.sucursales = await api('/api/admin/sucursales');
+      if (alGuardar) alGuardar();
+      else cargarAdmin();
     } catch (err) {
       errorEl.textContent = err.message;
       errorEl.hidden = false;
