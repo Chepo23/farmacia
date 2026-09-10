@@ -3,6 +3,7 @@
 //                -> recibido (entra al inventario de la sucursal, revisado pieza por pieza)
 const express = require('express');
 const db = require('../db');
+const { supabaseAdmin, hasSupabase } = require('../sync/supabase-client');
 
 const router = express.Router();
 
@@ -15,17 +16,66 @@ function requiereCentral(req, res, next) {
   next();
 }
 
-function buscarProducto(body) {
+async function buscarProductoEnCentral(productoId, codigo) {
+  if (!hasSupabase || !supabaseAdmin) return null;
+  let query = supabaseAdmin.from('productos').select('*').eq('activo', true);
+  if (productoId) query = query.eq('id', Number(productoId));
+  if (codigo) query = query.eq('codigo_barras', codigo);
+  const { data, error } = await query.limit(1);
+  if (error) throw error;
+  return (data || [])[0] || null;
+}
+
+async function buscarProducto(body) {
   if (body.producto_id) {
-    return db
+    const local = db
       .prepare('SELECT * FROM productos WHERE id = ? AND activo = 1 AND es_comun = 0')
       .get(body.producto_id);
+    if (local) return local;
+    try {
+      return await buscarProductoEnCentral(body.producto_id, null);
+    } catch {
+      return null;
+    }
   }
   const codigo = (body.codigo_barras || '').trim();
   if (!codigo) return null;
-  return db
+  const local = db
     .prepare('SELECT * FROM productos WHERE codigo_barras = ? AND activo = 1 AND es_comun = 0')
     .get(codigo);
+  if (local) return local;
+  try {
+    return await buscarProductoEnCentral(null, codigo);
+  } catch {
+    return null;
+  }
+}
+
+function asegurarProductoLocal(producto) {
+  if (!producto) return null;
+  const codigo = (producto.codigo_barras || '').trim();
+  const existente = codigo
+    ? db.prepare('SELECT * FROM productos WHERE codigo_barras = ?').get(codigo)
+    : db.prepare('SELECT * FROM productos WHERE descripcion = ?').get((producto.descripcion || '').trim());
+  if (existente) return existente;
+
+  const info = db.prepare(
+    `INSERT INTO productos (codigo_barras, descripcion, departamento, precio_costo, precio_venta, precio_mayoreo, cantidad_mayoreo, usa_inventario, es_comun, activo)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    codigo || null,
+    (producto.descripcion || '').trim(),
+    (producto.departamento || '').trim(),
+    Number(producto.precio_costo) || 0,
+    Number(producto.precio_venta) || 0,
+    producto.precio_mayoreo != null ? Number(producto.precio_mayoreo) : null,
+    producto.cantidad_mayoreo != null ? Number(producto.cantidad_mayoreo) : null,
+    Boolean(producto.usa_inventario) ? 1 : 0,
+    Boolean(producto.es_comun) ? 1 : 0,
+    Boolean(producto.activo) ? 1 : 0
+  );
+
+  return db.prepare('SELECT * FROM productos WHERE id = ?').get(info.lastInsertRowid);
 }
 
 function cargarApoyo(id) {
@@ -213,20 +263,21 @@ router.get('/:id', (req, res) => {
 });
 
 // ---------- Renglones (escaneo) ----------
-router.post('/:id/renglones', requiereCentral, (req, res) => {
+router.post('/:id/renglones', requiereCentral, async (req, res) => {
   const apoyo = cargarApoyo(req.params.id);
   if (!apoyo) return res.status(404).json({ error: 'Apoyo no encontrado' });
   const problema = verificarEdicion(apoyo, req.usuario);
   if (problema) return res.status(400).json({ error: problema });
 
-  const producto = buscarProducto(req.body || {});
+  const producto = await buscarProducto(req.body || {});
   if (!producto) return res.status(404).json({ error: 'Producto no encontrado' });
   const cantidad = Number(req.body.cantidad ?? 1);
   if (!(cantidad > 0)) return res.status(400).json({ error: 'Cantidad no válida' });
 
+  const productoLocal = asegurarProductoLocal(producto);
   const existente = db
     .prepare('SELECT * FROM apoyo_detalle WHERE apoyo_id = ? AND producto_id = ?')
-    .get(apoyo.id, producto.id);
+    .get(apoyo.id, productoLocal.id);
   if (existente) {
     const nueva = existente.cantidad + cantidad;
     db.prepare('UPDATE apoyo_detalle SET cantidad = ?, importe = ? WHERE id = ?').run(
@@ -238,9 +289,9 @@ router.post('/:id/renglones', requiereCentral, (req, res) => {
          precio_costo, precio_venta, precio_mayoreo, importe)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
-      apoyo.id, producto.id, producto.codigo_barras, producto.descripcion, cantidad,
-      producto.precio_costo, producto.precio_venta, producto.precio_mayoreo,
-      redondear(producto.precio_costo * cantidad)
+      apoyo.id, productoLocal.id, productoLocal.codigo_barras, productoLocal.descripcion, cantidad,
+      productoLocal.precio_costo, productoLocal.precio_venta, productoLocal.precio_mayoreo,
+      redondear(productoLocal.precio_costo * cantidad)
     );
   }
   res.json(cargarApoyo(apoyo.id));

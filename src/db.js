@@ -216,6 +216,60 @@ CREATE TABLE IF NOT EXISTS apoyo_detalle (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_apoyo_detalle_producto
   ON apoyo_detalle(apoyo_id, producto_id);
+
+-- ---------- Inventario compartido / sincronización ----------
+CREATE TABLE IF NOT EXISTS sync_estado (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  entidad TEXT NOT NULL,
+  entidad_id INTEGER NOT NULL,
+  sucursal_id INTEGER NOT NULL REFERENCES sucursales(id),
+  accion TEXT NOT NULL CHECK (accion IN ('create', 'update', 'delete')),
+  payload TEXT NOT NULL,
+  estado TEXT NOT NULL DEFAULT 'pendiente' CHECK (estado IN ('pendiente', 'sincronizado', 'conflicto')),
+  version INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_sync_estado_entidad ON sync_estado(entidad, estado, updated_at);
+CREATE INDEX IF NOT EXISTS idx_sync_estado_sucursal ON sync_estado(sucursal_id, estado);
+
+CREATE TABLE IF NOT EXISTS sync_resumen (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sucursal_id INTEGER NOT NULL REFERENCES sucursales(id),
+  ultima_sync TEXT,
+  ultimo_evento_id INTEGER,
+  estado TEXT NOT NULL DEFAULT 'ok' CHECK (estado IN ('ok', 'pendiente', 'error')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sync_resumen_sucursal ON sync_resumen(sucursal_id);
+
+CREATE TABLE IF NOT EXISTS sync_conflictos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  entidad TEXT NOT NULL,
+  entidad_id INTEGER NOT NULL,
+  sucursal_id INTEGER NOT NULL REFERENCES sucursales(id),
+  detalle TEXT NOT NULL,
+  estado TEXT NOT NULL DEFAULT 'abierto' CHECK (estado IN ('abierto', 'resuelto')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+
+-- Mini apoyo: cuando una sucursal tiene un producto que la central no tiene o no tiene suficiente.
+CREATE TABLE IF NOT EXISTS mini_apoyos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  origen_sucursal_id INTEGER NOT NULL REFERENCES sucursales(id),
+  destino_sucursal_id INTEGER NOT NULL REFERENCES sucursales(id),
+  producto_id INTEGER NOT NULL REFERENCES productos(id),
+  cantidad REAL NOT NULL DEFAULT 0,
+  tipo TEXT NOT NULL CHECK (tipo IN ('faltante', 'redistribucion', 'apoyo', 'reconciliacion')),
+  estado TEXT NOT NULL DEFAULT 'pendiente' CHECK (estado IN ('pendiente', 'aceptado', 'enviado', 'recibido', 'rechazado')),
+  nota TEXT DEFAULT '',
+  creado_por INTEGER NOT NULL REFERENCES usuarios(id),
+  creado TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  actualizado TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_mini_apoyos_origen ON mini_apoyos(origen_sucursal_id, estado);
+CREATE INDEX IF NOT EXISTS idx_mini_apoyos_destino ON mini_apoyos(destino_sucursal_id, estado);
 `);
 
 // Migraciones para bases de datos creadas antes de estas columnas

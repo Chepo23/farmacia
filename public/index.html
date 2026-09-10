@@ -194,6 +194,28 @@
         <table class="tabla"><thead><tr><th>Producto</th><th class="num">Cantidad</th><th class="num">Importe</th></tr></thead><tbody id="rep-mas-vendidos"></tbody></table>
       </div>
     </div>
+
+    <div class="encabezado-seccion" style="margin-top: 1.5rem;">
+      <h2>Inventario</h2>
+      <div class="acciones">
+        <button id="boton-generar-reporte-inventario" class="boton primario">Actualizar inventario</button>
+      </div>
+    </div>
+    <div class="tarjetas-resumen">
+      <div class="tarjeta-dato"><small>Productos</small><b id="rep-inv-total">0</b></div>
+      <div class="tarjeta-dato"><small>Unidades</small><b id="rep-inv-unidades">0</b></div>
+      <div class="tarjeta-dato"><small>Bajo mínimo</small><b id="rep-inv-bajo">0</b></div>
+    </div>
+    <div class="zona-reportes">
+      <div class="tarjeta">
+        <h3>Existencias por sucursal</h3>
+        <table class="tabla"><thead><tr><th>Sucursal</th><th class="num">Productos</th><th class="num">Unidades</th><th class="num">Bajo mínimo</th></tr></thead><tbody id="rep-inv-por-sucursal"></tbody></table>
+      </div>
+      <div class="tarjeta">
+        <h3>Productos bajo mínimo</h3>
+        <table class="tabla"><thead><tr><th>Sucursal</th><th>Producto</th><th class="num">Existencia</th><th class="num">Mínimo</th></tr></thead><tbody id="rep-inv-bajo-minimo"></tbody></table>
+      </div>
+    </div>
   </main>
 
   <!-- ============ APOYOS ============ -->

@@ -1,4 +1,4 @@
-// Reportes de ventas
+// Reportes de ventas e inventario
 function fechaHoy() {
   return new Date().toLocaleDateString('sv-SE');
 }
@@ -32,7 +32,28 @@ async function generarReporte() {
     .join('') || '<tr><td colspan="3">Sin ventas en el periodo</td></tr>';
 }
 
+async function generarReporteInventario() {
+  let url = '/api/reportes/inventario';
+  if (App.usuario.rol === 'admin') {
+    url += '?sucursal_id=' + document.getElementById('reporte-sucursal').value;
+  }
+  const r = await api(url);
+
+  document.getElementById('rep-inv-total').textContent = r.total_productos ?? 0;
+  document.getElementById('rep-inv-unidades').textContent = Number(r.total_unidades || 0).toFixed(0);
+  document.getElementById('rep-inv-bajo').textContent = r.bajo_minimo ?? 0;
+
+  document.getElementById('rep-inv-por-sucursal').innerHTML = (r.por_sucursal || [])
+    .map((s) => `<tr><td>${escaparHtml(s.sucursal)}</td><td class="num">${s.productos || 0}</td><td class="num">${Number(s.unidades || 0).toFixed(0)}</td><td class="num">${s.bajo_minimo || 0}</td></tr>`)
+    .join('') || '<tr><td colspan="4">Sin inventario</td></tr>';
+
+  document.getElementById('rep-inv-bajo-minimo').innerHTML = (r.bajo_minimo_detalle || [])
+    .map((p) => `<tr><td>${escaparHtml(p.sucursal)}</td><td>${escaparHtml(p.descripcion)}</td><td class="num">${Number(p.existencia || 0).toFixed(0)}</td><td class="num">${Number(p.minimo || 0).toFixed(0)}</td></tr>`)
+    .join('') || '<tr><td colspan="4">No hay productos bajo mínimo</td></tr>';
+}
+
 document.getElementById('boton-generar-reporte').addEventListener('click', generarReporte);
+document.getElementById('boton-generar-reporte-inventario').addEventListener('click', generarReporteInventario);
 
 document.addEventListener('app:listo', () => {
   document.getElementById('reporte-desde').value = fechaHoy();
@@ -43,6 +64,10 @@ document.addEventListener('app:listo', () => {
       '<option value="todas">Todas las sucursales</option>' +
       App.sucursales.map((s) => `<option value="${s.id}">${escaparHtml(s.nombre)}</option>`).join('');
   }
+  generarReporteInventario();
 });
 
-App.alMostrarSeccion.reportes = generarReporte;
+App.alMostrarSeccion.reportes = async () => {
+  await generarReporte();
+  await generarReporteInventario();
+};

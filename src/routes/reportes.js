@@ -71,4 +71,61 @@ router.get('/ventas', (req, res) => {
   res.json({ ...resumen, ganancia, por_dia: porDia, por_sucursal: porSucursal, mas_vendidos: masVendidos });
 });
 
+router.get('/inventario', (req, res) => {
+  const sucursalId = req.usuario.rol === 'admin'
+    ? (req.query.sucursal_id === 'todas' ? null : Number(req.query.sucursal_id) || req.usuario.sucursal_id)
+    : req.usuario.sucursal_id;
+
+  const resumen = db
+    .prepare(
+      `SELECT COUNT(*) AS productos_totales,
+              COALESCE(SUM(i.existencia), 0) AS unidades_totales,
+              COALESCE(SUM(CASE WHEN i.existencia <= i.minimo AND i.minimo > 0 THEN 1 ELSE 0 END), 0) AS bajo_minimo
+       FROM inventario i
+       JOIN productos p ON p.id = i.producto_id
+       WHERE p.activo = 1 AND p.usa_inventario = 1 ${sucursalId ? 'AND i.sucursal_id = @sucursalId' : ''}`
+    )
+    .get({ sucursalId });
+
+  const porSucursal = db
+    .prepare(
+      `SELECT s.nombre AS sucursal,
+              COUNT(i.producto_id) AS productos,
+              COALESCE(SUM(i.existencia), 0) AS unidades,
+              COALESCE(SUM(CASE WHEN i.existencia <= i.minimo AND i.minimo > 0 THEN 1 ELSE 0 END), 0) AS bajo_minimo
+       FROM sucursales s
+       LEFT JOIN inventario i ON i.sucursal_id = s.id
+       LEFT JOIN productos p ON p.id = i.producto_id AND p.activo = 1 AND p.usa_inventario = 1
+       WHERE s.activa = 1 ${sucursalId ? 'AND s.id = @sucursalId' : ''}
+       GROUP BY s.id, s.nombre
+       ORDER BY s.nombre`
+    )
+    .all({ sucursalId });
+
+  const bajoMinimo = db
+    .prepare(
+      `SELECT s.nombre AS sucursal, p.descripcion, p.codigo_barras,
+              i.existencia, i.minimo
+       FROM inventario i
+       JOIN productos p ON p.id = i.producto_id
+       JOIN sucursales s ON s.id = i.sucursal_id
+       WHERE p.activo = 1 AND p.usa_inventario = 1 AND i.existencia <= i.minimo AND i.minimo > 0
+         ${sucursalId ? 'AND i.sucursal_id = @sucursalId' : ''}
+       ORDER BY i.existencia ASC, p.descripcion`
+    )
+    .all({ sucursalId });
+
+  const totalProductos = Number(resumen.productos_totales || 0);
+  const totalUnidades = Number(resumen.unidades_totales || 0);
+  const totalBajoMinimo = Number(resumen.bajo_minimo || 0);
+
+  res.json({
+    total_productos: totalProductos,
+    total_unidades: totalUnidades,
+    bajo_minimo: totalBajoMinimo,
+    por_sucursal: porSucursal,
+    bajo_minimo_detalle: bajoMinimo,
+  });
+});
+
 module.exports = router;

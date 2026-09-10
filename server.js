@@ -1,3 +1,5 @@
+require('dotenv').config();
+
 const path = require('path');
 const express = require('express');
 const { router: authRouter, requiereSesion } = require('./src/auth');
@@ -7,6 +9,7 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.use('/api/auth', authRouter);
+app.use('/api/sync', require('./src/routes/sync'));
 app.use('/api/productos', requiereSesion, require('./src/routes/productos'));
 app.use('/api/ventas', requiereSesion, require('./src/routes/ventas'));
 app.use('/api/clientes', requiereSesion, require('./src/routes/clientes'));

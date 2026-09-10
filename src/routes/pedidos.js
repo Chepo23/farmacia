@@ -2,20 +2,70 @@
 // Sustituye la lista escrita a mano que antes se mandaba por foto.
 const express = require('express');
 const db = require('../db');
+const { supabaseAdmin, hasSupabase } = require('../sync/supabase-client');
 
 const router = express.Router();
 
-function buscarProducto(body) {
+async function buscarProductoEnCentral(productoId, codigo) {
+  if (!hasSupabase || !supabaseAdmin) return null;
+  let query = supabaseAdmin.from('productos').select('*').eq('activo', true);
+  if (productoId) query = query.eq('id', Number(productoId));
+  if (codigo) query = query.eq('codigo_barras', codigo);
+  const { data, error } = await query.limit(1);
+  if (error) throw error;
+  return (data || [])[0] || null;
+}
+
+async function buscarProducto(body) {
   if (body.producto_id) {
-    return db
+    const local = db
       .prepare('SELECT * FROM productos WHERE id = ? AND activo = 1 AND es_comun = 0')
       .get(body.producto_id);
+    if (local) return local;
+    try {
+      return await buscarProductoEnCentral(body.producto_id, null);
+    } catch {
+      return null;
+    }
   }
   const codigo = (body.codigo_barras || '').trim();
   if (!codigo) return null;
-  return db
+  const local = db
     .prepare('SELECT * FROM productos WHERE codigo_barras = ? AND activo = 1 AND es_comun = 0')
     .get(codigo);
+  if (local) return local;
+  try {
+    return await buscarProductoEnCentral(null, codigo);
+  } catch {
+    return null;
+  }
+}
+
+function asegurarProductoLocal(producto) {
+  if (!producto) return null;
+  const codigo = (producto.codigo_barras || '').trim();
+  const existente = codigo
+    ? db.prepare('SELECT * FROM productos WHERE codigo_barras = ?').get(codigo)
+    : db.prepare('SELECT * FROM productos WHERE descripcion = ?').get((producto.descripcion || '').trim());
+  if (existente) return existente;
+
+  const info = db.prepare(
+    `INSERT INTO productos (codigo_barras, descripcion, departamento, precio_costo, precio_venta, precio_mayoreo, cantidad_mayoreo, usa_inventario, es_comun, activo)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    codigo || null,
+    (producto.descripcion || '').trim(),
+    (producto.departamento || '').trim(),
+    Number(producto.precio_costo) || 0,
+    Number(producto.precio_venta) || 0,
+    producto.precio_mayoreo != null ? Number(producto.precio_mayoreo) : null,
+    producto.cantidad_mayoreo != null ? Number(producto.cantidad_mayoreo) : null,
+    Boolean(producto.usa_inventario) ? 1 : 0,
+    Boolean(producto.es_comun) ? 1 : 0,
+    Boolean(producto.activo) ? 1 : 0
+  );
+
+  return db.prepare('SELECT * FROM productos WHERE id = ?').get(info.lastInsertRowid);
 }
 
 function cargarPedido(id) {
@@ -121,27 +171,28 @@ router.get('/:id', (req, res) => {
 });
 
 // ---------- Renglones ----------
-router.post('/:id/renglones', (req, res) => {
+router.post('/:id/renglones', async (req, res) => {
   const pedido = cargarPedido(req.params.id);
   if (!pedido) return res.status(404).json({ error: 'Pedido no encontrado' });
   if (!puedeEditar(pedido, req.usuario)) {
     return res.status(400).json({ error: 'Solo se puede modificar un pedido en borrador de tu farmacia' });
   }
-  const producto = buscarProducto(req.body || {});
+  const producto = await buscarProducto(req.body || {});
   if (!producto) return res.status(404).json({ error: 'Producto no encontrado' });
   const cantidad = Number(req.body.cantidad ?? 1);
   if (!(cantidad > 0)) return res.status(400).json({ error: 'Cantidad no válida' });
 
+  const productoLocal = asegurarProductoLocal(producto);
   const existente = db
     .prepare('SELECT * FROM pedido_detalle WHERE pedido_id = ? AND producto_id = ?')
-    .get(pedido.id, producto.id);
+    .get(pedido.id, productoLocal.id);
   if (existente) {
     db.prepare('UPDATE pedido_detalle SET cantidad = cantidad + ? WHERE id = ?').run(cantidad, existente.id);
   } else {
     db.prepare(
       `INSERT INTO pedido_detalle (pedido_id, producto_id, codigo_barras, descripcion, cantidad)
        VALUES (?, ?, ?, ?, ?)`
-    ).run(pedido.id, producto.id, producto.codigo_barras, producto.descripcion, cantidad);
+    ).run(pedido.id, productoLocal.id, productoLocal.codigo_barras, productoLocal.descripcion, cantidad);
   }
   res.json(cargarPedido(pedido.id));
 });
