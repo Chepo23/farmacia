@@ -40,7 +40,12 @@ async function cargarAdmin() {
         <td>${escaparHtml(s.nombre)}${s.es_central ? ' ⭐' : ''}</td>
         <td>${escaparHtml(s.direccion)}</td>
         <td>${escaparHtml(s.telefono)}</td>
-        <td><button class="boton chico" data-accion="editar" data-id="${s.id}">Editar</button></td>
+        <td style="white-space:nowrap">
+          <button class="boton chico" data-accion="editar" data-id="${s.id}">Editar</button>
+          <button class="boton chico peligro-suave" data-accion="eliminar-sucursal" data-id="${s.id}" title="Eliminar sucursal" ${s.es_central ? 'disabled' : ''}>
+            <svg class="icono"><use href="#i-basura"/></svg>
+          </button>
+        </td>
       </tr>`
     )
     .join('');
@@ -196,10 +201,10 @@ document.getElementById('cuerpo-usuarios').addEventListener('click', async (e) =
   if (!usuario) return;
   if (boton.dataset.accion === 'editar') formularioUsuario(usuario);
   if (boton.dataset.accion === 'eliminar') {
-    if (confirm(`¿Desactivar al usuario "${usuario.nombre}"?`)) {
+    if (confirm(`¿Eliminar al usuario "${usuario.nombre}" de forma permanente?`)) {
       try {
         await api('/api/admin/usuarios/' + usuario.id, { method: 'DELETE' });
-        aviso('Usuario desactivado');
+        aviso('Usuario eliminado', 'exito');
         cargarAdmin();
       } catch (err) {
         aviso(err.message, 'error');
@@ -208,11 +213,31 @@ document.getElementById('cuerpo-usuarios').addEventListener('click', async (e) =
   }
 });
 
-document.getElementById('cuerpo-sucursales').addEventListener('click', (e) => {
+document.getElementById('cuerpo-sucursales').addEventListener('click', async (e) => {
   const boton = e.target.closest('button[data-accion]');
   if (!boton) return;
   const sucursal = Admin.sucursales.find((s) => s.id === Number(boton.dataset.id));
-  if (sucursal) formularioSucursal(sucursal);
+  if (!sucursal) return;
+
+  if (boton.dataset.accion === 'editar') {
+    formularioSucursal(sucursal);
+    return;
+  }
+
+  if (boton.dataset.accion === 'eliminar-sucursal') {
+    const confirmarPrimero = confirm(`¿Deseas eliminar la sucursal "${sucursal.nombre}" de forma permanente?`);
+    if (!confirmarPrimero) return;
+    const confirmarSegundo = confirm('Se eliminarán también sus usuarios, ventas y registros asociados. ¿Confirmas la eliminación final?');
+    if (!confirmarSegundo) return;
+
+    try {
+      await api('/api/admin/sucursales/' + sucursal.id, { method: 'DELETE' });
+      aviso('Sucursal eliminada', 'exito');
+      cargarAdmin();
+    } catch (err) {
+      aviso(err.message, 'error');
+    }
+  }
 });
 
 App.alMostrarSeccion.admin = cargarAdmin;

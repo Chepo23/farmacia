@@ -166,14 +166,16 @@ create index if not exists idx_inventario_sucursal on public.inventario (sucursa
 create index if not exists idx_mini_apoyos_estado on public.mini_apoyos (estado, destino_sucursal_id);
 create index if not exists idx_sync_estado_estado on public.sync_estado (entidad, estado, updated_at);
 
--- Optional: tabla de usuarios central si quieres autenticar desde Supabase y no solo desde SQLite local.
+-- Tabla central de usuarios alineada con el esquema real: solo sincronizamos
+-- los campos que de verdad existen en Supabase para evitar errores de esquema.
 create table if not exists public.usuarios_central (
   id bigserial primary key,
   nombre text not null,
-  email text unique,
-  rol text not null default 'admin' check (rol in ('admin', 'operador')),
+  usuario text not null unique,
+  rol text not null default 'admin' check (rol in ('admin', 'cajero')),
   activo boolean not null default true,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
 );
 
 -- ejemplo inicial de sucursal central

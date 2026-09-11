@@ -34,8 +34,8 @@ function requiereSesion(req, res, next) {
 }
 
 function requiereAdmin(req, res, next) {
-  if (req.usuario.rol !== 'admin') {
-    return res.status(403).json({ error: 'Se requiere permiso de administrador' });
+  if (req.usuario.rol !== 'admin' || req.usuario.es_central !== 1) {
+    return res.status(403).json({ error: 'Solo el administrador de la sucursal central puede administrar usuarios y sucursales' });
   }
   next();
 }

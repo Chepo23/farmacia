@@ -163,7 +163,7 @@ async function iniciar() {
   await pedirApertura();
   document.getElementById('info-usuario').textContent =
     `${App.usuario.nombre} — ${App.usuario.sucursal} — T.C. $${(App.apertura.tipo_cambio || 0).toFixed(2)}`;
-  if (App.usuario.rol === 'admin') {
+  if (App.usuario.rol === 'admin' && App.usuario.es_central === 1) {
     document.querySelectorAll('.solo-admin').forEach((el) => { el.hidden = false; });
   }
   document.getElementById('entrada-codigo').focus();
