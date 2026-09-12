@@ -20,20 +20,6 @@ function productoComun() {
 
 async function buscarProductoLocalOCentral(id, sucursalId) {
   const local = db.prepare('SELECT * FROM productos WHERE id = ? AND activo = 1').get(id);
-  if (local && (!hasSupabase || !supabaseAdmin)) return local;
-
-  if (local && hasSupabase && supabaseAdmin) {
-    const { data: inventario, error: inventarioError } = await supabaseAdmin.from('inventario')
-      .select('existencia,minimo').eq('producto_id', Number(id)).eq('sucursal_id', Number(sucursalId)).maybeSingle();
-    if (inventarioError) throw inventarioError;
-    if (inventario) {
-      db.prepare(`INSERT INTO inventario (producto_id,sucursal_id,existencia,minimo) VALUES (?,?,?,?)
-        ON CONFLICT(producto_id,sucursal_id) DO UPDATE SET existencia=excluded.existencia,minimo=excluded.minimo`)
-        .run(id, sucursalId, inventario.existencia || 0, inventario.minimo || 0);
-    }
-    return db.prepare('SELECT * FROM productos WHERE id = ? AND activo = 1').get(id);
-  }
-
   if (!hasSupabase || !supabaseAdmin) return local;
 
   const { data, error } = await supabaseAdmin.from('productos')
@@ -41,6 +27,11 @@ async function buscarProductoLocalOCentral(id, sucursalId) {
   if (error) throw error;
   if (!data) return null;
 
+  // Los IDs de SQLite pueden apuntar a otro producto; Supabase es la autoridad cuando hay internet.
+  if (data.codigo_barras) {
+    db.prepare('UPDATE productos SET codigo_barras = NULL, activo = 0 WHERE codigo_barras = ? AND id <> ?')
+      .run(data.codigo_barras, data.id);
+  }
   db.prepare(`INSERT INTO productos (id,codigo_barras,descripcion,departamento,precio_costo,precio_venta,
     precio_mayoreo,cantidad_mayoreo,usa_inventario,es_comun,activo) VALUES (?,?,?,?,?,?,?,?,?,?,?)
     ON CONFLICT(id) DO UPDATE SET codigo_barras=excluded.codigo_barras,descripcion=excluded.descripcion,
