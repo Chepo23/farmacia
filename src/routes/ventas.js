@@ -141,7 +141,13 @@ router.post('/', async (req, res) => {
     } catch (error) {
       return res.status(502).json({ error: 'No se pudo consultar el producto central: ' + error.message });
     }
-    if (!producto) return res.status(400).json({ error: `Producto ${p.producto_id} no existe` });
+    if (!producto) {
+      return res.status(400).json({
+        error: hasSupabase
+          ? `El producto ${p.producto_id} no existe activo en Supabase o no se pudo sincronizar en esta computadora`
+          : `El producto ${p.producto_id} no existe en SQLite y esta computadora no tiene Supabase configurado`,
+      });
+    }
 
     // No permitir vender más de lo que hay en existencia
     if (producto.usa_inventario) {
