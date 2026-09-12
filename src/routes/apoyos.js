@@ -127,6 +127,23 @@ function cargarApoyo(id) {
   return apoyo;
 }
 
+async function cargarApoyoConInventarioCentral(id) {
+  const apoyo = cargarApoyo(id);
+  if (!apoyo || !hasSupabase || !supabaseAdmin || apoyo.renglones.length === 0) return apoyo;
+  const ids = apoyo.renglones.filter((r) => r.usa_inventario).map((r) => r.producto_id);
+  if (!ids.length) return apoyo;
+  const { data, error } = await supabaseAdmin.from('inventario')
+    .select('producto_id,existencia,minimo')
+    .eq('sucursal_id', Number(apoyo.origen_id)).in('producto_id', ids);
+  if (error) throw error;
+  const inventario = new Map((data || []).map((r) => [Number(r.producto_id), r]));
+  apoyo.renglones = apoyo.renglones.map((r) => {
+    const central = inventario.get(Number(r.producto_id));
+    return central ? { ...r, existencia_origen: Number(central.existencia || 0), minimo: Number(central.minimo || 0) } : r;
+  });
+  return apoyo;
+}
+
 function puedeVer(apoyo, usuario) {
   if (apoyo.origen_id === usuario.sucursal_id) return true;
   return apoyo.destino_id === usuario.sucursal_id && apoyo.estado !== 'borrador';
@@ -178,7 +195,7 @@ router.get('/', async (req, res) => {
 });
 
 // ---------- Abrir o crear el borrador hacia una sucursal ----------
-router.post('/', requiereCentral, (req, res) => {
+router.post('/', requiereCentral, async (req, res) => {
   const destinoId = Number(req.body?.destino_id);
   const destino = db.prepare('SELECT * FROM sucursales WHERE id = ? AND activa = 1').get(destinoId);
   if (!destino) return res.status(400).json({ error: 'Sucursal de destino no válida' });
@@ -192,7 +209,7 @@ router.post('/', requiereCentral, (req, res) => {
       "SELECT id FROM apoyos WHERE origen_id = ? AND destino_id = ? AND estado = 'borrador' ORDER BY id DESC"
     )
     .get(req.usuario.sucursal_id, destinoId);
-  if (abierto && !req.body.pedido_id) return res.json(cargarApoyo(abierto.id));
+  if (abierto && !req.body.pedido_id) return res.json(await cargarApoyoConInventarioCentral(abierto.id));
 
   let pedido = null;
   if (req.body.pedido_id) {
@@ -255,13 +272,13 @@ router.post('/', requiereCentral, (req, res) => {
     return apoyoId;
   })();
 
-  const respuesta = cargarApoyo(id);
+  const respuesta = await cargarApoyoConInventarioCentral(id);
   publicarSinBloquear(id);
   res.json(respuesta);
 });
 
-router.get('/:id', (req, res) => {
-  const apoyo = cargarApoyo(req.params.id);
+router.get('/:id', async (req, res) => {
+  const apoyo = await cargarApoyoConInventarioCentral(req.params.id);
   if (!apoyo) return res.status(404).json({ error: 'Apoyo no encontrado' });
   if (!puedeVer(apoyo, req.usuario)) return res.status(403).json({ error: 'Ese apoyo no es de tu farmacia' });
   res.json(apoyo);
@@ -344,8 +361,8 @@ router.put('/:id', requiereCentral, (req, res) => {
 });
 
 // ---------- Enviar: la mercancía sale del inventario de la central ----------
-router.post('/:id/enviar', requiereCentral, (req, res) => {
-  const apoyo = cargarApoyo(req.params.id);
+router.post('/:id/enviar', requiereCentral, async (req, res) => {
+  const apoyo = await cargarApoyoConInventarioCentral(req.params.id);
   if (!apoyo) return res.status(404).json({ error: 'Apoyo no encontrado' });
   const problema = verificarEdicion(apoyo, req.usuario);
   if (problema) return res.status(400).json({ error: problema });

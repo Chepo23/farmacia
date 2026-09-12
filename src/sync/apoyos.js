@@ -1,25 +1,31 @@
 const db = require('../db');
 const { supabaseAdmin, hasSupabase } = require('./supabase-client');
 
+function entero(valor) {
+  if (valor === null || valor === undefined || valor === '') return null;
+  const numero = Number(valor);
+  return Number.isFinite(numero) ? Math.trunc(numero) : null;
+}
+
 async function publicarApoyo(id) {
   if (!hasSupabase || !supabaseAdmin) return;
   const apoyo = db.prepare('SELECT * FROM apoyos WHERE id = ?').get(id);
   if (!apoyo) return;
   const { error } = await supabaseAdmin.from('apoyos').upsert({
-    id: apoyo.id,
-    folio: apoyo.folio,
-    origen_id: apoyo.origen_id,
-    destino_id: apoyo.destino_id,
-    pedido_id: apoyo.pedido_id,
+    id: entero(apoyo.id),
+    folio: entero(apoyo.folio),
+    origen_id: entero(apoyo.origen_id),
+    destino_id: entero(apoyo.destino_id),
+    pedido_id: entero(apoyo.pedido_id),
     estado: apoyo.estado,
     nota: apoyo.nota || '',
-    creado_por: apoyo.creado_por,
+    creado_por: entero(apoyo.creado_por),
     creado: apoyo.creado,
-    enviado_por: apoyo.enviado_por,
+    enviado_por: entero(apoyo.enviado_por),
     enviado: apoyo.enviado,
-    recibido_por: apoyo.recibido_por,
+    recibido_por: entero(apoyo.recibido_por),
     recibido: apoyo.recibido,
-    cancelado_por: apoyo.cancelado_por,
+    cancelado_por: entero(apoyo.cancelado_por),
     cancelado: apoyo.cancelado,
     motivo_cancelacion: apoyo.motivo_cancelacion || '',
     updated_at: new Date().toISOString(),
@@ -30,9 +36,9 @@ async function publicarApoyo(id) {
   if (renglones.length) {
     const { error: detalleError } = await supabaseAdmin.from('apoyo_detalle').upsert(
       renglones.map((r) => ({
-        id: r.id,
-        apoyo_id: r.apoyo_id,
-        producto_id: r.producto_id,
+        id: entero(r.id),
+        apoyo_id: entero(r.apoyo_id),
+        producto_id: entero(r.producto_id),
         codigo_barras: r.codigo_barras,
         descripcion: r.descripcion,
         cantidad: r.cantidad,
@@ -90,19 +96,19 @@ async function descargarApoyos() {
       precio_venta=excluded.precio_venta,precio_mayoreo=excluded.precio_mayoreo,importe=excluded.importe`);
 
   const sincronizar = db.transaction(() => {
-    for (const s of sucursales || []) upsertSucursal.run(s.id, s.nombre, s.direccion || '', s.telefono || '', s.es_central ? 1 : 0, 1);
+    for (const s of sucursales || []) upsertSucursal.run(entero(s.id), s.nombre, s.direccion || '', s.telefono || '', s.es_central ? 1 : 0, 1);
     for (const u of usuarios || []) {
-      if (u.password_hash) upsertUsuario.run(u.id, u.nombre, u.usuario, u.password_hash, u.rol, u.sucursal_id, 1);
+      if (u.password_hash) upsertUsuario.run(entero(u.id), u.nombre, u.usuario, u.password_hash, u.rol, entero(u.sucursal_id), 1);
     }
-    for (const p of productos || []) upsertProducto.run(p.id, p.codigo_barras, p.descripcion, p.departamento || '',
+    for (const p of productos || []) upsertProducto.run(entero(p.id), p.codigo_barras, p.descripcion, p.departamento || '',
       p.precio_costo || 0, p.precio_venta || 0, p.precio_mayoreo, p.cantidad_mayoreo, p.usa_inventario ? 1 : 0,
       p.es_comun ? 1 : 0, p.activo ? 1 : 0);
     for (const a of apoyos || []) {
-      upsertApoyo.run(a.id, a.folio, a.origen_id, a.destino_id, a.pedido_id, a.estado, a.nota || '', a.creado_por,
+      upsertApoyo.run(entero(a.id), entero(a.folio), entero(a.origen_id), entero(a.destino_id), entero(a.pedido_id), a.estado, a.nota || '', entero(a.creado_por),
         a.creado, a.enviado_por, a.enviado, a.recibido_por, a.recibido, a.cancelado_por, a.cancelado, a.motivo_cancelacion || '');
     }
     for (const r of detalles || []) {
-      upsertDetalle.run(r.id, r.apoyo_id, r.producto_id, r.codigo_barras, r.descripcion, r.cantidad,
+      upsertDetalle.run(entero(r.id), entero(r.apoyo_id), entero(r.producto_id), r.codigo_barras, r.descripcion, r.cantidad,
         r.cantidad_recibida, r.precio_costo, r.precio_venta, r.precio_mayoreo, r.importe);
     }
   });
@@ -128,15 +134,15 @@ async function publicarPedidoSinBloquear(id) {
     const pedido = db.prepare('SELECT * FROM pedidos WHERE id = ?').get(id);
     if (!pedido) return;
     const { error } = await supabaseAdmin.from('pedidos').upsert({
-      id: pedido.id, folio: pedido.folio, sucursal_id: pedido.sucursal_id, estado: pedido.estado,
-      nota: pedido.nota || '', creado_por: pedido.creado_por, creado: pedido.creado,
-      enviado_por: pedido.enviado_por, enviado: pedido.enviado, updated_at: new Date().toISOString(),
+      id: entero(pedido.id), folio: entero(pedido.folio), sucursal_id: entero(pedido.sucursal_id), estado: pedido.estado,
+      nota: pedido.nota || '', creado_por: entero(pedido.creado_por), creado: pedido.creado,
+      enviado_por: entero(pedido.enviado_por), enviado: pedido.enviado, updated_at: new Date().toISOString(),
     }, { onConflict: 'id' });
     if (error) throw error;
     const detalles = db.prepare('SELECT * FROM pedido_detalle WHERE pedido_id = ?').all(id);
     if (detalles.length) {
       const { error: detalleError } = await supabaseAdmin.from('pedido_detalle').upsert(detalles.map((r) => ({
-        id: r.id, pedido_id: r.pedido_id, producto_id: r.producto_id, codigo_barras: r.codigo_barras,
+        id: entero(r.id), pedido_id: entero(r.pedido_id), producto_id: entero(r.producto_id), codigo_barras: r.codigo_barras,
         descripcion: r.descripcion, cantidad: r.cantidad, cantidad_surtida: r.cantidad_surtida,
       })), { onConflict: 'id' });
       if (detalleError) throw detalleError;
@@ -162,9 +168,9 @@ async function descargarPedidos() {
     VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET pedido_id=excluded.pedido_id,producto_id=excluded.producto_id,
       descripcion=excluded.descripcion,cantidad=excluded.cantidad,cantidad_surtida=excluded.cantidad_surtida`);
   db.transaction(() => {
-    for (const p of pedidos || []) upsertPedido.run(p.id, p.folio, p.sucursal_id, p.estado, p.nota || '', p.creado_por,
+    for (const p of pedidos || []) upsertPedido.run(entero(p.id), entero(p.folio), entero(p.sucursal_id), p.estado, p.nota || '', entero(p.creado_por),
       p.creado, p.enviado_por, p.enviado);
-    for (const d of detalles || []) upsertDetalle.run(d.id, d.pedido_id, d.producto_id, d.codigo_barras, d.descripcion,
+    for (const d of detalles || []) upsertDetalle.run(entero(d.id), entero(d.pedido_id), entero(d.producto_id), d.codigo_barras, d.descripcion,
       d.cantidad, d.cantidad_surtida);
   })();
 }

@@ -869,9 +869,9 @@ button { cursor: pointer; }
   to { background: transparent; }
 }
 .panel-apoyo {
-  width: 310px; background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 16px; display: flex; flex-direction: column; gap: 12px; box-shadow: var(--shadow);
-}
+  width: 310px; background: var(--surface); border: 1px solid var(--line); border-radius: 18px;
   padding: 16px; display: flex; flex-direction: column; gap: 10px; overflow-y: auto;
+  box-shadow: var(--shadow);
 }
 .panel-apoyo .total-grande { font-size: 40px; }
 .panel-apoyo hr { border: 0; border-top: 1px solid var(--gris-borde-suave); margin: 4px 0; width: 100%; }
@@ -885,4 +885,111 @@ button { cursor: pointer; }
   .zona-apoyos { grid-template-columns: 1fr; }
   .zona-apoyo { flex-direction: column; height: auto; }
   .panel-apoyo { width: 100%; }
+}
+
+/* ---------- Responsive final ---------- */
+@media (max-width: 900px) {
+  body { font-size: 13px; }
+  .barra-superior {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    margin-bottom: 14px;
+    border-radius: 0 0 18px 18px;
+  }
+  .marca { flex: 1 1 auto; justify-content: flex-start; gap: 8px; }
+  .logo-header { height: 48px; border-radius: 10px; }
+  .marca-texto { font-size: 14px; letter-spacing: .6px; }
+  .marca-texto :last-child { margin-top: 3px; transform: none; }
+  .info-sesion { flex: 0 1 auto; max-width: 44%; gap: 6px; font-size: 10px; }
+  #info-usuario { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .info-sesion .boton { padding: 7px 9px; font-size: 11px; }
+  .menu {
+    order: 3;
+    width: calc(100% + 4px);
+    justify-content: flex-start;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: thin;
+    padding-bottom: 2px;
+  }
+  .pestania { flex: 0 0 auto; padding: 8px 10px; font-size: 12px; }
+  .pestania small { display: none; }
+  .seccion { padding: 0 10px 14px; }
+  .encabezado-seccion { align-items: stretch; }
+  .encabezado-seccion h2 { font-size: 20px; }
+  .acciones { width: 100%; }
+  .acciones > * { flex: 1 1 auto; }
+  .acciones .entrada { min-width: 0; width: 100%; }
+
+  .contenedor-tabla,
+  .apoyos-tabla,
+  .resultados-busqueda,
+  .historial-tabla { overflow-x: auto; }
+  .tabla { min-width: 640px; }
+  .tabla-venta { min-width: 560px; }
+  .tabla th, .tabla td { padding: 10px 11px; }
+
+  .zona-venta { min-height: 0; gap: 12px; }
+  .entrada-codigo { padding: 13px 14px; font-size: 16px; }
+  .ayuda-teclas { gap: 6px 12px; font-size: 11px; }
+  .captura-venta .contenedor-tabla { min-height: 180px; max-height: 48vh; }
+  .panel-total { padding: 15px; border-radius: 16px; }
+  .total-grande { font-size: clamp(34px, 10vw, 46px); }
+
+  .tarjeta { padding: 14px; }
+  .zona-admin, .zona-reportes, .zona-corte, .zona-apoyos { gap: 12px; }
+  .tarjetas-resumen { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .tarjeta-dato { padding: 11px 12px; }
+  .tarjeta-dato b { font-size: 19px; }
+
+  .fondo-modal { align-items: flex-end; padding: 0; }
+  .modal, .modal.grande {
+    width: 100%;
+    max-width: none;
+    max-height: 92vh;
+    border-radius: 20px 20px 0 0;
+    padding: 16px 14px 14px;
+  }
+  .modal .fila { flex-direction: column; gap: 10px; }
+  .modal .fila > label { min-width: 0; width: 100%; }
+  .modal .pie { flex-wrap: wrap; }
+  .modal .pie .boton { flex: 1 1 140px; }
+}
+
+@media (max-width: 600px) {
+  .barra-superior { flex-wrap: wrap; }
+  .marca { max-width: 65%; }
+  .info-sesion { max-width: 35%; }
+  .info-sesion #info-usuario { display: none; }
+  .pestania { border-radius: 10px; padding: 8px 9px; }
+  .pestania .icono { width: 14px; height: 14px; }
+  .seccion { padding-inline: 8px; }
+  .encabezado-seccion h2 { font-size: 18px; }
+  .acciones { gap: 6px; }
+  .acciones .boton { padding: 9px 10px; font-size: 11px; }
+  .acciones .entrada { flex-basis: 100%; }
+  .tabla { min-width: 600px; }
+  .tabla-venta { min-width: 520px; }
+  .tabla-venta td { font-size: 13px; }
+  .tabla-venta .col-cant { width: 84px; }
+  .tabla-venta input.cantidad { width: 64px; }
+  .panel-total .boton.grande { font-size: 14px; }
+  .tarjetas-resumen { grid-template-columns: 1fr 1fr; }
+  .franja-aviso { align-items: stretch; }
+  .franja-aviso .boton { width: 100%; }
+  .tarjeta-farmacia { min-width: min(100%, 220px); flex: 1 1 100%; }
+  .total-cobro, .cambio-grande { font-size: 34px; }
+  .aviso { width: calc(100vw - 24px); text-align: center; bottom: 12px; }
+}
+
+@media (max-width: 380px) {
+  .logo-header { height: 40px; }
+  .marca-texto { font-size: 12px; }
+  .info-sesion .boton { padding-inline: 7px; }
+  .pestania { padding-inline: 8px; }
+  .tabla { min-width: 560px; }
 }
