@@ -177,6 +177,23 @@ document.getElementById('cuerpo-venta').addEventListener('click', (e) => {
   }
 });
 
+document.addEventListener('keydown', (e) => {
+  if (!['+', '-'].includes(e.key) || hayModalAbierto() || Venta.filaSeleccionada < 0) return;
+  const renglon = Venta.carrito[Venta.filaSeleccionada];
+  if (!renglon) return;
+  e.preventDefault();
+  if (e.key === '+') {
+    agregarProducto(renglon.producto, 1);
+    return;
+  }
+  renglon.cantidad -= 1;
+  if (renglon.cantidad <= 0) {
+    Venta.carrito.splice(Venta.filaSeleccionada, 1);
+    Venta.filaSeleccionada = Math.min(Venta.filaSeleccionada, Venta.carrito.length - 1);
+  }
+  pintarVenta();
+});
+
 function cancelarVenta() {
   if (Venta.carrito.length === 0) return;
   Venta.carrito = [];
@@ -212,7 +229,7 @@ function abrirBusquedaProducto() {
         (p, i) => `<tr data-indice="${i}" class="${i === seleccion ? 'seleccionado' : ''}">
           <td>${escaparHtml(p.descripcion)}</td>
           <td class="num">${dinero(p.precio_venta)}</td>
-          <td class="num">${p.usa_inventario ? p.existencia_local : '—'}</td>
+          <td class="num">${p.usa_inventario ? existenciaLocal(p) : '—'}</td>
         </tr>`
       )
       .join('');
@@ -380,11 +397,12 @@ async function abrirCobro() {
   });
 }
 
-function mostrarVentaTerminada({ folio, cambio }) {
+function mostrarVentaTerminada({ folio, cambio, inventarioSincronizado, avisoSincronizacion }) {
   const modal = abrirModal(`
     <h3>Venta realizada — Folio ${folio}</h3>
     <div>CAMBIO:</div>
     <div class="cambio-grande">${dinero(cambio)}</div>
+    ${inventarioSincronizado === false ? `<div class="mensaje-error">La venta quedó guardada localmente, pero el inventario central no se actualizó: ${escaparHtml(avisoSincronizacion || 'reintenta con internet')}.</div>` : ''}
     <div class="pie">
       <button class="boton primario grande" id="terminada-cerrar">Cerrar (Enter/Esc)</button>
     </div>

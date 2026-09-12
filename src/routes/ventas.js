@@ -1,5 +1,6 @@
 const express = require('express');
 const db = require('../db');
+const { supabaseAdmin, hasSupabase } = require('../sync/supabase-client');
 
 const router = express.Router();
 
@@ -17,8 +18,80 @@ function productoComun() {
   return p;
 }
 
+async function buscarProductoLocalOCentral(id, sucursalId) {
+  const local = db.prepare('SELECT * FROM productos WHERE id = ? AND activo = 1').get(id);
+  if (local && (!hasSupabase || !supabaseAdmin)) return local;
+
+  if (local && hasSupabase && supabaseAdmin) {
+    const { data: inventario, error: inventarioError } = await supabaseAdmin.from('inventario')
+      .select('existencia,minimo').eq('producto_id', Number(id)).eq('sucursal_id', Number(sucursalId)).maybeSingle();
+    if (inventarioError) throw inventarioError;
+    if (inventario) {
+      db.prepare(`INSERT INTO inventario (producto_id,sucursal_id,existencia,minimo) VALUES (?,?,?,?)
+        ON CONFLICT(producto_id,sucursal_id) DO UPDATE SET existencia=excluded.existencia,minimo=excluded.minimo`)
+        .run(id, sucursalId, inventario.existencia || 0, inventario.minimo || 0);
+    }
+    return db.prepare('SELECT * FROM productos WHERE id = ? AND activo = 1').get(id);
+  }
+
+  if (!hasSupabase || !supabaseAdmin) return local;
+
+  const { data, error } = await supabaseAdmin.from('productos')
+    .select('*').eq('id', Number(id)).eq('activo', true).maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+
+  db.prepare(`INSERT INTO productos (id,codigo_barras,descripcion,departamento,precio_costo,precio_venta,
+    precio_mayoreo,cantidad_mayoreo,usa_inventario,es_comun,activo) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(id) DO UPDATE SET codigo_barras=excluded.codigo_barras,descripcion=excluded.descripcion,
+      departamento=excluded.departamento,precio_costo=excluded.precio_costo,precio_venta=excluded.precio_venta,
+      precio_mayoreo=excluded.precio_mayoreo,cantidad_mayoreo=excluded.cantidad_mayoreo,
+      usa_inventario=excluded.usa_inventario,es_comun=excluded.es_comun,activo=excluded.activo`).run(
+    data.id, data.codigo_barras, data.descripcion, data.departamento || '', data.precio_costo || 0,
+    data.precio_venta || 0, data.precio_mayoreo, data.cantidad_mayoreo, data.usa_inventario ? 1 : 0,
+    data.es_comun ? 1 : 0, 1
+  );
+  const { data: inventario, error: inventarioError } = await supabaseAdmin.from('inventario')
+    .select('existencia,minimo').eq('producto_id', Number(id)).eq('sucursal_id', Number(sucursalId)).maybeSingle();
+  if (inventarioError) throw inventarioError;
+  if (inventario) {
+    db.prepare(`INSERT INTO inventario (producto_id,sucursal_id,existencia,minimo) VALUES (?,?,?,?)
+      ON CONFLICT(producto_id,sucursal_id) DO UPDATE SET existencia=excluded.existencia,minimo=excluded.minimo`)
+      .run(id, sucursalId, inventario.existencia || 0, inventario.minimo || 0);
+  }
+  return db.prepare('SELECT * FROM productos WHERE id = ? AND activo = 1').get(id);
+}
+
+async function sincronizarDescuentoCentral(renglones, sucursalId, usuarioId) {
+  if (!hasSupabase || !supabaseAdmin) return null;
+  const cantidades = new Map();
+  for (const renglon of renglones) {
+    if (!renglon.usa_inventario) continue;
+    cantidades.set(renglon.producto_id, (cantidades.get(renglon.producto_id) || 0) + renglon.cantidad);
+  }
+  for (const [productoId, cantidad] of cantidades) {
+    const { data: inventario, error: consultaError } = await supabaseAdmin.from('inventario')
+      .select('existencia,minimo').eq('producto_id', productoId).eq('sucursal_id', sucursalId).maybeSingle();
+    if (consultaError) throw consultaError;
+    const existencia = Number(inventario?.existencia || 0);
+    if (!inventario || cantidad > existencia) {
+      throw new Error(`El inventario central no tiene existencia suficiente para el producto ${productoId}`);
+    }
+    const { error: updateError } = await supabaseAdmin.from('inventario')
+      .update({ existencia: existencia - cantidad, updated_at: new Date().toISOString() })
+      .eq('producto_id', productoId).eq('sucursal_id', sucursalId);
+    if (updateError) throw updateError;
+    const { error: movimientoError } = await supabaseAdmin.from('movimientos_inventario').insert({
+      producto_id: productoId, sucursal_id: sucursalId, tipo: 'venta', cantidad,
+      usuario_id: usuarioId, nota: 'Venta local sincronizada',
+    });
+    if (movimientoError) throw movimientoError;
+  }
+  return true;
+}
+
 // Registrar una venta completa
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   const { partidas, forma_pago, pago, cliente_id, mayoreo, nota, pago_usd, pago_efectivo } = req.body || {};
   const sucursalId = req.usuario.sucursal_id;
 
@@ -62,7 +135,12 @@ router.post('/', (req, res) => {
       continue;
     }
 
-    const producto = buscarProducto.get(p.producto_id);
+    let producto;
+    try {
+      producto = await buscarProductoLocalOCentral(p.producto_id, sucursalId);
+    } catch (error) {
+      return res.status(502).json({ error: 'No se pudo consultar el producto central: ' + error.message });
+    }
     if (!producto) return res.status(400).json({ error: `Producto ${p.producto_id} no existe` });
 
     // No permitir vender más de lo que hay en existencia
@@ -192,7 +270,17 @@ router.post('/', (req, res) => {
     return { ventaId, folio, total, cambio };
   })();
 
-  res.json({ ok: true, ...resultado });
+  let inventarioSincronizado = true;
+  let avisoSincronizacion = null;
+  try {
+    await sincronizarDescuentoCentral(renglones, sucursalId, req.usuario.id);
+  } catch (error) {
+    inventarioSincronizado = false;
+    avisoSincronizacion = error.message;
+    console.error('No se pudo sincronizar descuento de inventario:', error.message);
+  }
+
+  res.json({ ok: true, ...resultado, inventarioSincronizado, avisoSincronizacion });
 });
 
 // Última venta de la sucursal (para reimprimir el último ticket)
