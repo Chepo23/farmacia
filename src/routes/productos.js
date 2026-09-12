@@ -1,5 +1,6 @@
 const express = require('express');
 const db = require('../db');
+const { requiereAdmin } = require('../auth');
 const { supabaseAdmin, hasSupabase } = require('../sync/supabase-client');
 
 const router = express.Router();
@@ -33,9 +34,18 @@ function mapearInventarioCentral(rows) {
   return grupos;
 }
 
-async function obtenerProductosCentral(q = '') {
+async function obtenerProductosCentral(q = '', sucursalId = null) {
   if (!hasSupabase || !supabaseAdmin) return [];
-  const { data, error } = await supabaseAdmin.from('productos').select('*').eq('activo', true);
+  let consulta = supabaseAdmin.from('productos').select('*').eq('activo', true);
+  if (sucursalId) {
+    const { data: inventario, error: inventarioError } = await supabaseAdmin
+      .from('inventario').select('producto_id').eq('sucursal_id', Number(sucursalId));
+    if (inventarioError) throw inventarioError;
+    const ids = [...new Set((inventario || []).map((fila) => fila.producto_id))];
+    if (ids.length === 0) return [];
+    consulta = consulta.in('id', ids);
+  }
+  const { data, error } = await consulta;
   if (error) throw error;
   const texto = (q || '').trim().toLowerCase();
   if (!texto) return data || [];
@@ -68,14 +78,10 @@ function conExistencias(producto) {
 router.get('/codigo/:codigo', async (req, res) => {
   if (hasSupabase && supabaseAdmin) {
     try {
-      const { data, error } = await supabaseAdmin
-        .from('productos')
-        .select('*')
-        .eq('codigo_barras', req.params.codigo.trim())
-        .eq('activo', true)
-        .limit(1);
-      if (error) throw error;
-      const producto = (data || [])[0];
+      const productos = await obtenerProductosCentral(
+        req.params.codigo.trim(), req.usuario.rol === 'admin' ? null : req.usuario.sucursal_id
+      );
+      const producto = productos.find((fila) => fila.codigo_barras === req.params.codigo.trim());
       if (!producto) return res.status(404).json({ error: 'Producto no encontrado' });
       const inventario = await consultarInventarioCentral();
       const grupos = mapearInventarioCentral(inventario);
@@ -89,8 +95,11 @@ router.get('/codigo/:codigo', async (req, res) => {
   }
 
   const producto = db
-    .prepare(`SELECT ${camposProducto} FROM productos p WHERE p.codigo_barras = ? AND p.activo = 1`)
-    .get(req.params.codigo.trim());
+    .prepare(`SELECT ${camposProducto} FROM productos p
+      WHERE p.codigo_barras = ? AND p.activo = 1
+        AND (? = 1 OR EXISTS (SELECT 1 FROM inventario ix
+                              WHERE ix.producto_id = p.id AND ix.sucursal_id = ?))`)
+    .get(req.params.codigo.trim(), req.usuario.rol === 'admin' ? 1 : 0, req.usuario.sucursal_id);
   if (!producto) return res.status(404).json({ error: 'Producto no encontrado' });
   res.json(conExistencias(producto));
 });
@@ -99,7 +108,7 @@ router.get('/codigo/:codigo', async (req, res) => {
 router.get('/buscar', async (req, res) => {
   if (hasSupabase && supabaseAdmin) {
     try {
-      const productos = await obtenerProductosCentral(req.query.q || '');
+      const productos = await obtenerProductosCentral(req.query.q || '', req.usuario.rol === 'admin' ? null : req.usuario.sucursal_id);
       const inventario = await consultarInventarioCentral();
       const grupos = mapearInventarioCentral(inventario);
       return res.json(
@@ -120,10 +129,13 @@ router.get('/buscar', async (req, res) => {
               COALESCE((SELECT existencia FROM inventario i
                         WHERE i.producto_id = p.id AND i.sucursal_id = ?), 0) AS existencia_local
        FROM productos p
-       WHERE p.activo = 1 AND p.es_comun = 0 AND (p.descripcion LIKE ? OR p.codigo_barras LIKE ?)
+      WHERE p.activo = 1 AND p.es_comun = 0
+        AND (? = 1 OR EXISTS (SELECT 1 FROM inventario ix
+                              WHERE ix.producto_id = p.id AND ix.sucursal_id = ?))
+        AND (p.descripcion LIKE ? OR p.codigo_barras LIKE ?)
        ORDER BY p.descripcion LIMIT 50`
     )
-    .all(req.usuario.sucursal_id, q, q);
+    .all(req.usuario.rol === 'admin' ? 1 : 0, req.usuario.sucursal_id, q, q);
   res.json(productos);
 });
 
@@ -131,7 +143,7 @@ router.get('/buscar', async (req, res) => {
 router.get('/', async (req, res) => {
   if (hasSupabase && supabaseAdmin) {
     try {
-      const productos = await obtenerProductosCentral(req.query.q || '');
+      const productos = await obtenerProductosCentral(req.query.q || '', req.usuario.rol === 'admin' ? null : req.usuario.sucursal_id);
       const inventario = await consultarInventarioCentral();
       const grupos = mapearInventarioCentral(inventario);
       return res.json(
@@ -150,10 +162,13 @@ router.get('/', async (req, res) => {
   const productos = db
     .prepare(
       `SELECT ${camposProducto} FROM productos p
-       WHERE p.activo = 1 AND p.es_comun = 0 AND (p.descripcion LIKE ? OR p.codigo_barras LIKE ?)
+      WHERE p.activo = 1 AND p.es_comun = 0
+        AND (? = 1 OR EXISTS (SELECT 1 FROM inventario ix
+                              WHERE ix.producto_id = p.id AND ix.sucursal_id = ?))
+        AND (p.descripcion LIKE ? OR p.codigo_barras LIKE ?)
        ORDER BY p.descripcion LIMIT 200`
     )
-    .all(q, q);
+    .all(req.usuario.rol === 'admin' ? 1 : 0, req.usuario.sucursal_id, q, q);
   res.json(productos.map(conExistencias));
 });
 
@@ -173,31 +188,94 @@ function validarProducto(body) {
   };
 }
 
-router.post('/', (req, res) => {
+function guardarProductoLocal(producto) {
+  db.transaction(() => {
+    if (producto.codigo_barras) {
+      db.prepare('UPDATE productos SET codigo_barras = NULL, activo = 0 WHERE codigo_barras = ? AND id <> ?')
+        .run(producto.codigo_barras, producto.id);
+    }
+    db.prepare(`INSERT INTO productos (id,codigo_barras,descripcion,departamento,precio_costo,precio_venta,
+      precio_mayoreo,cantidad_mayoreo,usa_inventario,es_comun,activo) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(id) DO UPDATE SET codigo_barras=excluded.codigo_barras,descripcion=excluded.descripcion,
+      departamento=excluded.departamento,precio_costo=excluded.precio_costo,precio_venta=excluded.precio_venta,
+      precio_mayoreo=excluded.precio_mayoreo,cantidad_mayoreo=excluded.cantidad_mayoreo,
+      usa_inventario=excluded.usa_inventario,es_comun=excluded.es_comun,activo=excluded.activo`).run(
+      producto.id, producto.codigo_barras, producto.descripcion, producto.departamento || '', producto.precio_costo || 0,
+      producto.precio_venta || 0, producto.precio_mayoreo, producto.cantidad_mayoreo,
+      producto.usa_inventario ? 1 : 0, producto.es_comun ? 1 : 0, producto.activo === false ? 0 : 1
+    );
+  })();
+}
+
+router.post('/', async (req, res) => {
   const datos = validarProducto(req.body || {});
   if (datos.error) return res.status(400).json({ error: datos.error });
+  const sucursalId = Number(req.body?.sucursal_id || req.usuario.sucursal_id);
+  const existenciaInicial = Number(req.body?.existencia_inicial || 0);
+  const minimoInicial = Number(req.body?.minimo_inicial || 0);
+  if (!sucursalId) return res.status(400).json({ error: 'Sucursal no válida' });
+  if (req.usuario.rol !== 'admin' && sucursalId !== Number(req.usuario.sucursal_id)) {
+    return res.status(403).json({ error: 'Solo puedes registrar inventario en tu sucursal' });
+  }
+  if (!Number.isFinite(existenciaInicial) || existenciaInicial < 0) {
+    return res.status(400).json({ error: 'Existencia inicial no válida' });
+  }
+  if (!Number.isFinite(minimoInicial) || minimoInicial < 0) {
+    return res.status(400).json({ error: 'Mínimo inicial no válido' });
+  }
   try {
-    const info = db
-      .prepare(
+    if (hasSupabase && supabaseAdmin) {
+      if (datos.codigo_barras) {
+        const existente = await supabaseAdmin.from('productos').select('id')
+          .eq('codigo_barras', datos.codigo_barras).maybeSingle();
+        if (existente.error) throw existente.error;
+        if (existente.data) return res.status(400).json({ error: 'Ya existe un producto con ese código de barras' });
+      }
+      const { data, error } = await supabaseAdmin.from('productos').insert(datos).select().single();
+      if (error) throw error;
+      const { error: inventarioError } = await supabaseAdmin.from('inventario').upsert({
+        producto_id: data.id, sucursal_id: sucursalId, existencia: existenciaInicial, minimo: minimoInicial,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'producto_id,sucursal_id' });
+      if (inventarioError) throw inventarioError;
+      guardarProductoLocal(data);
+      db.prepare(`INSERT INTO inventario (producto_id,sucursal_id,existencia,minimo) VALUES (?,?,?,?)
+        ON CONFLICT(producto_id,sucursal_id) DO UPDATE SET existencia=excluded.existencia,minimo=excluded.minimo`)
+        .run(data.id, sucursalId, existenciaInicial, minimoInicial);
+      return res.json({ ok: true, id: data.id });
+    }
+    const resultado = db.transaction(() => {
+      const info = db.prepare(
         `INSERT INTO productos (codigo_barras, descripcion, departamento, precio_costo,
            precio_venta, precio_mayoreo, usa_inventario)
          VALUES (@codigo_barras, @descripcion, @departamento, @precio_costo,
            @precio_venta, @precio_mayoreo, @usa_inventario)`
-      )
-      .run(datos);
-    res.json({ ok: true, id: info.lastInsertRowid });
+      ).run(datos);
+      db.prepare(`INSERT INTO inventario (producto_id,sucursal_id,existencia,minimo) VALUES (?,?,?,?)
+        ON CONFLICT(producto_id,sucursal_id) DO UPDATE SET existencia=excluded.existencia,minimo=excluded.minimo`)
+        .run(info.lastInsertRowid, sucursalId, existenciaInicial, minimoInicial);
+      return info.lastInsertRowid;
+    })();
+    res.json({ ok: true, id: resultado });
   } catch (e) {
-    if (String(e.message).includes('UNIQUE')) {
+    if (/UNIQUE|duplicate key|unique constraint/i.test(String(e.message))) {
       return res.status(400).json({ error: 'Ya existe un producto con ese código de barras' });
     }
     throw e;
   }
 });
 
-router.put('/:id', (req, res) => {
+router.put('/:id', async (req, res) => {
   const datos = validarProducto(req.body || {});
   if (datos.error) return res.status(400).json({ error: datos.error });
   try {
+    if (hasSupabase && supabaseAdmin) {
+      let consulta = supabaseAdmin.from('productos').update(datos).eq('id', req.params.id);
+      const { data, error } = await consulta.select().single();
+      if (error) throw error;
+      guardarProductoLocal(data);
+      return res.json({ ok: true });
+    }
     const info = db
       .prepare(
         `UPDATE productos SET codigo_barras = @codigo_barras, descripcion = @descripcion,
@@ -216,25 +294,96 @@ router.put('/:id', (req, res) => {
   }
 });
 
-router.delete('/:id', (req, res) => {
-  db.prepare('UPDATE productos SET activo = 0, codigo_barras = NULL WHERE id = ?').run(req.params.id);
-  res.json({ ok: true });
+router.delete('/:id', requiereAdmin, async (req, res) => {
+  try {
+    if (hasSupabase && supabaseAdmin) {
+      const { data, error } = await supabaseAdmin.from('productos')
+        .update({ activo: false, codigo_barras: null })
+        .eq('id', req.params.id)
+        .select('id,activo')
+        .single();
+      if (error) throw error;
+      if (!data) return res.status(404).json({ error: 'Producto no encontrado' });
+    }
+    const info = db.prepare('UPDATE productos SET activo = 0, codigo_barras = NULL WHERE id = ?').run(req.params.id);
+    if (info.changes === 0 && !hasSupabase) return res.status(404).json({ error: 'Producto no encontrado' });
+    res.json({ ok: true, eliminado: 'baja_logica' });
+  } catch (error) {
+    res.status(502).json({ error: 'No se pudo eliminar el producto: ' + error.message });
+  }
 });
 
 // Movimiento de inventario: entrada, salida o ajuste (fija existencia exacta)
-router.post('/:id/inventario', (req, res) => {
+router.post('/:id/inventario', async (req, res) => {
   const { tipo, cantidad, minimo, nota } = req.body || {};
   const productoId = Number(req.params.id);
-  const sucursalId = req.usuario.sucursal_id;
+  const sucursalId = Number(req.body?.sucursal_id || req.usuario.sucursal_id);
   const cant = Number(cantidad);
 
-  const producto = db.prepare('SELECT id FROM productos WHERE id = ? AND activo = 1').get(productoId);
-  if (!producto) return res.status(404).json({ error: 'Producto no encontrado' });
+  const productoLocal = db.prepare('SELECT id FROM productos WHERE id = ? AND activo = 1').get(productoId);
+  if (!productoLocal && !(hasSupabase && supabaseAdmin)) {
+    return res.status(404).json({ error: 'Producto no encontrado' });
+  }
+  if (!sucursalId) return res.status(400).json({ error: 'Sucursal no válida' });
   if (!['entrada', 'salida', 'ajuste'].includes(tipo)) {
     return res.status(400).json({ error: 'Tipo de movimiento no válido' });
   }
   if (!Number.isFinite(cant) || (tipo !== 'ajuste' && cant <= 0)) {
     return res.status(400).json({ error: 'Cantidad no válida' });
+  }
+
+  if (hasSupabase && supabaseAdmin) {
+    try {
+      if (req.usuario.rol !== 'admin' && sucursalId !== Number(req.usuario.sucursal_id)) {
+        return res.status(403).json({ error: 'Solo puedes modificar el inventario de tu sucursal' });
+      }
+      const { data: productoCentral, error: productoError } = await supabaseAdmin
+        .from('productos').select('*').eq('id', productoId).eq('activo', true).maybeSingle();
+      if (productoError) throw productoError;
+      if (!productoCentral) return res.status(404).json({ error: 'Producto no encontrado en Supabase' });
+      const { data: actual, error: consultaError } = await supabaseAdmin
+        .from('inventario').select('existencia,minimo').eq('producto_id', productoId)
+        .eq('sucursal_id', sucursalId).maybeSingle();
+      if (consultaError) throw consultaError;
+      const existenciaActual = Number(actual?.existencia || 0);
+      const existencia = tipo === 'entrada'
+        ? existenciaActual + cant
+        : tipo === 'salida' ? existenciaActual - cant : cant;
+      const minimoCentral = minimo === undefined || minimo === null || minimo === ''
+        ? Number(actual?.minimo || 0) : Number(minimo) || 0;
+      const { error: inventarioError } = await supabaseAdmin.from('inventario').upsert({
+        producto_id: productoId,
+        sucursal_id: sucursalId,
+        existencia,
+        minimo: minimoCentral,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'producto_id,sucursal_id' });
+      if (inventarioError) throw inventarioError;
+      const { error: movimientoError } = await supabaseAdmin.from('movimientos_inventario').insert({
+        producto_id: productoId, sucursal_id: sucursalId, tipo, cantidad: cant,
+        usuario_id: req.usuario.id, nota: (nota || '').trim(),
+      });
+      if (movimientoError) throw movimientoError;
+      db.prepare("INSERT OR REPLACE INTO sync_config (clave, valor) VALUES ('aplicando', '1')").run();
+      try {
+        db.prepare(`INSERT INTO productos (id,codigo_barras,descripcion,departamento,precio_costo,precio_venta,
+          precio_mayoreo,cantidad_mayoreo,usa_inventario,es_comun,activo) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+          ON CONFLICT(id) DO UPDATE SET codigo_barras=excluded.codigo_barras,descripcion=excluded.descripcion,
+            departamento=excluded.departamento,precio_costo=excluded.precio_costo,precio_venta=excluded.precio_venta,
+            precio_mayoreo=excluded.precio_mayoreo,usa_inventario=excluded.usa_inventario,activo=excluded.activo`).run(
+          productoCentral.id, productoCentral.codigo_barras, productoCentral.descripcion, productoCentral.departamento || '',
+          productoCentral.precio_costo || 0, productoCentral.precio_venta || 0, productoCentral.precio_mayoreo,
+          productoCentral.cantidad_mayoreo, productoCentral.usa_inventario ? 1 : 0, productoCentral.es_comun ? 1 : 0, 1);
+        db.prepare(`INSERT INTO inventario (producto_id,sucursal_id,existencia,minimo) VALUES (?,?,?,?)
+          ON CONFLICT(producto_id,sucursal_id) DO UPDATE SET existencia=excluded.existencia,minimo=excluded.minimo`)
+          .run(productoId, sucursalId, existencia, minimoCentral);
+      } finally {
+        db.prepare("DELETE FROM sync_config WHERE clave = 'aplicando'").run();
+      }
+      return res.json({ ok: true, existencia, minimo: minimoCentral });
+    } catch (error) {
+      return res.status(502).json({ error: 'No se pudo actualizar el inventario central: ' + error.message });
+    }
   }
 
   db.transaction(() => {
@@ -280,7 +429,9 @@ router.get('/bajo-minimo', async (req, res) => {
 
       if (error) throw error;
       const filas = (data || [])
-        .filter((row) => row.productos && row.productos.usa_inventario && Number(row.existencia) <= Number(row.minimo) && Number(row.minimo) > 0)
+        .filter((row) => row.productos && row.productos.usa_inventario
+          && (req.usuario.rol === 'admin' || Number(row.sucursal_id) === Number(req.usuario.sucursal_id))
+          && Number(row.existencia) <= Number(row.minimo) && Number(row.minimo) > 0)
         .map((row) => ({
           id: row.productos.id,
           codigo_barras: row.productos.codigo_barras,

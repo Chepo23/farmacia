@@ -1,7 +1,8 @@
 const crypto = require('crypto');
 const express = require('express');
 const db = require('./db');
-const { verifyPassword } = require('./passwords');
+const { hashPassword, verifyPassword } = require('./passwords');
+const { supabaseAdmin, hasSupabase } = require('./sync/supabase-client');
 
 const router = express.Router();
 
@@ -40,12 +41,81 @@ function requiereAdmin(req, res, next) {
   next();
 }
 
-router.post('/login', (req, res) => {
+async function guardarUsuarioLocal(usuario) {
+  const sucursal = db.prepare('SELECT id FROM sucursales WHERE id = ?').get(usuario.sucursal_id);
+  if (!sucursal) {
+    const central = await supabaseAdmin.from('sucursales').select('*').eq('id', usuario.sucursal_id).maybeSingle();
+    if (central.error) throw central.error;
+    if (!central.data) throw new Error('La sucursal del usuario no existe');
+    db.prepare("INSERT OR REPLACE INTO sync_config (clave, valor) VALUES ('aplicando', '1')").run();
+    try {
+      db.prepare(
+        `INSERT INTO sucursales (id, nombre, direccion, telefono, es_central, activa)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET nombre = excluded.nombre, direccion = excluded.direccion,
+           telefono = excluded.telefono, es_central = excluded.es_central, activa = excluded.activa`
+      ).run(central.data.id, central.data.nombre, central.data.direccion || '', central.data.telefono || '',
+        central.data.es_central ? 1 : 0, central.data.activa === false ? 0 : 1);
+    } finally {
+      db.prepare("DELETE FROM sync_config WHERE clave = 'aplicando'").run();
+    }
+  }
+  db.prepare(
+    `INSERT INTO usuarios (id, nombre, usuario, password_hash, rol, sucursal_id, activo)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET nombre = excluded.nombre, usuario = excluded.usuario,
+       password_hash = excluded.password_hash, rol = excluded.rol, sucursal_id = excluded.sucursal_id,
+       activo = excluded.activo`
+  ).run(usuario.id, usuario.nombre, usuario.usuario, usuario.password_hash, usuario.rol,
+    usuario.sucursal_id, usuario.activo === false ? 0 : 1);
+}
+
+function verificarPasswordCompatible(password, almacenada) {
+  if (!almacenada) return false;
+  if (almacenada.includes(':')) return verifyPassword(password, almacenada);
+  return almacenada === password;
+}
+
+router.post('/login', async (req, res) => {
   const { usuario, password } = req.body || {};
-  const fila = db
-    .prepare('SELECT * FROM usuarios WHERE usuario = ? AND activo = 1')
-    .get((usuario || '').trim().toLowerCase());
+  const nombreUsuario = (usuario || '').trim().toLowerCase();
+  let fila;
+  let errorCentral;
+  let existeEnCentral = false;
+  if (hasSupabase && supabaseAdmin) {
+    const remoto = await supabaseAdmin
+      .from('usuarios_central')
+      .select('id, nombre, usuario, password_hash, rol, sucursal_id, activo')
+      .eq('usuario', nombreUsuario)
+      .eq('activo', true)
+      .maybeSingle();
+    if (!remoto.error && remoto.data) {
+      existeEnCentral = true;
+      if (remoto.data.password_hash && verificarPasswordCompatible(password || '', remoto.data.password_hash)) {
+        try {
+          if (!remoto.data.password_hash.includes(':')) {
+            const passwordHash = hashPassword(password || '');
+            const actualizado = await supabaseAdmin.from('usuarios_central')
+              .update({ password_hash: passwordHash })
+              .eq('id', remoto.data.id);
+            if (actualizado.error) throw actualizado.error;
+            remoto.data.password_hash = passwordHash;
+          }
+          await guardarUsuarioLocal(remoto.data);
+          fila = remoto.data;
+        } catch (error) {
+          errorCentral = error;
+        }
+      }
+    } else if (remoto.error) {
+      errorCentral = remoto.error;
+    }
+  }
+  if (!fila && !existeEnCentral) {
+    fila = db.prepare('SELECT * FROM usuarios WHERE usuario = ? AND activo = 1').get(nombreUsuario);
+  }
   if (!fila || !verifyPassword(password || '', fila.password_hash)) {
+    if (errorCentral) console.error('No se pudo consultar el login central:', errorCentral.message);
     return res.status(401).json({ error: 'Usuario o contraseña incorrectos' });
   }
   const token = crypto.randomBytes(32).toString('hex');

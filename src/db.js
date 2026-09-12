@@ -270,6 +270,11 @@ CREATE TABLE IF NOT EXISTS mini_apoyos (
 );
 CREATE INDEX IF NOT EXISTS idx_mini_apoyos_origen ON mini_apoyos(origen_sucursal_id, estado);
 CREATE INDEX IF NOT EXISTS idx_mini_apoyos_destino ON mini_apoyos(destino_sucursal_id, estado);
+
+CREATE TABLE IF NOT EXISTS sync_config (
+  clave TEXT PRIMARY KEY,
+  valor TEXT NOT NULL DEFAULT ''
+);
 `);
 
 // Migraciones para bases de datos creadas antes de estas columnas
@@ -279,8 +284,41 @@ for (const columna of [
   'ALTER TABLE sesiones ADD COLUMN apertura_id INTEGER REFERENCES aperturas_caja(id)',
   'ALTER TABLE productos ADD COLUMN es_comun INTEGER NOT NULL DEFAULT 0',
   'ALTER TABLE cortes ADD COLUMN total_dolares REAL NOT NULL DEFAULT 0',
+  "ALTER TABLE apoyos ADD COLUMN cancelado_por INTEGER REFERENCES usuarios(id)",
+  "ALTER TABLE apoyos ADD COLUMN cancelado TEXT",
+  "ALTER TABLE apoyos ADD COLUMN motivo_cancelacion TEXT DEFAULT ''",
 ]) {
   try { db.exec(columna); } catch { /* la columna ya existe */ }
+}
+
+// Las bases locales antiguas podían guardar la sucursal directamente en productos.
+// Conserva esa asignación como una fila de inventario antes de dejar de usarla.
+const columnasProducto = db.prepare('PRAGMA table_info(productos)').all().map((columna) => columna.name);
+if (columnasProducto.includes('sucursal_id')) {
+  db.prepare("INSERT OR REPLACE INTO sync_config (clave, valor) VALUES ('aplicando', '1')").run();
+  try {
+    db.prepare(
+      `INSERT INTO inventario (producto_id, sucursal_id, existencia, minimo)
+       SELECT id, sucursal_id, 0, 0 FROM productos
+       WHERE sucursal_id IS NOT NULL
+       ON CONFLICT(producto_id, sucursal_id) DO NOTHING`
+    ).run();
+  } finally {
+    db.prepare("DELETE FROM sync_config WHERE clave = 'aplicando'").run();
+  }
+}
+
+// Estos triggers pertenecen al sincronizador SQLite anterior y generan claves
+// invalidas o duplicadas al reflejar datos desde Supabase.
+for (const trigger of [
+  'sync_inventario_alta',
+  'sync_inventario_cambio',
+  'sync_producto_alta',
+  'sync_producto_cambio',
+  'sync_sucursal_alta',
+  'sync_sucursal_cambio',
+]) {
+  db.exec(`DROP TRIGGER IF EXISTS ${trigger}`);
 }
 
 // Reconstruir la tabla ventas si fue creada con el CHECK viejo de formas de pago

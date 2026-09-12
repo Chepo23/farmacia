@@ -4,6 +4,7 @@
 const express = require('express');
 const db = require('../db');
 const { supabaseAdmin, hasSupabase } = require('../sync/supabase-client');
+const { publicarSinBloquear, descargarApoyos } = require('../sync/apoyos');
 
 const router = express.Router();
 
@@ -139,7 +140,8 @@ function verificarEdicion(apoyo, usuario) {
 }
 
 // ---------- Avisos para el badge de la pestaña ----------
-router.get('/pendientes', (req, res) => {
+router.get('/pendientes', async (req, res) => {
+  try { await descargarApoyos(); } catch (error) { console.error('No se pudieron descargar apoyos:', error.message); }
   const porRecibir = db
     .prepare("SELECT COUNT(*) AS n FROM apoyos WHERE destino_id = ? AND estado = 'enviado'")
     .get(req.usuario.sucursal_id).n;
@@ -150,7 +152,8 @@ router.get('/pendientes', (req, res) => {
 });
 
 // ---------- Listado ----------
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
+  try { await descargarApoyos(); } catch (error) { console.error('No se pudieron descargar apoyos:', error.message); }
   const estado = (req.query.estado || '').trim();
   const filas = db
     .prepare(
@@ -252,7 +255,9 @@ router.post('/', requiereCentral, (req, res) => {
     return apoyoId;
   })();
 
-  res.json(cargarApoyo(id));
+  const respuesta = cargarApoyo(id);
+  publicarSinBloquear(id);
+  res.json(respuesta);
 });
 
 router.get('/:id', (req, res) => {
@@ -294,6 +299,7 @@ router.post('/:id/renglones', requiereCentral, async (req, res) => {
       redondear(productoLocal.precio_costo * cantidad)
     );
   }
+  publicarSinBloquear(apoyo.id);
   res.json(cargarApoyo(apoyo.id));
 });
 
@@ -313,6 +319,7 @@ router.put('/:id/renglones/:renglon', requiereCentral, (req, res) => {
   db.prepare('UPDATE apoyo_detalle SET cantidad = ?, importe = ? WHERE id = ?').run(
     cantidad, redondear(renglon.precio_costo * cantidad), renglon.id
   );
+  publicarSinBloquear(apoyo.id);
   res.json(cargarApoyo(apoyo.id));
 });
 
@@ -322,6 +329,7 @@ router.delete('/:id/renglones/:renglon', requiereCentral, (req, res) => {
   const problema = verificarEdicion(apoyo, req.usuario);
   if (problema) return res.status(400).json({ error: problema });
   db.prepare('DELETE FROM apoyo_detalle WHERE id = ? AND apoyo_id = ?').run(req.params.renglon, apoyo.id);
+  publicarSinBloquear(apoyo.id);
   res.json(cargarApoyo(apoyo.id));
 });
 
@@ -331,6 +339,7 @@ router.put('/:id', requiereCentral, (req, res) => {
   const problema = verificarEdicion(apoyo, req.usuario);
   if (problema) return res.status(400).json({ error: problema });
   db.prepare('UPDATE apoyos SET nota = ? WHERE id = ?').run((req.body?.nota || '').trim(), apoyo.id);
+  publicarSinBloquear(apoyo.id);
   res.json(cargarApoyo(apoyo.id));
 });
 
@@ -392,6 +401,7 @@ router.post('/:id/enviar', requiereCentral, (req, res) => {
     }
   })();
 
+  publicarSinBloquear(apoyo.id);
   res.json(cargarApoyo(apoyo.id));
 });
 
@@ -453,6 +463,7 @@ router.post('/:id/recibir', (req, res) => {
     ).run(req.usuario.id, apoyo.id);
   })();
 
+  publicarSinBloquear(apoyo.id);
   res.json(cargarApoyo(apoyo.id));
 });
 
@@ -504,6 +515,7 @@ router.post('/:id/cancelar', requiereCentral, (req, res) => {
     ).run(req.usuario.id, motivo, apoyo.id);
   })();
 
+  publicarSinBloquear(apoyo.id);
   res.json(cargarApoyo(apoyo.id));
 });
 

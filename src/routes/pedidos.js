@@ -3,6 +3,7 @@
 const express = require('express');
 const db = require('../db');
 const { supabaseAdmin, hasSupabase } = require('../sync/supabase-client');
+const { publicarPedidoSinBloquear, descargarPedidos } = require('../sync/apoyos');
 
 const router = express.Router();
 
@@ -97,7 +98,8 @@ function puedeEditar(pedido, usuario) {
 }
 
 // ---------- Listado ----------
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
+  try { await descargarPedidos(); } catch (error) { console.error('No se pudieron descargar pedidos:', error.message); }
   const filas = db
     .prepare(
       `SELECT p.id, p.folio, p.estado, p.nota, p.creado, p.enviado, p.sucursal_id,
@@ -160,6 +162,7 @@ router.post('/', (req, res) => {
   const id = db
     .prepare('INSERT INTO pedidos (folio, sucursal_id, creado_por) VALUES (?, ?, ?)')
     .run(folio, req.usuario.sucursal_id, req.usuario.id).lastInsertRowid;
+  publicarPedidoSinBloquear(id);
   res.json(cargarPedido(id));
 });
 
@@ -194,6 +197,7 @@ router.post('/:id/renglones', async (req, res) => {
        VALUES (?, ?, ?, ?, ?)`
     ).run(pedido.id, productoLocal.id, productoLocal.codigo_barras, productoLocal.descripcion, cantidad);
   }
+  publicarPedidoSinBloquear(pedido.id);
   res.json(cargarPedido(pedido.id));
 });
 
@@ -209,6 +213,7 @@ router.put('/:id/renglones/:renglon', (req, res) => {
     .prepare('UPDATE pedido_detalle SET cantidad = ? WHERE id = ? AND pedido_id = ?')
     .run(cantidad, req.params.renglon, pedido.id);
   if (info.changes === 0) return res.status(404).json({ error: 'Renglón no encontrado' });
+  publicarPedidoSinBloquear(pedido.id);
   res.json(cargarPedido(pedido.id));
 });
 
@@ -219,6 +224,7 @@ router.delete('/:id/renglones/:renglon', (req, res) => {
     return res.status(400).json({ error: 'Solo se puede modificar un pedido en borrador de tu farmacia' });
   }
   db.prepare('DELETE FROM pedido_detalle WHERE id = ? AND pedido_id = ?').run(req.params.renglon, pedido.id);
+  publicarPedidoSinBloquear(pedido.id);
   res.json(cargarPedido(pedido.id));
 });
 
@@ -236,6 +242,7 @@ router.post('/:id/enviar', (req, res) => {
     `UPDATE pedidos SET estado = 'enviado', enviado_por = ?, enviado = datetime('now', 'localtime'), nota = ?
      WHERE id = ?`
   ).run(req.usuario.id, (req.body?.nota || pedido.nota || '').trim(), pedido.id);
+  publicarPedidoSinBloquear(pedido.id);
   res.json(cargarPedido(pedido.id));
 });
 
@@ -249,6 +256,7 @@ router.post('/:id/cancelar', (req, res) => {
     return res.status(400).json({ error: 'Este pedido ya fue surtido con un apoyo' });
   }
   db.prepare("UPDATE pedidos SET estado = 'cancelado' WHERE id = ?").run(pedido.id);
+  publicarPedidoSinBloquear(pedido.id);
   res.json({ ok: true });
 });
 

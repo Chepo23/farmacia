@@ -166,19 +166,53 @@ create index if not exists idx_inventario_sucursal on public.inventario (sucursa
 create index if not exists idx_mini_apoyos_estado on public.mini_apoyos (estado, destino_sucursal_id);
 create index if not exists idx_sync_estado_estado on public.sync_estado (entidad, estado, updated_at);
 
+create table if not exists public.departamentos (
+  id bigserial primary key,
+  nombre text not null unique,
+  activo boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_departamentos_activo_nombre
+  on public.departamentos (activo, nombre);
+
 -- Tabla central de usuarios alineada con el esquema real: solo sincronizamos
 -- los campos que de verdad existen en Supabase para evitar errores de esquema.
 create table if not exists public.usuarios_central (
   id bigserial primary key,
   nombre text not null,
   usuario text not null unique,
+  password_hash text not null,
   rol text not null default 'admin' check (rol in ('admin', 'cajero')),
+  sucursal_id bigint not null references public.sucursales(id),
   activo boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 
+alter table public.usuarios_central
+  add column if not exists password_hash text;
+alter table public.usuarios_central
+  add column if not exists sucursal_id bigint references public.sucursales(id);
+alter table public.usuarios_central
+  add column if not exists updated_at timestamptz not null default now();
+
 -- ejemplo inicial de sucursal central
 insert into public.sucursales (nombre, direccion, telefono, es_central, activa)
 values ('Central', 'Oficina central', '', true, true)
 on conflict do nothing;
+
+-- Migracion de productos por sucursal a inventario por sucursal.
+-- Ejecutar antes de eliminar la columna legacy si ya existia en Supabase.
+alter table public.productos
+  add column if not exists sucursal_id bigint references public.sucursales(id);
+
+insert into public.inventario (producto_id, sucursal_id, existencia, minimo)
+select id, sucursal_id, 0, 0
+from public.productos
+where sucursal_id is not null
+on conflict (producto_id, sucursal_id) do nothing;
+
+drop index if exists public.idx_productos_sucursal;
+alter table public.productos drop column if exists sucursal_id;

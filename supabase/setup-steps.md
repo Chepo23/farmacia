@@ -35,6 +35,28 @@ SYNC_TOKEN=change-me
 - La service role key es la que te permite escribir desde el backend con permisos completos.
 - Nunca la expongas al frontend si no es necesario.
 
-## 5) Próximo paso
+## 5) Activar usuarios y sucursales centrales
 
-Con esto ya puedes integrar `@supabase/supabase-js` y empezar a enviar eventos de sincronización desde cada sucursal a la central.
+Vuelve a ejecutar `supabase/schema.sql` en el SQL Editor. El script agrega a
+`usuarios_central` las columnas `password_hash` y `sucursal_id`, necesarias para
+el login y la relación con `sucursales`.
+
+Las cuentas antiguas que ya estaban en `usuarios_central` deben editarse desde
+Administración para asignarles sucursal y contraseña. No se puede recuperar una
+contraseña anterior desde Supabase.
+
+Desde ese momento:
+
+- el login valida primero contra `usuarios_central` y guarda una copia local;
+- usuarios y sucursales se administran en Supabase;
+- apoyos y pedidos se publican y descargan desde Supabase;
+- ventas, clientes, crédito, caja y sesiones locales siguen en SQLite para poder
+	trabajar sin internet;
+- una sesión ya iniciada puede continuar vendiendo sin conexión; para iniciar
+	sesión por primera vez hace falta conexión o una copia local previamente
+	sincronizada.
+
+## 6) Seguridad
+
+Si la `SUPABASE_SERVICE_ROLE_KEY` fue compartida o subida a un repositorio,
+regénérala en Supabase y actualiza el `.env` de cada instalación.

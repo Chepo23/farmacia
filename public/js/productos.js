@@ -2,9 +2,12 @@
 const Productos = { lista: [] };
 
 function pintarEncabezadoProductos() {
+  const sucursalesVisibles = App.usuario.rol === 'admin'
+    ? App.sucursales
+    : App.sucursales.filter((s) => s.id === App.usuario.sucursal_id);
   document.getElementById('encabezado-productos').innerHTML = `<tr>
     <th>Código</th><th>Descripción</th><th class="num">Costo</th><th class="num">Precio</th>
-    ${App.sucursales.map((s) => `<th class="num" title="Existencia en ${escaparHtml(s.nombre)}">${escaparHtml(s.nombre)}</th>`).join('')}
+    ${sucursalesVisibles.map((s) => `<th class="num" title="Existencia en ${escaparHtml(s.nombre)}">${escaparHtml(s.nombre)}</th>`).join('')}
     <th></th>
   </tr>`;
 }
@@ -15,7 +18,10 @@ async function cargarProductos() {
   pintarEncabezadoProductos();
   document.getElementById('cuerpo-productos').innerHTML = Productos.lista
     .map((p) => {
-      const celdas = App.sucursales
+      const sucursalesVisibles = App.usuario.rol === 'admin'
+        ? App.sucursales
+        : App.sucursales.filter((s) => s.id === App.usuario.sucursal_id);
+      const celdas = sucursalesVisibles
         .map((s) => {
           const e = p.existencias.find((x) => x.sucursal_id === s.id) || { existencia: 0, minimo: 0 };
           const bajo = p.usa_inventario && e.minimo > 0 && e.existencia <= e.minimo;
@@ -31,7 +37,7 @@ async function cargarProductos() {
         <td style="white-space:nowrap">
           <button class="boton chico" data-accion="inventario" data-id="${p.id}">Inventario</button>
           <button class="boton chico" data-accion="editar" data-id="${p.id}">Editar</button>
-          <button class="boton chico peligro-suave" data-accion="eliminar" data-id="${p.id}" title="Eliminar"><svg class="icono"><use href="#i-basura"/></svg></button>
+          ${App.usuario.rol === 'admin' ? '<button class="boton chico peligro-suave" data-accion="eliminar" data-id="' + p.id + '" title="Dar de baja"><svg class="icono"><use href="#i-basura"/></svg></button>' : ''}
         </td>
       </tr>`;
     })
@@ -41,6 +47,9 @@ async function cargarProductos() {
 async function formularioProducto(p = {}) {
   const esNuevo = !p.id;
   const departamentos = await api('/api/departamentos');
+  const sucursalesInventario = App.usuario.rol === 'admin'
+    ? App.sucursales
+    : App.sucursales.filter((s) => s.id === App.usuario.sucursal_id);
   // Si el producto trae un departamento que ya no está en la lista, se conserva como opción
   const nombres = departamentos.map((d) => d.nombre);
   if (p.departamento && !nombres.includes(p.departamento)) nombres.unshift(p.departamento);
@@ -69,6 +78,17 @@ async function formularioProducto(p = {}) {
     <div class="fila">
       <label>Precio de mayoreo (opcional, se aplica con F11 en la venta) <input type="number" id="prod-mayoreo" step="0.01" min="0" value="${p.precio_mayoreo ?? ''}"></label>
     </div>
+    ${esNuevo ? `<div class="fila">
+      ${App.usuario.rol === 'admin' ? `<label>Sucursal del inventario
+        <select id="prod-sucursal">${sucursalesInventario.map((s) => `<option value="${s.id}" ${s.id === App.usuario.sucursal_id ? 'selected' : ''}>${escaparHtml(s.nombre)}</option>`).join('')}</select>
+      </label>` : ''}
+      <label>Existencia inicial
+        <input type="number" id="prod-existencia" step="any" min="0" value="0">
+      </label>
+      <label>Mínimo inicial
+        <input type="number" id="prod-minimo" step="any" min="0" value="0">
+      </label>
+    </div>` : ''}
     <label style="flex-direction:row; align-items:center; gap:8px">
       <input type="checkbox" id="prod-inventario" ${p.usa_inventario === 0 ? '' : 'checked'} style="width:auto">
       Controlar inventario de este producto
@@ -95,6 +115,9 @@ async function formularioProducto(p = {}) {
           precio_venta: modal.querySelector('#prod-venta').value,
           precio_mayoreo: modal.querySelector('#prod-mayoreo').value,
           usa_inventario: modal.querySelector('#prod-inventario').checked,
+          sucursal_id: modal.querySelector('#prod-sucursal')?.value || App.usuario.sucursal_id,
+          existencia_inicial: modal.querySelector('#prod-existencia')?.value || 0,
+          minimo_inicial: modal.querySelector('#prod-minimo')?.value || 0,
         },
       });
       cerrarModal();
@@ -108,11 +131,21 @@ async function formularioProducto(p = {}) {
 }
 
 function formularioInventario(p) {
-  const local = p.existencias.find((e) => e.sucursal_id === App.usuario.sucursal_id) || { existencia: 0, minimo: 0 };
-  const otras = p.existencias.filter((e) => e.sucursal_id !== App.usuario.sucursal_id);
+  const sucursalesInventario = App.usuario.rol === 'admin'
+    ? App.sucursales
+    : App.sucursales.filter((s) => s.id === App.usuario.sucursal_id);
+  const sucursalInicial = App.usuario.rol === 'admin'
+    ? (p.sucursal_id || App.usuario.sucursal_id)
+    : App.usuario.sucursal_id;
+  const buscarExistencia = (sucursalId) => p.existencias.find((e) => e.sucursal_id === Number(sucursalId)) || { existencia: 0, minimo: 0 };
+  const local = buscarExistencia(sucursalInicial);
+  const otras = p.existencias.filter((e) => e.sucursal_id !== Number(sucursalInicial));
   const modal = abrirModal(`
     <h3>Inventario — ${escaparHtml(p.descripcion)}</h3>
-    <p>Existencia en <b>${escaparHtml(App.usuario.sucursal)}</b>: <b>${local.existencia}</b></p>
+    ${App.usuario.rol === 'admin' ? `<label>Sucursal
+      <select id="inv-sucursal">${sucursalesInventario.map((s) => `<option value="${s.id}" ${s.id === Number(sucursalInicial) ? 'selected' : ''}>${escaparHtml(s.nombre)}</option>`).join('')}</select>
+    </label>` : ''}
+    <p>Existencia seleccionada: <b id="inv-existencia">${local.existencia}</b></p>
     ${otras.length ? `<p>Otras sucursales: ${otras.map((e) => `${escaparHtml(e.sucursal)}: <b>${e.existencia}</b>`).join(' · ')}</p>` : ''}
     <div class="fila">
       <label>Movimiento
@@ -132,6 +165,14 @@ function formularioInventario(p) {
       <button class="boton exito" id="inv-guardar">Aplicar</button>
     </div>
   `);
+  const selectorSucursal = modal.querySelector('#inv-sucursal');
+  if (selectorSucursal) {
+    selectorSucursal.addEventListener('change', () => {
+      const existencia = buscarExistencia(selectorSucursal.value);
+      modal.querySelector('#inv-existencia').textContent = existencia.existencia;
+      modal.querySelector('#inv-minimo').value = existencia.minimo;
+    });
+  }
   modal.querySelector('#inv-cantidad').focus();
   modal.querySelector('#inv-cancelar').addEventListener('click', cerrarModal);
   modal.querySelector('#inv-guardar').addEventListener('click', async () => {
@@ -145,6 +186,7 @@ function formularioInventario(p) {
           cantidad: modal.querySelector('#inv-cantidad').value,
           minimo: modal.querySelector('#inv-minimo').value,
           nota: modal.querySelector('#inv-nota').value,
+          sucursal_id: selectorSucursal ? selectorSucursal.value : App.usuario.sucursal_id,
         },
       });
       cerrarModal();
@@ -192,9 +234,10 @@ document.getElementById('cuerpo-productos').addEventListener('click', async (e) 
   if (boton.dataset.accion === 'editar') formularioProducto(producto);
   if (boton.dataset.accion === 'inventario') formularioInventario(producto);
   if (boton.dataset.accion === 'eliminar') {
-    if (confirm(`¿Eliminar el producto "${producto.descripcion}"?`)) {
+    if (App.usuario.rol !== 'admin') return;
+    if (confirm(`¿Dar de baja el producto "${producto.descripcion}"? No se borrarán sus ventas históricas.`)) {
       await api('/api/productos/' + producto.id, { method: 'DELETE' });
-      aviso('Producto eliminado');
+      aviso('Producto dado de baja', 'exito');
       cargarProductos();
     }
   }
