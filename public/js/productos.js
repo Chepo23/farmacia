@@ -2,9 +2,7 @@
 const Productos = { lista: [] };
 
 function pintarEncabezadoProductos() {
-  const sucursalesVisibles = App.usuario.rol === 'admin'
-    ? App.sucursales
-    : App.sucursales.filter((s) => s.id === App.usuario.sucursal_id);
+  const sucursalesVisibles = App.sucursales;
   document.getElementById('encabezado-productos').innerHTML = `<tr>
     <th>Código</th><th>Descripción</th><th class="num">Costo</th><th class="num">Precio</th>
     ${sucursalesVisibles.map((s) => `<th class="num" title="Existencia en ${escaparHtml(s.nombre)}">${escaparHtml(s.nombre)}</th>`).join('')}
@@ -18,9 +16,7 @@ async function cargarProductos() {
   pintarEncabezadoProductos();
   document.getElementById('cuerpo-productos').innerHTML = Productos.lista
     .map((p) => {
-      const sucursalesVisibles = App.usuario.rol === 'admin'
-        ? App.sucursales
-        : App.sucursales.filter((s) => s.id === App.usuario.sucursal_id);
+      const sucursalesVisibles = App.sucursales;
       const celdas = sucursalesVisibles
         .map((s) => {
           const e = p.existencias.find((x) => x.sucursal_id === s.id) || { existencia: 0, minimo: 0 };

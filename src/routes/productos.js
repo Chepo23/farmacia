@@ -34,18 +34,9 @@ function mapearInventarioCentral(rows) {
   return grupos;
 }
 
-async function obtenerProductosCentral(q = '', sucursalId = null) {
+async function obtenerProductosCentral(q = '') {
   if (!hasSupabase || !supabaseAdmin) return [];
-  let consulta = supabaseAdmin.from('productos').select('*').eq('activo', true);
-  if (sucursalId) {
-    const { data: inventario, error: inventarioError } = await supabaseAdmin
-      .from('inventario').select('producto_id').eq('sucursal_id', Number(sucursalId));
-    if (inventarioError) throw inventarioError;
-    const ids = [...new Set((inventario || []).map((fila) => fila.producto_id))];
-    if (ids.length === 0) return [];
-    consulta = consulta.in('id', ids);
-  }
-  const { data, error } = await consulta;
+  const { data, error } = await supabaseAdmin.from('productos').select('*').eq('activo', true);
   if (error) throw error;
   const texto = (q || '').trim().toLowerCase();
   if (!texto) return data || [];
@@ -78,9 +69,7 @@ function conExistencias(producto) {
 router.get('/codigo/:codigo', async (req, res) => {
   if (hasSupabase && supabaseAdmin) {
     try {
-      const productos = await obtenerProductosCentral(
-        req.params.codigo.trim(), req.usuario.rol === 'admin' ? null : req.usuario.sucursal_id
-      );
+      const productos = await obtenerProductosCentral(req.params.codigo.trim());
       const producto = productos.find((fila) => fila.codigo_barras === req.params.codigo.trim());
       if (!producto) return res.status(404).json({ error: 'Producto no encontrado' });
       const inventario = await consultarInventarioCentral();
@@ -96,10 +85,8 @@ router.get('/codigo/:codigo', async (req, res) => {
 
   const producto = db
     .prepare(`SELECT ${camposProducto} FROM productos p
-      WHERE p.codigo_barras = ? AND p.activo = 1
-        AND (? = 1 OR EXISTS (SELECT 1 FROM inventario ix
-                              WHERE ix.producto_id = p.id AND ix.sucursal_id = ?))`)
-    .get(req.params.codigo.trim(), req.usuario.rol === 'admin' ? 1 : 0, req.usuario.sucursal_id);
+      WHERE p.codigo_barras = ? AND p.activo = 1`)
+    .get(req.params.codigo.trim());
   if (!producto) return res.status(404).json({ error: 'Producto no encontrado' });
   res.json(conExistencias(producto));
 });
@@ -108,7 +95,7 @@ router.get('/codigo/:codigo', async (req, res) => {
 router.get('/buscar', async (req, res) => {
   if (hasSupabase && supabaseAdmin) {
     try {
-      const productos = await obtenerProductosCentral(req.query.q || '', req.usuario.rol === 'admin' ? null : req.usuario.sucursal_id);
+      const productos = await obtenerProductosCentral(req.query.q || '');
       const inventario = await consultarInventarioCentral();
       const grupos = mapearInventarioCentral(inventario);
       return res.json(
@@ -130,12 +117,10 @@ router.get('/buscar', async (req, res) => {
                         WHERE i.producto_id = p.id AND i.sucursal_id = ?), 0) AS existencia_local
        FROM productos p
       WHERE p.activo = 1 AND p.es_comun = 0
-        AND (? = 1 OR EXISTS (SELECT 1 FROM inventario ix
-                              WHERE ix.producto_id = p.id AND ix.sucursal_id = ?))
         AND (p.descripcion LIKE ? OR p.codigo_barras LIKE ?)
        ORDER BY p.descripcion LIMIT 50`
     )
-    .all(req.usuario.rol === 'admin' ? 1 : 0, req.usuario.sucursal_id, q, q);
+    .all(q, q);
   res.json(productos);
 });
 
@@ -143,7 +128,7 @@ router.get('/buscar', async (req, res) => {
 router.get('/', async (req, res) => {
   if (hasSupabase && supabaseAdmin) {
     try {
-      const productos = await obtenerProductosCentral(req.query.q || '', req.usuario.rol === 'admin' ? null : req.usuario.sucursal_id);
+      const productos = await obtenerProductosCentral(req.query.q || '');
       const inventario = await consultarInventarioCentral();
       const grupos = mapearInventarioCentral(inventario);
       return res.json(
@@ -163,12 +148,10 @@ router.get('/', async (req, res) => {
     .prepare(
       `SELECT ${camposProducto} FROM productos p
       WHERE p.activo = 1 AND p.es_comun = 0
-        AND (? = 1 OR EXISTS (SELECT 1 FROM inventario ix
-                              WHERE ix.producto_id = p.id AND ix.sucursal_id = ?))
         AND (p.descripcion LIKE ? OR p.codigo_barras LIKE ?)
        ORDER BY p.descripcion LIMIT 200`
     )
-    .all(req.usuario.rol === 'admin' ? 1 : 0, req.usuario.sucursal_id, q, q);
+    .all(q, q);
   res.json(productos.map(conExistencias));
 });
 
