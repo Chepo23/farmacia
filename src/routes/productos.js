@@ -34,6 +34,24 @@ function mapearInventarioCentral(rows) {
   return grupos;
 }
 
+async function agregarExistenciasCero(productos, grupos) {
+  const { data: sucursales, error } = await supabaseAdmin
+    .from('sucursales').select('id,nombre,es_central').eq('activa', true).order('id');
+  if (error) throw error;
+  return (productos || []).map((producto) => ({
+    ...producto,
+    existencias: (sucursales || []).map((sucursal) => grupos.get(producto.id)?.find(
+      (existencia) => Number(existencia.sucursal_id) === Number(sucursal.id)
+    ) || {
+      sucursal_id: sucursal.id,
+      sucursal: sucursal.nombre,
+      es_central: Boolean(sucursal.es_central),
+      existencia: 0,
+      minimo: 0,
+    }),
+  }));
+}
+
 async function obtenerProductosCentral(q = '') {
   if (!hasSupabase || !supabaseAdmin) return [];
   const { data, error } = await supabaseAdmin.from('productos').select('*').eq('activo', true);
@@ -74,9 +92,9 @@ router.get('/codigo/:codigo', async (req, res) => {
       if (!producto) return res.status(404).json({ error: 'Producto no encontrado' });
       const inventario = await consultarInventarioCentral();
       const grupos = mapearInventarioCentral(inventario);
+      const [productoCompleto] = await agregarExistenciasCero([producto], grupos);
       return res.json({
-        ...producto,
-        existencias: grupos.get(producto.id) || [],
+        ...productoCompleto,
       });
     } catch (error) {
       return res.status(500).json({ error: error.message || 'Error al consultar producto central' });
@@ -98,12 +116,7 @@ router.get('/buscar', async (req, res) => {
       const productos = await obtenerProductosCentral(req.query.q || '');
       const inventario = await consultarInventarioCentral();
       const grupos = mapearInventarioCentral(inventario);
-      return res.json(
-        productos.slice(0, 50).map((producto) => ({
-          ...producto,
-          existencias: grupos.get(producto.id) || [],
-        }))
-      );
+      return res.json(await agregarExistenciasCero(productos.slice(0, 50), grupos));
     } catch (error) {
       return res.status(500).json({ error: error.message || 'Error al consultar inventario central' });
     }
@@ -131,13 +144,11 @@ router.get('/', async (req, res) => {
       const productos = await obtenerProductosCentral(req.query.q || '');
       const inventario = await consultarInventarioCentral();
       const grupos = mapearInventarioCentral(inventario);
-      return res.json(
-        productos.slice(0, 200).map((producto) => ({
-          ...producto,
-          existencias: grupos.get(producto.id) || [],
-          total_disponible: (grupos.get(producto.id) || []).reduce((sum, item) => sum + Number(item.existencia || 0), 0),
-        }))
-      );
+      const productosConExistencias = await agregarExistenciasCero(productos.slice(0, 200), grupos);
+      return res.json(productosConExistencias.map((producto) => ({
+        ...producto,
+        total_disponible: producto.existencias.reduce((sum, item) => sum + Number(item.existencia || 0), 0),
+      })));
     } catch (error) {
       return res.status(500).json({ error: error.message || 'Error al consultar catálogo central' });
     }
