@@ -195,8 +195,8 @@ function pintarTablaPedidos() {
       const mio = p.sucursal_id === App.usuario.sucursal_id;
       const etiqueta = p.estado === 'enviado' ? 'Esperando apoyo' : null;
       let acciones = `<button class="boton chico" data-accion="ver-pedido" data-id="${p.id}">Ver</button>`;
-      if (mio && p.estado === 'borrador') {
-        acciones = `<button class="boton chico primario" data-accion="editar-pedido" data-id="${p.id}">Continuar</button>`;
+      if (mio && (p.estado === 'borrador' || p.estado === 'enviado')) {
+        acciones = `<button class="boton chico primario" data-accion="editar-pedido" data-id="${p.id}">${p.estado === 'enviado' ? 'Editar' : 'Continuar'}</button>`;
       } else if (soyCentral() && p.estado === 'enviado') {
         acciones += ` <button class="boton chico exito" data-accion="armar-apoyo"
           data-id="${p.id}" data-sucursal="${p.sucursal_id}">Armar apoyo</button>`;
@@ -657,7 +657,7 @@ function filasPedido(pedido, editable) {
 function pintarPedido(pedido) {
   Apoyos.pedidoActual = pedido;
   Apoyos.actual = null;
-  const editable = pedido.estado === 'borrador' && pedido.sucursal_id === App.usuario.sucursal_id;
+  const editable = (pedido.estado === 'borrador' || pedido.estado === 'enviado') && pedido.sucursal_id === App.usuario.sucursal_id;
 
   mostrarEditorApoyos(`
     <div class="encabezado-apoyo">
@@ -702,8 +702,10 @@ function pintarPedido(pedido) {
           : pedido.nota ? `<div class="dato-secundario"><span>Nota</span><b>${escaparHtml(pedido.nota)}</b></div>` : ''}
         <div class="empuje"></div>
         ${editable
-          ? `<button class="boton exito grande" data-accion="enviar-pedido">
-               <svg class="icono"><use href="#i-enviar"/></svg>Mandar pedido a la central</button>`
+          ? `<button class="boton exito grande" data-accion="enviar-pedido" ${pedido.estado === 'enviado' ? 'title="El pedido ya se había enviado; solo se actualizan cantidades y nota"' : ''}>
+               <svg class="icono"><use href="#i-enviar"/></svg>${pedido.estado === 'enviado' ? 'Actualizar pedido' : 'Mandar pedido a la central'}</button>
+             <button class="boton peligro-suave" data-accion="cancelar-pedido">
+               <svg class="icono"><use href="#i-x"/></svg>Cancelar pedido</button>`
           : ''}
         <button class="boton primario" data-accion="imprimir-pedido">
           <svg class="icono"><use href="#i-imprimir"/></svg>Imprimir</button>
@@ -717,7 +719,7 @@ function pintarPedido(pedido) {
 
 function refrescarPedido(pedido, renglonNuevo = null) {
   Apoyos.pedidoActual = pedido;
-  const editable = pedido.estado === 'borrador' && pedido.sucursal_id === App.usuario.sucursal_id;
+  const editable = (pedido.estado === 'borrador' || pedido.estado === 'enviado') && pedido.sucursal_id === App.usuario.sucursal_id;
   document.getElementById('pedido-cuerpo').innerHTML = filasPedido(pedido, editable);
   document.getElementById('pedido-piezas').textContent = pedido.piezas;
   document.getElementById('pedido-productos').textContent = pedido.renglones.length;
@@ -806,18 +808,46 @@ async function mostrarSugerencias() {
   });
 }
 
+async function cancelarPedido() {
+  const pedido = Apoyos.pedidoActual;
+  const modal = abrirModal(`
+    <h3>Cancelar el pedido folio ${pedido.folio}</h3>
+    <p>Se va a cancelar este pedido. La central dejará de surtirlo y ya no se podrá recibir en apoyo.</p>
+    <div id="pedido-cancel-error" class="mensaje-error" hidden></div>
+    <div class="pie">
+      <button class="boton" onclick="cerrarModal()">No cancelar</button>
+      <button class="boton peligro" id="pedido-cancel-confirmar">Sí, cancelar</button>
+    </div>`);
+
+  modal.querySelector('#pedido-cancel-confirmar').addEventListener('click', async () => {
+    const errorEl = modal.querySelector('#pedido-cancel-error');
+    errorEl.hidden = true;
+    try {
+      await api(`/api/pedidos/${pedido.id}/cancelar`, { method: 'POST' });
+      cerrarModal();
+      aviso('Pedido cancelado', 'exito');
+      mostrarInicioApoyos();
+    } catch (err) {
+      errorEl.textContent = err.message;
+      errorEl.hidden = false;
+    }
+  });
+}
+
 async function enviarPedido() {
   const pedido = Apoyos.pedidoActual;
   if (pedido.renglones.length === 0) return aviso('El pedido no tiene productos', 'error');
   const nota = document.getElementById('pedido-nota')?.value || '';
   const modal = abrirModal(`
-    <h3>Mandar el pedido a la central</h3>
+    <h3>${pedido.estado === 'enviado' ? 'Actualizar pedido' : 'Mandar el pedido a la central'}</h3>
     <p>Se van a pedir <b>${pedido.piezas} pieza(s)</b> de <b>${pedido.renglones.length} producto(s)</b>.
-       La central lo verá al momento y armará el apoyo desde este mismo pedido.</p>
+       ${pedido.estado === 'enviado'
+         ? 'Los cambios se guardan para que la central los tome en el siguiente surtido.'
+         : 'La central lo verá al momento y armará el apoyo desde este mismo pedido.'}</p>
     <div id="pedido-error" class="mensaje-error" hidden></div>
     <div class="pie">
       <button class="boton" onclick="cerrarModal()">Todavía no</button>
-      <button class="boton exito grande" id="pedido-confirmar">Mandar pedido</button>
+      <button class="boton exito grande" id="pedido-confirmar">${pedido.estado === 'enviado' ? 'Guardar cambios' : 'Mandar pedido'}</button>
     </div>`);
   modal.querySelector('#pedido-confirmar').addEventListener('click', async () => {
     const errorEl = modal.querySelector('#pedido-error');
@@ -825,7 +855,7 @@ async function enviarPedido() {
     try {
       const enviado = await api(`/api/pedidos/${pedido.id}/enviar`, { method: 'POST', body: { nota } });
       cerrarModal();
-      aviso('Pedido enviado a la central', 'exito');
+      aviso(pedido.estado === 'enviado' ? 'Pedido actualizado' : 'Pedido enviado a la central', 'exito');
       pintarPedido(enviado);
     } catch (err) {
       errorEl.textContent = err.message;
@@ -999,6 +1029,7 @@ document.getElementById('apoyos-editor').addEventListener('click', (e) => {
     case 'volver-inicio': mostrarInicioApoyos(); break;
     case 'enviar-apoyo': confirmarEnvioApoyo(); break;
     case 'cancelar-apoyo': cancelarApoyo(); break;
+    case 'cancelar-pedido': cancelarPedido(); break;
     case 'imprimir-apoyo': imprimirApoyo(Apoyos.actual); break;
     case 'recibir': abrirRecepcion(Number(boton.dataset.id)); break;
     case 'quitar-renglon':

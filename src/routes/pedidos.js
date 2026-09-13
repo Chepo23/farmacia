@@ -94,7 +94,10 @@ function puedeVer(pedido, usuario) {
 }
 
 function puedeEditar(pedido, usuario) {
-  return pedido.sucursal_id === usuario.sucursal_id && pedido.estado === 'borrador';
+  if (!pedido || !usuario) return false;
+  if (pedido.sucursal_id !== usuario.sucursal_id) return false;
+  if (pedido.estado === 'cancelado' || pedido.estado === 'surtido') return false;
+  return pedido.estado === 'borrador' || pedido.estado === 'enviado';
 }
 
 // ---------- Listado ----------
@@ -261,3 +264,5 @@ router.post('/:id/cancelar', (req, res) => {
 });
 
 module.exports = router;
+module.exports.router = router;
+module.exports.puedeEditar = puedeEditar;
