@@ -100,6 +100,13 @@ function puedeEditar(pedido, usuario) {
   return pedido.estado === 'borrador' || pedido.estado === 'enviado';
 }
 
+function puedeCancelar(pedido, usuario) {
+  if (!pedido || !usuario) return false;
+  if (pedido.sucursal_id !== usuario.sucursal_id) return false;
+  if (pedido.estado === 'cancelado' || pedido.estado === 'surtido') return false;
+  return true;
+}
+
 // ---------- Listado ----------
 router.get('/', async (req, res) => {
   try { await descargarPedidos(); } catch (error) { console.error('No se pudieron descargar pedidos:', error.message); }
@@ -252,17 +259,25 @@ router.post('/:id/enviar', (req, res) => {
 router.post('/:id/cancelar', (req, res) => {
   const pedido = cargarPedido(req.params.id);
   if (!pedido) return res.status(404).json({ error: 'Pedido no encontrado' });
-  if (pedido.sucursal_id !== req.usuario.sucursal_id) {
-    return res.status(403).json({ error: 'Ese pedido no es de tu farmacia' });
+  if (!puedeCancelar(pedido, req.usuario)) {
+    if (pedido.sucursal_id !== req.usuario.sucursal_id) {
+      return res.status(403).json({ error: 'Ese pedido no es de tu farmacia' });
+    }
+    if (pedido.estado === 'surtido') {
+      return res.status(400).json({ error: 'Este pedido ya fue surtido con un apoyo' });
+    }
+    return res.status(400).json({ error: 'Este pedido ya no se puede cancelar' });
   }
-  if (pedido.estado === 'surtido') {
-    return res.status(400).json({ error: 'Este pedido ya fue surtido con un apoyo' });
+  db.prepare("UPDATE pedidos SET estado = 'cancelado' WHERE id = ? AND estado IN ('borrador', 'enviado')").run(pedido.id);
+  const actualizado = db.prepare('SELECT changes() AS cambios').get();
+  if (!actualizado.cambios) {
+    return res.status(400).json({ error: 'Este pedido ya fue cancelado o no se puede cancelar' });
   }
-  db.prepare("UPDATE pedidos SET estado = 'cancelado' WHERE id = ?").run(pedido.id);
   publicarPedidoSinBloquear(pedido.id);
-  res.json({ ok: true });
+  res.json({ ok: true, estado: 'cancelado' });
 });
 
 module.exports = router;
 module.exports.router = router;
 module.exports.puedeEditar = puedeEditar;
+module.exports.puedeCancelar = puedeCancelar;

@@ -72,14 +72,31 @@ async function cargarApoyosInicio() {
 
   document.getElementById('boton-pedir-apoyo').hidden = soyCentral();
   document.getElementById('titulo-pedidos').textContent = soyCentral()
-    ? 'Pedidos que mandaron las farmacias'
+    ? 'Pedidos pendientes por surtir'
     : 'Mis pedidos a la central';
 
   pintarFranjaAvisos();
   pintarFarmacias();
-  pintarTablaApoyos();
   pintarTablaPedidos();
+  pintarHistorialApoyos();
+  cambiarVistaApoyos('pendientes');
   revisarPendientes();
+}
+
+function cambiarVistaApoyos(vista) {
+  const pendiente = document.getElementById('vista-pendientes');
+  const historial = document.getElementById('vista-historial');
+  const botones = document.querySelectorAll('[data-vista-apoyos]');
+
+  const activo = vista === 'historial' ? 'historial' : 'pendientes';
+  if (pendiente) pendiente.hidden = activo !== 'pendientes';
+  if (historial) historial.hidden = activo !== 'historial';
+
+  botones.forEach((boton) => {
+    const esActivo = boton.dataset.vistaApoyos === activo;
+    boton.classList.toggle('primario', esActivo);
+    boton.classList.remove('boton-secundario');
+  });
 }
 
 function pintarFranjaAvisos() {
@@ -156,11 +173,13 @@ function pintarFarmacias() {
 
 function pintarTablaApoyos() {
   const cuerpo = document.getElementById('cuerpo-apoyos');
-  if (Apoyos.apoyos.length === 0) {
-    cuerpo.innerHTML = '<tr><td colspan="9" class="vacio">Todavía no hay apoyos registrados.</td></tr>';
+  if (!cuerpo) return;
+  const pendientes = Apoyos.apoyos.filter((a) => !['cancelado', 'recibido'].includes(a.estado));
+  if (pendientes.length === 0) {
+    cuerpo.innerHTML = '<tr><td colspan="9" class="vacio">No hay apoyos pendientes.</td></tr>';
     return;
   }
-  cuerpo.innerHTML = Apoyos.apoyos
+  cuerpo.innerHTML = pendientes
     .map((a) => {
       const puedeRecibir = a.estado === 'enviado' && a.destino_id === App.usuario.sucursal_id;
       const faltantes = a.estado === 'recibido' && a.faltantes > 0;
@@ -179,6 +198,35 @@ function pintarTablaApoyos() {
         </td>
       </tr>`;
     })
+    .join('');
+}
+
+function pintarHistorialApoyos() {
+  const cuerpo = document.getElementById('cuerpo-historial');
+  if (!cuerpo) return;
+  const historial = Apoyos.apoyos.filter((a) => ['cancelado', 'recibido'].includes(a.estado));
+
+  if (historial.length === 0) {
+    cuerpo.innerHTML = '<tr><td colspan="9" class="vacio">No hay historial de apoyos.</td></tr>';
+    return;
+  }
+
+  cuerpo.innerHTML = historial
+    .map((a) => `
+      <tr>
+        <td class="num">${a.folio}</td>
+        <td>${escaparHtml(a.origen)}</td>
+        <td>${escaparHtml(a.destino)}</td>
+        <td>${chip(a.estado)}</td>
+        <td class="num">${a.renglones}</td>
+        <td class="num">${a.piezas}</td>
+        <td class="num">${dinero(a.total_costo)}</td>
+        <td>${fechaCorta(a.enviado || a.recibido || a.cancelado || a.creado)}</td>
+        <td style="white-space:nowrap">
+          <button class="boton chico" data-accion="ver-apoyo" data-id="${a.id}">Ver</button>
+        </td>
+      </tr>
+    `)
     .join('');
 }
 
@@ -270,9 +318,7 @@ function panelApoyo(apoyo, editable) {
       <button class="boton exito grande" data-accion="enviar-apoyo">
         <svg class="icono"><use href="#i-enviar"/></svg>Enviar a ${escaparHtml(apoyo.destino)}</button>
       <button class="boton primario" data-accion="imprimir-apoyo">
-        <svg class="icono"><use href="#i-imprimir"/></svg>Imprimir lista</button>
-      <button class="boton peligro-suave" data-accion="cancelar-apoyo">
-        <svg class="icono"><use href="#i-x"/></svg>Cancelar este apoyo</button>`;
+        <svg class="icono"><use href="#i-imprimir"/></svg>Imprimir lista</button>`;
   } else {
     botones = `
       ${soyDestino && apoyo.estado === 'enviado'
@@ -281,8 +327,9 @@ function panelApoyo(apoyo, editable) {
         : ''}
       <button class="boton primario" data-accion="imprimir-apoyo">
         <svg class="icono"><use href="#i-imprimir"/></svg>Imprimir</button>
-      ${soyOrigen && apoyo.estado === 'enviado'
-        ? `<button class="boton peligro-suave" data-accion="cancelar-apoyo">Cancelar el envío</button>`
+      ${soyDestino && ['borrador', 'enviado'].includes(apoyo.estado)
+        ? `<button class="boton peligro-suave" data-accion="cancelar-apoyo">
+             ${apoyo.estado === 'enviado' ? 'Cancelar el envío' : 'Cancelar apoyo'}</button>`
         : ''}`;
   }
 
@@ -1106,6 +1153,9 @@ document.addEventListener('keydown', (e) => {
 
 document.getElementById('boton-pedir-apoyo').addEventListener('click', () => abrirPedido());
 document.getElementById('boton-refrescar-apoyos').addEventListener('click', mostrarInicioApoyos);
+document.querySelectorAll('[data-vista-apoyos]').forEach((boton) => {
+  boton.addEventListener('click', () => cambiarVistaApoyos(boton.dataset.vistaApoyos));
+});
 
 App.alMostrarSeccion.apoyos = () => {
   if (Apoyos.actual || Apoyos.pedidoActual) return; // no interrumpir una captura a medias

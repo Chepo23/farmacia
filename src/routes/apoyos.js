@@ -149,6 +149,18 @@ function puedeVer(apoyo, usuario) {
   return apoyo.destino_id === usuario.sucursal_id && apoyo.estado !== 'borrador';
 }
 
+function puedeCancelarApoyo(apoyo, usuario) {
+  if (!apoyo || !usuario) return false;
+  if (apoyo.estado === 'cancelado' || apoyo.estado === 'recibido') return false;
+  return apoyo.destino_id === usuario.sucursal_id;
+}
+
+function resolverPedidoTrasCancelarApoyo(apoyo, pedido, tieneOtrosApoyos = false) {
+  if (!apoyo || !apoyo.pedido_id) return pedido?.estado || null;
+  if (tieneOtrosApoyos) return pedido?.estado === 'cancelado' ? 'cancelado' : 'enviado';
+  return 'cancelado';
+}
+
 // Solo la central que lo creó puede tocar el contenido, y solo mientras es borrador
 function verificarEdicion(apoyo, usuario) {
   if (apoyo.origen_id !== usuario.sucursal_id) return 'Este apoyo lo armó otra farmacia';
@@ -485,11 +497,11 @@ router.post('/:id/recibir', (req, res) => {
 });
 
 // ---------- Cancelar ----------
-router.post('/:id/cancelar', requiereCentral, (req, res) => {
+router.post('/:id/cancelar', (req, res) => {
   const apoyo = cargarApoyo(req.params.id);
   if (!apoyo) return res.status(404).json({ error: 'Apoyo no encontrado' });
-  if (apoyo.origen_id !== req.usuario.sucursal_id) {
-    return res.status(403).json({ error: 'Este apoyo lo armó otra farmacia' });
+  if (!puedeCancelarApoyo(apoyo, req.usuario)) {
+    return res.status(403).json({ error: 'Solo la farmacia que solicitó el apoyo puede cancelarlo' });
   }
   if (apoyo.estado === 'recibido') {
     return res.status(400).json({ error: 'Este apoyo ya fue recibido, no se puede cancelar' });
@@ -502,6 +514,21 @@ router.post('/:id/cancelar', requiereCentral, (req, res) => {
   }
 
   db.transaction(() => {
+    const tieneOtrosApoyos = apoyo.pedido_id
+      ? db.prepare(
+          'SELECT COUNT(*) AS n FROM apoyos WHERE pedido_id = ? AND id != ? AND estado <> ?'
+        ).get(apoyo.pedido_id, apoyo.id, 'cancelado').n > 0
+      : false;
+
+    if (apoyo.pedido_id) {
+      const nuevoEstadoPedido = resolverPedidoTrasCancelarApoyo(
+        apoyo,
+        { estado: apoyo.estado === 'enviado' ? 'enviado' : 'borrador' },
+        tieneOtrosApoyos
+      );
+      db.prepare('UPDATE pedidos SET estado = ? WHERE id = ?').run(nuevoEstadoPedido, apoyo.pedido_id);
+    }
+
     // Si ya se había enviado, la mercancía regresa al inventario de la central
     if (apoyo.estado === 'enviado') {
       const sumar = db.prepare(
@@ -523,7 +550,6 @@ router.post('/:id/cancelar', requiereCentral, (req, res) => {
            WHERE pedido_id = ? AND producto_id = ?`
         );
         for (const r of apoyo.renglones) devolver.run(r.cantidad, apoyo.pedido_id, r.producto_id);
-        db.prepare("UPDATE pedidos SET estado = 'enviado' WHERE id = ?").run(apoyo.pedido_id);
       }
     }
     db.prepare(
@@ -537,3 +563,5 @@ router.post('/:id/cancelar', requiereCentral, (req, res) => {
 });
 
 module.exports = router;
+module.exports.puedeCancelarApoyo = puedeCancelarApoyo;
+module.exports.resolverPedidoTrasCancelarApoyo = resolverPedidoTrasCancelarApoyo;

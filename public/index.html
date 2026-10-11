@@ -234,7 +234,27 @@
 
       <div id="apoyos-farmacias" class="tarjetas-farmacias"></div>
 
-      <div class="zona-apoyos">
+      <div class="acciones vista-apoyos-toggle">
+        <button class="boton primario" data-vista-apoyos="pendientes" type="button">Pendientes</button>
+        <button class="boton" data-vista-apoyos="historial" type="button">Historial completo</button>
+      </div>
+
+      <div id="vista-pendientes">
+        <div class="tarjeta">
+          <h3 id="titulo-pedidos">Pedidos pendientes por surtir</h3>
+          <div class="contenedor-tabla apoyos-tabla">
+            <table class="tabla">
+              <thead><tr>
+                <th class="num">Folio</th><th>Farmacia</th><th>Estado</th>
+                <th class="num">Prods.</th><th class="num">Piezas</th><th>Fecha</th><th></th>
+              </tr></thead>
+              <tbody id="cuerpo-pedidos"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div id="vista-historial" hidden>
         <div class="tarjeta">
           <h3>Historial de apoyos</h3>
           <div class="contenedor-tabla apoyos-tabla">
@@ -243,19 +263,7 @@
                 <th class="num">Folio</th><th>De</th><th>Para</th><th>Estado</th>
                 <th class="num">Prods.</th><th class="num">Piezas</th><th class="num">Costo</th><th>Fecha</th><th></th>
               </tr></thead>
-              <tbody id="cuerpo-apoyos"></tbody>
-            </table>
-          </div>
-        </div>
-        <div class="tarjeta">
-          <h3 id="titulo-pedidos">Pedidos</h3>
-          <div class="contenedor-tabla apoyos-tabla">
-            <table class="tabla">
-              <thead><tr>
-                <th class="num">Folio</th><th>Farmacia</th><th>Estado</th>
-                <th class="num">Prods.</th><th class="num">Piezas</th><th>Fecha</th><th></th>
-              </tr></thead>
-              <tbody id="cuerpo-pedidos"></tbody>
+              <tbody id="cuerpo-historial"></tbody>
             </table>
           </div>
         </div>
