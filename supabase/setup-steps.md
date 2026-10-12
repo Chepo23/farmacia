@@ -1,62 +1,56 @@
-# Setup rápido para tu Supabase
+# Configuración de Supabase (la central)
 
 ## 1) Crear la base central
 
-Usa esta URL como endpoint origen:
+1. Crea el proyecto en https://supabase.com.
+2. En **SQL Editor** pega y ejecuta el contenido de `supabase/schema.sql`
+   (se puede volver a ejecutar sin riesgo: crea lo que falte, corrige datos y deja las tablas protegidas).
 
-https://hnjshjnwgyczajiiytin.supabase.co
+## 2) Configurar cada computadora
 
-## 2) Ejecutar schema
-
-Abre el SQL editor de Supabase y pega el contenido de:
-
-- supabase/schema.sql
-
-## 3) Configurar variables
-
-Crea un archivo `.env` en la raíz del proyecto con este contenido:
+Copia `.env.example` como `.env` en la carpeta del sistema y llena:
 
 ```env
 PORT=3000
 FARMACIA_DB=./farmacia.db
-APP_MODE=local
-SUPABASE_URL=https://hnjshjnwgyczajiiytin.supabase.co
-SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhuanNoam53Z3ljemFqaWl5dGluIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg5MjQwMTMsImV4cCI6MjEwNDUwMDAxM30.jKA19bdMJQpPgx71sRP-7v-22xABgO5_azG7HvR-V3c
-SUPABASE_SERVICE_ROLE_KEY=REEMPLAZA_POR_LA_SERVICE_ROLE_KEY
-DATABASE_URL=postgres://postgres:postgres@localhost:5432/farmacia_central
-DB_CLIENT=sqlite
-SYNC_API_URL=http://localhost:3000/api/sync
-SYNC_TOKEN=change-me
+SUPABASE_URL=https://TU-PROYECTO.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=sb_secret_...   (Project Settings → API Keys → Secret keys)
 ```
 
-## 4) Importante
+- La **llave secreta** solo va en el `.env` de las computadoras de las farmacias.
+  Nunca en GitHub, en un celular ni en un mensaje.
+- El archivo `.env` está excluido del repositorio (`.gitignore`).
 
-- La anon key sirve para consultas públicas.
-- La service role key es la que te permite escribir desde el backend con permisos completos.
-- Nunca la expongas al frontend si no es necesario.
+## 3) Seguridad: si una llave secreta se filtró (por ejemplo, quedó en GitHub)
 
-## 5) Activar usuarios y sucursales centrales
+Hazlo en este orden para que ninguna farmacia se quede sin conexión:
 
-Vuelve a ejecutar `supabase/schema.sql` en el SQL Editor. El script agrega a
-`usuarios_central` las columnas `password_hash` y `sucursal_id`, necesarias para
-el login y la relación con `sucursales`.
+1. **Repositorio privado:** GitHub → el repositorio → Settings → General → *Danger Zone* →
+   *Change repository visibility* → **Private**.
+2. **Llave nueva:** Supabase → Project Settings → **API Keys** → *Secret keys* → **Create new secret key**.
+   Copia la llave (empieza con `sb_secret_`).
+3. **Actualiza cada computadora:** en su `.env` cambia `SUPABASE_SERVICE_ROLE_KEY=` por la llave nueva
+   y reinicia el sistema. Revisa que la barra superior diga **En línea**.
+4. **Desactiva las llaves viejas:** cuando todas las computadoras ya usen la llave nueva, en
+   Supabase → API Keys → *Legacy API Keys* → **Disable JWT-based API keys**
+   (la `service_role` y la `anon` antiguas dejan de servir). Si antes habías creado otra llave secreta
+   que se filtró, bórrala en *Secret keys*.
+5. **Protege las tablas:** en SQL Editor ejecuta `supabase/seguridad.sql`. Al final debe mostrar
+   `rowsecurity = true` en todas las tablas.
+6. **Cambia las contraseñas** de los administradores desde Administración → Usuarios
+   (las contraseñas cifradas estuvieron visibles mientras las tablas no estaban protegidas).
 
-Las cuentas antiguas que ya estaban en `usuarios_central` deben editarse desde
-Administración para asignarles sucursal y contraseña. No se puede recuperar una
-contraseña anterior desde Supabase.
+## 4) App del celular
 
-Desde ese momento:
+La app del celular habla con la función `movil` de Supabase (no con las computadoras), así funciona
+aunque las farmacias estén cerradas. Para publicarla (función en Supabase + app en Cloudflare Pages)
+sigue [docs/celular.md](../docs/celular.md). La función usa su propia llave secreta, guardada en
+*Edge Functions → Secrets* como `FARMACIA_SECRET_KEY`.
 
-- el login valida primero contra `usuarios_central` y guarda una copia local;
-- usuarios y sucursales se administran en Supabase;
-- apoyos y pedidos se publican y descargan desde Supabase;
-- ventas, clientes, crédito, caja y sesiones locales siguen en SQLite para poder
-	trabajar sin internet;
-- una sesión ya iniciada puede continuar vendiendo sin conexión; para iniciar
-	sesión por primera vez hace falta conexión o una copia local previamente
-	sincronizada.
+## 5) Cómo trabaja el sistema con la central
 
-## 6) Seguridad
-
-Si la `SUPABASE_SERVICE_ROLE_KEY` fue compartida o subida a un repositorio,
-regénérala en Supabase y actualiza el `.env` de cada instalación.
+- El inicio de sesión valida contra `usuarios_central` y guarda una copia en la computadora.
+- Usuarios, sucursales, productos, existencias, apoyos y pedidos viven en Supabase.
+- Ventas, clientes, crédito, caja y cortes viven en cada computadora (cada farmacia tiene sus propias
+  estadísticas) para poder vender sin internet.
+- Una sesión ya iniciada puede seguir vendiendo sin conexión; el inventario se sube solo al volver.

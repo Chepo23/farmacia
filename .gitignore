@@ -2,3 +2,9 @@ node_modules/
 farmacia.db
 farmacia.db-shm
 farmacia.db-wal
+respaldos/
+.env
+dist-movil/
+dist-funcion/
+dist-escritorio/
+build-escritorio/

@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'">
+  <title>Configuración — Farmacia</title>
+  <link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+  <header class="cabecera">
+    <img src="../recursos/logo.png" alt="">
+    <div>
+      <h1 id="titulo">Configura esta computadora</h1>
+      <p id="subtitulo">Programa Farmacia</p>
+    </div>
+  </header>
+
+  <main class="config">
+    <section class="bloque" id="bloque-conexion">
+      <h2>1. Conexión</h2>
+      <label class="opcion"><input type="radio" name="modo" value="central" checked>
+        <span><b>Conectada a la central (Supabase)</b>
+          <small>Las farmacias comparten productos, precios, inventario, apoyos y pedidos. Es lo recomendado.</small></span></label>
+      <label class="opcion"><input type="radio" name="modo" value="local">
+        <span><b>Solo esta computadora</b>
+          <small>Sin central: el inventario y todo lo demás vive únicamente en esta computadora.</small></span></label>
+      <div id="campos-central" class="grupo">
+        <label>Dirección de Supabase
+          <input id="supabase-url" type="url" placeholder="https://xxxxxxxxxxxx.supabase.co" autocomplete="off"></label>
+        <label>Llave secreta (Supabase → Project Settings → API Keys → Secret keys)
+          <input id="llave" type="password" placeholder="sb_secret_…" autocomplete="off"></label>
+        <small id="nota-llave" class="nota"></small>
+        <div class="fila-botones">
+          <button type="button" id="probar" class="secundario">Probar conexión</button>
+          <span id="resultado-conexion" class="resultado"></span>
+        </div>
+      </div>
+    </section>
+
+    <section class="bloque" id="bloque-datos">
+      <h2>2. Datos de esta computadora</h2>
+      <p id="texto-datos">Si esta computadora ya usaba el sistema (con <code>npm start</code>), trae sus ventas, clientes, crédito y cortes.</p>
+      <div class="fila-botones">
+        <button type="button" id="anterior-carpeta" class="secundario">Traer datos del sistema anterior…</button>
+        <button type="button" id="anterior-archivo" class="secundario">Elegir solo el archivo farmacia.db…</button>
+      </div>
+      <div id="anterior-resultado"></div>
+      <small class="nota">Los datos del programa se guardan en: <span id="ruta-datos"></span></small>
+    </section>
+
+    <section class="bloque" id="bloque-impresoras">
+      <h2>3. Impresoras</h2>
+      <div class="dos-columnas">
+        <label>Impresora de tickets
+          <select id="impresora-ticket"></select></label>
+        <label>Ancho del papel
+          <select id="ancho">
+            <option value="80">80 mm (el más común)</option>
+            <option value="58">58 mm</option>
+            <option value="otro">Otro ancho…</option>
+          </select>
+          <input id="ancho-otro" type="number" min="40" max="120" step="1" placeholder="Ancho en mm (ej. 76)" hidden></label>
+      </div>
+      <div class="fila-botones">
+        <button type="button" id="prueba-ticket" class="secundario">Imprimir ticket de prueba</button>
+        <span id="resultado-prueba" class="resultado"></span>
+      </div>
+      <label>Impresora de documentos tamaño carta (estados de cuenta, apoyos, pedidos)
+        <select id="impresora-documentos"></select></label>
+      <small class="nota">Con una impresora elegida se imprime directo, sin ventana. "Preguntar cada vez" abre la ventana de impresión de Windows.</small>
+    </section>
+
+    <section class="bloque" id="bloque-opciones">
+      <h2>4. Opciones</h2>
+      <label class="check"><input type="checkbox" id="iniciar-windows" checked> Abrir el programa al encender la computadora</label>
+      <label>Carpeta extra para los respaldos (opcional: por ejemplo una carpeta de OneDrive o una USB)
+        <span class="con-boton">
+          <input id="carpeta-extra" type="text" readonly placeholder="Sin carpeta extra">
+          <button type="button" id="elegir-carpeta" class="secundario">Elegir…</button>
+          <button type="button" id="quitar-carpeta" class="secundario">Quitar</button>
+        </span></label>
+      <label>Dirección de la app del celular (opcional)
+        <input id="url-movil" type="url" placeholder="https://farmacia-inventario.pages.dev" autocomplete="off"></label>
+      <div id="info-respaldos" class="nota"></div>
+      <details>
+        <summary>Opciones avanzadas</summary>
+        <label>Puerto del sistema
+          <input id="puerto" type="number" min="1024" max="65535" step="1" value="3000"></label>
+        <label class="check"><input type="checkbox" id="red"> Permitir que otros equipos de la red (celulares o computadoras) entren a esta computadora</label>
+        <label>Dirección de actualizaciones automáticas
+          <input id="url-actualizaciones" type="url" placeholder="https://…/farmacia" autocomplete="off"></label>
+      </details>
+    </section>
+  </main>
+
+  <footer class="pie">
+    <div id="error" class="error" hidden></div>
+    <button type="button" id="cancelar" class="secundario">Cancelar</button>
+    <button type="button" id="guardar">Guardar y abrir el sistema</button>
+  </footer>
+
+  <script src="configuracion.js"></script>
+</body>
+</html>

@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'">
+  <title>Farmacia — No se pudo iniciar</title>
+  <link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+  <div class="centro">
+    <img src="../recursos/logo.png" alt="Farmacia">
+    <div class="caja-error">
+      <h1>No se pudo iniciar el sistema</h1>
+      <div id="mensaje" class="error"></div>
+      <div class="fila-botones">
+        <button type="button" id="reintentar">Reintentar</button>
+        <button type="button" id="configurar" class="secundario">Configuración</button>
+        <button type="button" id="registros" class="secundario">Abrir registros</button>
+        <button type="button" id="salir" class="secundario">Salir</button>
+      </div>
+      <details>
+        <summary>Detalles para soporte técnico</summary>
+        <pre id="registro"></pre>
+      </details>
+    </div>
+  </div>
+  <script src="error.js"></script>
+</body>
+</html>

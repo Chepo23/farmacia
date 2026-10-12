@@ -275,54 +275,45 @@ CREATE TABLE IF NOT EXISTS sync_config (
   clave TEXT PRIMARY KEY,
   valor TEXT NOT NULL DEFAULT ''
 );
+
+-- Cola de movimientos de inventario que no se pudieron aplicar en la central (sin internet).
+-- estado 'delta': falta aplicar la cantidad en la central y registrar el movimiento.
+-- estado 'movimiento': la existencia ya se aplicó en la central, solo falta registrar el movimiento.
+-- estado 'error': se intentó demasiadas veces; requiere revisión.
+CREATE TABLE IF NOT EXISTS inventario_pendiente (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  producto_id INTEGER NOT NULL,
+  sucursal_id INTEGER NOT NULL,
+  tipo TEXT NOT NULL,
+  cantidad REAL NOT NULL,
+  delta REAL NOT NULL DEFAULT 0,
+  usuario_id INTEGER,
+  nota TEXT DEFAULT '',
+  estado TEXT NOT NULL DEFAULT 'delta' CHECK (estado IN ('delta', 'movimiento', 'error')),
+  existencia_resultante REAL,
+  intentos INTEGER NOT NULL DEFAULT 0,
+  ultimo_error TEXT DEFAULT '',
+  creado TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_inventario_pendiente ON inventario_pendiente(estado, producto_id, sucursal_id);
+
+-- Entradas y salidas de efectivo de la caja que no son ventas (pago a proveedor, retiro, cambio)
+CREATE TABLE IF NOT EXISTS movimientos_caja (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sucursal_id INTEGER NOT NULL REFERENCES sucursales(id),
+  usuario_id INTEGER NOT NULL REFERENCES usuarios(id),
+  tipo TEXT NOT NULL CHECK (tipo IN ('entrada', 'salida')),
+  monto REAL NOT NULL,
+  concepto TEXT NOT NULL DEFAULT '',
+  corte_id INTEGER REFERENCES cortes(id),
+  fecha TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_movimientos_caja ON movimientos_caja(sucursal_id, corte_id);
 `);
 
-// Migraciones para bases de datos creadas antes de estas columnas
-for (const columna of [
-  "ALTER TABLE clientes ADD COLUMN notas TEXT DEFAULT ''",
-  'ALTER TABLE clientes ADD COLUMN credito_autorizado INTEGER NOT NULL DEFAULT 0',
-  'ALTER TABLE sesiones ADD COLUMN apertura_id INTEGER REFERENCES aperturas_caja(id)',
-  'ALTER TABLE productos ADD COLUMN es_comun INTEGER NOT NULL DEFAULT 0',
-  'ALTER TABLE cortes ADD COLUMN total_dolares REAL NOT NULL DEFAULT 0',
-  "ALTER TABLE apoyos ADD COLUMN cancelado_por INTEGER REFERENCES usuarios(id)",
-  "ALTER TABLE apoyos ADD COLUMN cancelado TEXT",
-  "ALTER TABLE apoyos ADD COLUMN motivo_cancelacion TEXT DEFAULT ''",
-]) {
-  try { db.exec(columna); } catch { /* la columna ya existe */ }
-}
-
-// Las bases locales antiguas podían guardar la sucursal directamente en productos.
-// Conserva esa asignación como una fila de inventario antes de dejar de usarla.
-const columnasProducto = db.prepare('PRAGMA table_info(productos)').all().map((columna) => columna.name);
-if (columnasProducto.includes('sucursal_id')) {
-  db.prepare("INSERT OR REPLACE INTO sync_config (clave, valor) VALUES ('aplicando', '1')").run();
-  try {
-    db.prepare(
-      `INSERT INTO inventario (producto_id, sucursal_id, existencia, minimo)
-       SELECT id, sucursal_id, 0, 0 FROM productos
-       WHERE sucursal_id IS NOT NULL
-       ON CONFLICT(producto_id, sucursal_id) DO NOTHING`
-    ).run();
-  } finally {
-    db.prepare("DELETE FROM sync_config WHERE clave = 'aplicando'").run();
-  }
-}
-
-// Estos triggers pertenecen al sincronizador SQLite anterior y generan claves
-// invalidas o duplicadas al reflejar datos desde Supabase.
-for (const trigger of [
-  'sync_inventario_alta',
-  'sync_inventario_cambio',
-  'sync_producto_alta',
-  'sync_producto_cambio',
-  'sync_sucursal_alta',
-  'sync_sucursal_cambio',
-]) {
-  db.exec(`DROP TRIGGER IF EXISTS ${trigger}`);
-}
-
 // Reconstruir la tabla ventas si fue creada con el CHECK viejo de formas de pago
-// (SQLite no permite modificar un CHECK con ALTER TABLE)
+// (SQLite no permite modificar un CHECK con ALTER TABLE). Va antes de agregar columnas
+// nuevas para que la reconstrucción no las borre.
 const defVentas = db
   .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'ventas'")
   .get().sql;
@@ -357,6 +348,162 @@ if (!defVentas.includes('mixto')) {
   `);
   db.pragma('foreign_keys = ON');
 }
+
+function columnasDe(tabla) {
+  return db.prepare(`PRAGMA table_info(${tabla})`).all().map((c) => c.name);
+}
+
+// Agrega la columna si no existe; devuelve true cuando la acaba de crear
+function agregarColumna(tabla, columna, definicion) {
+  if (columnasDe(tabla).includes(columna)) return false;
+  db.exec(`ALTER TABLE ${tabla} ADD COLUMN ${columna} ${definicion}`);
+  return true;
+}
+
+// Migraciones para bases de datos creadas antes de estas columnas
+agregarColumna('clientes', 'notas', "TEXT DEFAULT ''");
+agregarColumna('clientes', 'credito_autorizado', 'INTEGER NOT NULL DEFAULT 0');
+agregarColumna('sesiones', 'apertura_id', 'INTEGER REFERENCES aperturas_caja(id)');
+agregarColumna('productos', 'es_comun', 'INTEGER NOT NULL DEFAULT 0');
+agregarColumna('cortes', 'total_dolares', 'REAL NOT NULL DEFAULT 0');
+agregarColumna('apoyos', 'cancelado_por', 'INTEGER REFERENCES usuarios(id)');
+agregarColumna('apoyos', 'cancelado', 'TEXT');
+agregarColumna('apoyos', 'motivo_cancelacion', "TEXT DEFAULT ''");
+
+// Sesiones con vencimiento por inactividad
+agregarColumna('sesiones', 'ultimo_uso', 'TEXT');
+
+// Kardex: existencia que quedó después de cada movimiento
+agregarColumna('movimientos_inventario', 'existencia_resultante', 'REAL');
+
+// Si el renglón descontó inventario al venderse (para regresarlo igual al cancelar)
+agregarColumna('venta_detalle', 'descuenta_inventario', 'INTEGER');
+// Precio normal del producto al momento de la venta (para mostrar el ahorro por mayoreo)
+agregarColumna('venta_detalle', 'precio_lista', 'REAL');
+
+// Cancelación de ventas (solo ventas que todavía no entran a un corte)
+agregarColumna('ventas', 'cancelada', 'INTEGER NOT NULL DEFAULT 0');
+agregarColumna('ventas', 'cancelada_por', 'INTEGER REFERENCES usuarios(id)');
+agregarColumna('ventas', 'cancelada_fecha', 'TEXT');
+agregarColumna('ventas', 'motivo_cancelacion', "TEXT DEFAULT ''");
+
+// Abonos: forma de pago, saldo antes/después (para el comprobante) y corte al que pertenecen
+agregarColumna('abonos', 'forma_pago', "TEXT NOT NULL DEFAULT 'efectivo'");
+agregarColumna('abonos', 'saldo_anterior', 'REAL');
+agregarColumna('abonos', 'saldo_nuevo', 'REAL');
+if (agregarColumna('abonos', 'corte_id', 'INTEGER REFERENCES cortes(id)')) {
+  // Antes los abonos se ligaban al corte por fecha: se asigna cada abono al primer corte posterior
+  db.exec(`UPDATE abonos SET corte_id = (
+             SELECT c.id FROM cortes c
+             WHERE c.sucursal_id = abonos.sucursal_id AND c.fecha >= abonos.fecha
+             ORDER BY c.fecha, c.id LIMIT 1)
+           WHERE corte_id IS NULL`);
+}
+
+// Corte de caja completo: efectivo contado contra esperado, dólares, entradas/salidas y cancelaciones
+agregarColumna('cortes', 'total_abonos', 'REAL NOT NULL DEFAULT 0');
+agregarColumna('cortes', 'abonos_tarjeta', 'REAL NOT NULL DEFAULT 0');
+agregarColumna('cortes', 'total_usd', 'REAL NOT NULL DEFAULT 0');
+agregarColumna('cortes', 'cambio_dolares', 'REAL NOT NULL DEFAULT 0');
+agregarColumna('cortes', 'entradas_efectivo', 'REAL NOT NULL DEFAULT 0');
+agregarColumna('cortes', 'salidas_efectivo', 'REAL NOT NULL DEFAULT 0');
+agregarColumna('cortes', 'efectivo_esperado', 'REAL NOT NULL DEFAULT 0');
+agregarColumna('cortes', 'usd_contado', 'REAL NOT NULL DEFAULT 0');
+agregarColumna('cortes', 'num_canceladas', 'INTEGER NOT NULL DEFAULT 0');
+agregarColumna('cortes', 'total_canceladas', 'REAL NOT NULL DEFAULT 0');
+agregarColumna('cortes', 'tipo_cambio', 'REAL NOT NULL DEFAULT 0');
+agregarColumna('cortes', 'nota', "TEXT DEFAULT ''");
+
+// Apoyos y pedidos descargados antes con fechas de la central en UTC ('2026-09-12T18:26:55+00:00'):
+// se pasan a hora local 'AAAA-MM-DD HH:MM:SS' como el resto del sistema
+for (const [tabla, columnas] of [
+  ['apoyos', ['creado', 'enviado', 'recibido', 'cancelado']],
+  ['pedidos', ['creado', 'enviado']],
+]) {
+  for (const columna of columnas) {
+    db.prepare(
+      `UPDATE ${tabla} SET ${columna} = COALESCE(datetime(${columna}, 'localtime'), ${columna})
+       WHERE ${columna} LIKE '____-__-__T%'`
+    ).run();
+  }
+}
+
+for (const indice of [
+  'CREATE INDEX IF NOT EXISTS idx_movimientos_producto ON movimientos_inventario(producto_id, sucursal_id, id)',
+  'CREATE INDEX IF NOT EXISTS idx_venta_detalle_venta ON venta_detalle(venta_id)',
+  'CREATE INDEX IF NOT EXISTS idx_ventas_cliente ON ventas(cliente_id, forma_pago)',
+  'CREATE INDEX IF NOT EXISTS idx_ventas_corte ON ventas(sucursal_id, corte_id)',
+  'CREATE INDEX IF NOT EXISTS idx_abonos_cliente ON abonos(cliente_id)',
+  'CREATE INDEX IF NOT EXISTS idx_abonos_corte ON abonos(sucursal_id, corte_id)',
+  'CREATE INDEX IF NOT EXISTS idx_sesiones_usuario ON sesiones(usuario_id)',
+]) {
+  db.exec(indice);
+}
+
+// Las bases locales antiguas podían guardar la sucursal directamente en productos.
+// Conserva esa asignación como una fila de inventario antes de dejar de usarla.
+const columnasProducto = db.prepare('PRAGMA table_info(productos)').all().map((columna) => columna.name);
+if (columnasProducto.includes('sucursal_id')) {
+  db.prepare("INSERT OR REPLACE INTO sync_config (clave, valor) VALUES ('aplicando', '1')").run();
+  try {
+    db.prepare(
+      `INSERT INTO inventario (producto_id, sucursal_id, existencia, minimo)
+       SELECT id, sucursal_id, 0, 0 FROM productos
+       WHERE sucursal_id IS NOT NULL
+       ON CONFLICT(producto_id, sucursal_id) DO NOTHING`
+    ).run();
+  } finally {
+    db.prepare("DELETE FROM sync_config WHERE clave = 'aplicando'").run();
+  }
+}
+
+// Estos triggers pertenecen al sincronizador SQLite anterior y generan claves
+// invalidas o duplicadas al reflejar datos desde Supabase.
+for (const trigger of [
+  'sync_inventario_alta',
+  'sync_inventario_cambio',
+  'sync_producto_alta',
+  'sync_producto_cambio',
+  'sync_sucursal_alta',
+  'sync_sucursal_cambio',
+]) {
+  db.exec(`DROP TRIGGER IF EXISTS ${trigger}`);
+}
+
+// El "Artículo común" (algo que se vende sin estar en el catálogo) vive solo en esta
+// computadora con el id reservado 0, para que nunca choque con los ids de la central.
+function asegurarArticuloComun() {
+  db.transaction(() => {
+    const existe = db.prepare('SELECT id FROM productos WHERE id = 0').get();
+    if (existe) {
+      db.prepare(
+        `UPDATE productos SET codigo_barras = NULL, descripcion = 'Artículo común', usa_inventario = 0,
+           es_comun = 1, activo = 1 WHERE id = 0`
+      ).run();
+    } else {
+      db.prepare(
+        `INSERT INTO productos (id, codigo_barras, descripcion, departamento, precio_costo, precio_venta,
+           usa_inventario, es_comun, activo)
+         VALUES (0, NULL, 'Artículo común', '', 0, 0, 0, 1, 1)`
+      ).run();
+    }
+    // Ventas de artículos comunes colgadas de un producto genérico anterior
+    const anteriores = db
+      .prepare(
+        `SELECT id FROM productos
+         WHERE id <> 0 AND es_comun = 1 AND codigo_barras IS NULL AND descripcion = 'Artículo común'`
+      )
+      .all();
+    for (const anterior of anteriores) {
+      db.prepare('UPDATE venta_detalle SET producto_id = 0 WHERE producto_id = ?').run(anterior.id);
+      db.prepare('UPDATE productos SET activo = 0 WHERE id = ?').run(anterior.id);
+    }
+    // Ningún producto del catálogo es "común": esa marca llegó por error con los productos de ejemplo
+    db.prepare('UPDATE productos SET es_comun = 0 WHERE id <> 0 AND es_comun = 1').run();
+  })();
+}
+
+asegurarArticuloComun();
 
 function seed() {
   const haySucursales = db.prepare('SELECT COUNT(*) AS n FROM sucursales').get().n;

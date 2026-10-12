@@ -25,7 +25,7 @@ function chip(estado, texto) {
 // Fecha en formato corto para las tablas ("2026-08-03 21:14" -> "03/08 21:14")
 function fechaCorta(texto) {
   if (!texto) return '';
-  const [dia, hora = ''] = texto.split(' ');
+  const [dia, hora = ''] = String(texto).replace('T', ' ').split(' ');
   const partes = dia.split('-');
   return `${partes[2]}/${partes[1]} ${hora.slice(0, 5)}`;
 }
@@ -318,7 +318,9 @@ function panelApoyo(apoyo, editable) {
       <button class="boton exito grande" data-accion="enviar-apoyo">
         <svg class="icono"><use href="#i-enviar"/></svg>Enviar a ${escaparHtml(apoyo.destino)}</button>
       <button class="boton primario" data-accion="imprimir-apoyo">
-        <svg class="icono"><use href="#i-imprimir"/></svg>Imprimir lista</button>`;
+        <svg class="icono"><use href="#i-imprimir"/></svg>Imprimir lista</button>
+      ${soyOrigen ? `<button class="boton peligro-suave" data-accion="descartar-apoyo">
+        <svg class="icono"><use href="#i-basura"/></svg>Descartar borrador</button>` : ''}`;
   } else {
     botones = `
       ${soyDestino && apoyo.estado === 'enviado'
@@ -445,6 +447,15 @@ async function agregarAlApoyo(codigo, cantidad = 1) {
 
 // El código no está en el catálogo: se ofrece darlo de alta sin salir del apoyo
 function ofrecerAltaProducto(codigo) {
+  // Solo la central da de alta productos (ahí se fijan los precios de todas las sucursales)
+  if (!(App.usuario.rol === 'admin' && App.usuario.es_central === 1)) {
+    abrirModal(`
+      <h3>Ese código no está en el catálogo</h3>
+      <p>El código <b>${escaparHtml(codigo)}</b> no existe todavía. Pide a la farmacia central que lo dé de alta;
+         después podrás escanearlo.</p>
+      <div class="pie"><button class="boton" onclick="cerrarModal()">Entendido</button></div>`);
+    return;
+  }
   const modal = abrirModal(`
     <h3>Ese código no está en el catálogo</h3>
     <p>El código <b>${escaparHtml(codigo)}</b> no existe todavía. Si lo das de alta ahora,
@@ -596,6 +607,25 @@ function cancelarApoyo() {
       errorEl.hidden = false;
     }
   });
+}
+
+// La central descarta un borrador que todavía no envía (no mueve inventario)
+async function descartarApoyo() {
+  const apoyo = Apoyos.actual;
+  const confirmado = await confirmar({
+    titulo: `Descartar el borrador folio ${apoyo.folio}`,
+    mensaje: `Se borrará la lista para ${apoyo.destino}. Todavía no ha movido inventario${apoyo.pedido_folio ? ` y el pedido #${apoyo.pedido_folio} seguirá pendiente de surtir` : ''}.`,
+    boton: 'Descartar borrador',
+    peligro: true,
+  });
+  if (!confirmado) return;
+  try {
+    await api(`/api/apoyos/${apoyo.id}/cancelar`, { method: 'POST', body: {} });
+    aviso('Borrador descartado');
+    mostrarInicioApoyos();
+  } catch (err) {
+    aviso(err.message, 'error');
+  }
 }
 
 // ---------- Recibir ----------
@@ -914,16 +944,8 @@ async function enviarPedido() {
 // ============================================================
 //  Impresión (hoja normal, no ticket)
 // ============================================================
-window.addEventListener('afterprint', () => {
-  document.body.classList.remove('imprimir-documento');
-  document.getElementById('documento').innerHTML = '';
-});
-
 function imprimirDocumento(html) {
-  const documento = document.getElementById('documento');
-  documento.innerHTML = html;
-  document.body.classList.add('imprimir-documento');
-  window.print();
+  Impresion.documento(html);
 }
 
 function imprimirApoyo(apoyo) {
@@ -1076,6 +1098,7 @@ document.getElementById('apoyos-editor').addEventListener('click', (e) => {
     case 'volver-inicio': mostrarInicioApoyos(); break;
     case 'enviar-apoyo': confirmarEnvioApoyo(); break;
     case 'cancelar-apoyo': cancelarApoyo(); break;
+    case 'descartar-apoyo': descartarApoyo(); break;
     case 'cancelar-pedido': cancelarPedido(); break;
     case 'imprimir-apoyo': imprimirApoyo(Apoyos.actual); break;
     case 'recibir': abrirRecepcion(Number(boton.dataset.id)); break;

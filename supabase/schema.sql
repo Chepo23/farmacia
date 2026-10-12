@@ -198,10 +198,10 @@ alter table public.usuarios_central
 alter table public.usuarios_central
   add column if not exists updated_at timestamptz not null default now();
 
--- ejemplo inicial de sucursal central
+-- Sucursal central inicial: solo si la base está vacía (antes se duplicaba cada vez que se ejecutaba)
 insert into public.sucursales (nombre, direccion, telefono, es_central, activa)
-values ('Central', 'Oficina central', '', true, true)
-on conflict do nothing;
+select 'Central', 'Oficina central', '', true, true
+where not exists (select 1 from public.sucursales);
 
 -- Migracion de productos por sucursal a inventario por sucursal.
 -- Ejecutar antes de eliminar la columna legacy si ya existia en Supabase.
@@ -216,3 +216,69 @@ on conflict (producto_id, sucursal_id) do nothing;
 
 drop index if exists public.idx_productos_sucursal;
 alter table public.productos drop column if exists sucursal_id;
+
+-- ========================================================
+-- Inventario unificado (octubre 2026). Se puede ejecutar varias veces.
+-- ========================================================
+
+-- Kardex: existencia que quedó después de cada movimiento
+-- (la app funciona sin esta columna, pero con ella el historial muestra el saldo)
+alter table public.movimientos_inventario
+  add column if not exists existencia_resultante numeric(12,2);
+create index if not exists idx_movimientos_producto
+  on public.movimientos_inventario (producto_id, sucursal_id, id);
+
+-- Los productos de ejemplo se sembraron marcados como "artículo común" por error.
+-- El artículo común solo existe en cada computadora; en la central ningún producto lo es.
+update public.productos set es_comun = false where es_comun = true;
+
+-- Versiones anteriores subían apoyos y pedidos con el id de cada computadora, así que los
+-- contadores de ids quedaron atrás. Esto los pone al día (la app también lo resuelve sola).
+select setval(pg_get_serial_sequence('public.pedidos', 'id'), coalesce((select max(id) from public.pedidos), 0) + 1, false);
+select setval(pg_get_serial_sequence('public.pedido_detalle', 'id'), coalesce((select max(id) from public.pedido_detalle), 0) + 1, false);
+select setval(pg_get_serial_sequence('public.apoyos', 'id'), coalesce((select max(id) from public.apoyos), 0) + 1, false);
+select setval(pg_get_serial_sequence('public.apoyo_detalle', 'id'), coalesce((select max(id) from public.apoyo_detalle), 0) + 1, false);
+
+-- ========================================================
+-- App del celular (vinculación por código y sesiones de larga duración)
+-- Solo las usa la función "movil" con la llave secreta; los celulares nunca leen estas tablas.
+-- ========================================================
+create table if not exists public.vinculos_movil (
+  id bigserial primary key,
+  codigo_hash text not null unique,          -- SHA-256 del código; el código nunca se guarda
+  usuario_id bigint not null references public.usuarios_central(id) on delete cascade,
+  creado_por bigint,
+  expira timestamptz not null,
+  usado timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.sesiones_movil (
+  id bigserial primary key,
+  token_hash text not null unique,           -- SHA-256 del token que guarda el celular
+  usuario_id bigint not null references public.usuarios_central(id) on delete cascade,
+  dispositivo text not null default '',
+  creada timestamptz not null default now(),
+  ultimo_uso timestamptz not null default now(),
+  revocada timestamptz
+);
+create index if not exists idx_sesiones_movil_usuario on public.sesiones_movil (usuario_id);
+
+-- ========================================================
+-- Seguridad (igual que supabase/seguridad.sql): la llave pública no puede leer ni modificar nada.
+-- Las computadoras usan la llave secreta, que no se ve afectada.
+-- ========================================================
+do $$
+declare
+  tabla record;
+begin
+  for tabla in select tablename from pg_tables where schemaname = 'public' loop
+    execute format('alter table public.%I enable row level security', tabla.tablename);
+  end loop;
+end $$;
+revoke all on all tables in schema public from anon;
+revoke all on all sequences in schema public from anon;
+revoke execute on all functions in schema public from anon;
+alter default privileges in schema public revoke all on tables from anon;
+alter default privileges in schema public revoke all on sequences from anon;
+alter default privileges in schema public revoke execute on functions from anon;

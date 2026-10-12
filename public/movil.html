@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#2e5f45">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Inventario">
+  <title>Inventario — Farmacia</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@700;800;900&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/movil.css">
+  <!-- app-instalable: aquí el armado de la app en la nube agrega el manifiesto y los íconos -->
+</head>
+<body>
+  <svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+    <symbol id="i-camara" viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></symbol>
+    <symbol id="i-buscar" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></symbol>
+    <symbol id="i-recibir" viewBox="0 0 24 24"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></symbol>
+    <symbol id="i-contar" viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></symbol>
+    <symbol id="i-menos" viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/></symbol>
+    <symbol id="i-mas" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></symbol>
+    <symbol id="i-linterna" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="M7 2h10l-1 6H8z"/><path d="M8 8v12h8V8"/></symbol>
+    <symbol id="i-girar" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></symbol>
+    <symbol id="i-teclado" viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></symbol>
+    <symbol id="i-historial" viewBox="0 0 24 24"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><polyline points="12 7 12 12 15 15"/></symbol>
+    <symbol id="i-precio" viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></symbol>
+    <symbol id="i-qr" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3h-3zM20 14v.01M14 20h.01M17 20h4v-3"/></symbol>
+    <symbol id="i-compartir" viewBox="0 0 24 24"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></symbol>
+  </svg>
+
+  <!-- Vincular este celular (solo en la app en la nube) -->
+  <section id="vista-vincular" class="m-vincular" hidden>
+    <img src="img/logo-login.png" alt="" class="m-vincular-logo">
+    <h1>Inventario de la farmacia</h1>
+    <div id="vincular-instalar" class="m-instalar" hidden>
+      <h2>Instala la app en tu iPhone</h2>
+      <ol>
+        <li>Toca <b>Compartir</b> <svg class="icono"><use href="#i-compartir"/></svg> en la barra de Safari.</li>
+        <li>Elige <b>Agregar a pantalla de inicio</b> y toca <b>Agregar</b>.</li>
+        <li id="vincular-paso-codigo">Abre <b>Inventario</b> desde la pantalla de inicio y escribe el código que aparece en la computadora.</li>
+      </ol>
+      <div id="vincular-codigo-ios" class="m-codigo-grande" hidden></div>
+      <p class="m-nota">El código dura 15 minutos. Si se vence, genera otro en la computadora.</p>
+      <button id="vincular-sin-instalar" class="m-boton secundario" type="button">Usar en Safari sin instalar</button>
+    </div>
+    <div id="vincular-formulario" class="m-vincular-formulario">
+      <p>Vincula este celular con la farmacia: en la computadora toca <b>Celular</b> y luego <b>Generar código para vincular</b>.</p>
+      <button id="vincular-escanear" class="m-boton principal" type="button"><svg class="icono"><use href="#i-qr"/></svg>Escanear el código QR</button>
+      <form id="vincular-form" class="m-vincular-form" autocomplete="off">
+        <input id="vincular-codigo" type="text" inputmode="text" autocapitalize="characters" autocorrect="off" spellcheck="false"
+               maxlength="12" placeholder="ABCD-2345" aria-label="Código para vincular">
+        <button class="m-boton principal" type="submit">Vincular</button>
+      </form>
+      <div id="vincular-error" class="m-error" hidden></div>
+    </div>
+  </section>
+
+  <header class="m-barra">
+    <img src="img/logo-login.png" alt="" class="m-logo">
+    <div class="m-titulo">
+      <b>Inventario</b>
+      <select id="m-sucursal" class="m-sucursal" aria-label="Sucursal" hidden></select>
+      <span id="m-sucursal-texto" class="m-sucursal-texto"></span>
+    </div>
+    <span id="m-sync" class="m-sync" hidden></span>
+    <button id="m-menu" class="m-icono-boton" aria-label="Menú"><svg class="icono"><use href="#i-menu"/></svg></button>
+  </header>
+
+  <div id="m-instalar-aviso" class="m-instalar-aviso" hidden>
+    <span>Instala la app para abrirla desde la pantalla de inicio, sin el navegador.</span>
+    <button id="m-instalar-boton" type="button">Instalar</button>
+    <button id="m-instalar-cerrar" type="button" aria-label="No mostrar otra vez"><svg class="icono"><use href="#i-x"/></svg></button>
+  </div>
+
+  <div class="m-captura">
+    <button id="boton-escanear" class="m-escanear"><svg class="icono"><use href="#i-camara"/></svg><span id="texto-escanear">Escanear</span></button>
+    <form id="form-codigo" class="m-buscar" autocomplete="off">
+      <input id="entrada-codigo" type="text" inputmode="text" enterkeyhint="search" placeholder="Código o nombre del producto" aria-label="Código o nombre del producto">
+      <button type="submit" aria-label="Buscar"><svg class="icono"><use href="#i-buscar"/></svg></button>
+    </form>
+  </div>
+
+  <main>
+    <!-- Consultar: precio y existencias -->
+    <section id="vista-consultar" class="m-vista">
+      <div id="consulta-resultado">
+        <div class="m-vacio">
+          <svg class="icono grande"><use href="#i-camara"/></svg>
+          <p><b>Escanea un producto</b> para ver su precio y cuántas piezas hay en cada farmacia.</p>
+          <p>Desde aquí también puedes registrar entradas, mermas, conteos y mínimos.</p>
+        </div>
+      </div>
+      <div id="consulta-recientes"></div>
+    </section>
+
+    <!-- Recibir mercancía -->
+    <section id="vista-recibir" class="m-vista" hidden>
+      <div class="m-explicacion">Escanea cada producto que llegó: <b>cada escaneo suma una pieza</b>.
+        Al terminar, revisa las cantidades y aplica la entrada al inventario.</div>
+      <label class="m-check"><input type="checkbox" id="rec-preguntar"> Preguntar la cantidad al escanear (cajas de varias piezas)</label>
+      <div class="m-resumen"><span><b id="rec-productos">0</b> productos</span><span><b id="rec-piezas">0</b> piezas</span></div>
+      <ul id="rec-lista" class="m-lista"></ul>
+      <div id="rec-no-encontrados"></div>
+      <input id="rec-nota" class="m-campo" type="text" maxlength="200" placeholder="Proveedor o número de factura (opcional)">
+      <button id="rec-aplicar" class="m-boton principal" disabled>Aplicar entrada al inventario</button>
+      <button id="rec-vaciar" class="m-boton secundario">Vaciar lista</button>
+    </section>
+
+    <!-- Contar (toma de inventario) -->
+    <section id="vista-contar" class="m-vista" hidden>
+      <div class="m-explicacion">Escanea las piezas que hay en el estante: <b>cada escaneo cuenta una</b>.
+        Se compara contra lo que dice el sistema y al aplicar solo se ajustan las diferencias.</div>
+      <div class="m-resumen"><span><b id="con-productos">0</b> contados</span><span><b id="con-diferencias">0</b> con diferencia</span></div>
+      <ul id="con-lista" class="m-lista"></ul>
+      <div id="con-no-encontrados"></div>
+      <input id="con-nota" class="m-campo" type="text" maxlength="200" placeholder="Nota del conteo (ej. estante 3)">
+      <button id="con-aplicar" class="m-boton principal" disabled>Aplicar ajustes</button>
+      <button id="con-vaciar" class="m-boton secundario">Vaciar conteo</button>
+    </section>
+  </main>
+
+  <nav class="m-nav">
+    <button data-vista="consultar" class="activa"><svg class="icono"><use href="#i-buscar"/></svg>Consultar</button>
+    <button data-vista="recibir"><svg class="icono"><use href="#i-recibir"/></svg>Recibir<span id="nav-recibir" class="m-globo" hidden></span></button>
+    <button data-vista="contar"><svg class="icono"><use href="#i-contar"/></svg>Contar<span id="nav-contar" class="m-globo" hidden></span></button>
+  </nav>
+
+  <!-- Cámara -->
+  <div id="escaner" class="escaner" hidden>
+    <video id="escaner-video" playsinline muted autoplay></video>
+    <div class="escaner-mira"><span></span></div>
+    <div class="escaner-arriba">
+      <b id="escaner-titulo">Apunta al código de barras</b>
+      <button id="escaner-cerrar" class="escaner-listo">Listo</button>
+    </div>
+    <div class="escaner-abajo">
+      <div id="escaner-ultimo" class="escaner-ultimo" hidden></div>
+      <div class="escaner-botones">
+        <button id="escaner-linterna" hidden><svg class="icono"><use href="#i-linterna"/></svg>Linterna</button>
+        <button id="escaner-camara" hidden><svg class="icono"><use href="#i-girar"/></svg>Cámara</button>
+        <button id="escaner-teclear"><svg class="icono"><use href="#i-teclado"/></svg>Escribir</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Hoja inferior (detalles, cantidades y formularios) -->
+  <div id="m-fondo-hoja" class="m-fondo-hoja" hidden>
+    <div id="m-hoja" class="m-hoja" role="dialog" aria-modal="true"></div>
+  </div>
+
+  <div id="m-aviso" class="m-aviso" hidden></div>
+
+  <script src="config.js"></script>
+  <script src="js/escaner.js"></script>
+  <script src="js/movil.js"></script>
+</body>
+</html>

@@ -5,26 +5,46 @@ const Venta = {
   mayoreo: false, // F11: cobrar con precio de mayoreo
 };
 
+const NOMBRES_FORMA_PAGO = {
+  efectivo: 'Efectivo',
+  dolar: 'Dólares',
+  tarjeta: 'Tarjeta',
+  mixto: 'Mixto',
+  credito: 'Crédito',
+};
+
+function redondear2(n) {
+  return Math.round((Number(n) || 0) * 100) / 100;
+}
+
+// Piezas del mismo producto en toda la venta (para el mayoreo por cantidad)
+function piezasDe(producto) {
+  return Venta.carrito.filter((r) => r.producto.id === producto.id).reduce((t, r) => t + r.cantidad, 0);
+}
+
+// Mayoreo con F11, o automático al llegar a la cantidad de mayoreo del producto
+function aplicaMayoreo(producto) {
+  if (producto.comun || producto.precio_mayoreo == null) return false;
+  if (Venta.mayoreo) return true;
+  return Number(producto.cantidad_mayoreo) > 0 && piezasDe(producto) >= Number(producto.cantidad_mayoreo);
+}
+
 function precioUnitario(producto) {
-  if (Venta.mayoreo && producto.precio_mayoreo != null) return producto.precio_mayoreo;
-  return producto.precio_venta;
+  return aplicaMayoreo(producto) ? Number(producto.precio_mayoreo) : Number(producto.precio_venta);
 }
 
 function totalVenta() {
-  return Venta.carrito.reduce(
-    (suma, r) => suma + Math.round(precioUnitario(r.producto) * r.cantidad * 100) / 100,
-    0
-  );
+  return redondear2(Venta.carrito.reduce((suma, r) => suma + redondear2(precioUnitario(r.producto) * r.cantidad), 0));
 }
 
 // Existencia del producto en la sucursal del usuario
 function existenciaLocal(producto) {
-  if (!producto.usa_inventario) return Infinity;
+  if (!producto.usa_inventario || producto.comun) return Infinity;
+  if (producto.existencia_local != null) return Number(producto.existencia_local);
   if (producto.existencias) {
     const e = producto.existencias.find((x) => x.sucursal_id === App.usuario.sucursal_id);
     return e ? e.existencia : 0;
   }
-  if (producto.existencia_local != null) return producto.existencia_local;
   return Infinity;
 }
 
@@ -33,21 +53,21 @@ function pintarVenta() {
   cuerpo.innerHTML = Venta.carrito
     .map((r, i) => {
       const precio = precioUnitario(r.producto);
-      const importe = Math.round(precio * r.cantidad * 100) / 100;
+      const importe = redondear2(precio * r.cantidad);
+      const mayoreo = aplicaMayoreo(r.producto);
       return `<tr data-indice="${i}" class="${i === Venta.filaSeleccionada ? 'seleccionado' : ''}">
-        <td class="col-cant"><input type="number" class="cantidad" min="0.01" step="any" value="${r.cantidad}" data-indice="${i}"></td>
-        <td>${escaparHtml(r.producto.descripcion)}</td>
+        <td class="col-cant"><input type="number" class="cantidad" min="0.01" step="any" value="${r.cantidad}" data-indice="${i}" aria-label="Cantidad"></td>
+        <td>${escaparHtml(r.producto.descripcion)}${mayoreo ? ' <span class="chip enviado">Mayoreo</span>' : ''}</td>
         <td class="num">${dinero(precio)}</td>
         <td class="num col-importe">${dinero(importe)}</td>
         <td><button class="boton-quitar" data-indice="${i}" title="Quitar renglón"><svg class="icono"><use href="#i-x"/></svg></button></td>
       </tr>`;
     })
     .join('');
-  const articulos = Venta.carrito.reduce((s, r) => s + r.cantidad, 0);
+  const articulos = Math.round(Venta.carrito.reduce((s, r) => s + r.cantidad, 0) * 1000) / 1000;
   const total = totalVenta();
   document.getElementById('total-venta').textContent = dinero(total);
-  document.getElementById('articulos-venta').textContent =
-    `${articulos} artículo${articulos === 1 ? '' : 's'}`;
+  document.getElementById('articulos-venta').textContent = `${articulos} artículo${articulos === 1 ? '' : 's'}`;
   const tipoCambio = App.apertura?.tipo_cambio || 0;
   document.getElementById('total-dolares').textContent =
     tipoCambio > 0 ? `≈ ${(total / tipoCambio).toFixed(2)} USD (T.C. $${tipoCambio.toFixed(2)})` : '';
@@ -56,20 +76,22 @@ function pintarVenta() {
 
 function agregarProducto(producto, cantidad) {
   const existente = Venta.carrito.find((r) => r.producto.id === producto.id);
-  const cantidadFinal = (existente ? existente.cantidad : 0) + cantidad;
+  const cantidadFinal = Math.round(((existente ? existente.cantidad : 0) + cantidad) * 1000) / 1000;
   const existencia = existenciaLocal(producto);
-  if (cantidadFinal > existencia) {
+  if (cantidadFinal > existencia + 1e-9) {
     aviso(`No hay suficiente existencia de "${producto.descripcion}" (hay ${existencia})`, 'error');
-    return;
+    return false;
   }
   if (existente) {
     existente.cantidad = cantidadFinal;
+    existente.producto = producto; // datos frescos (precio y existencia)
     Venta.filaSeleccionada = Venta.carrito.indexOf(existente);
   } else {
     Venta.carrito.push({ producto, cantidad });
     Venta.filaSeleccionada = Venta.carrito.length - 1;
   }
   pintarVenta();
+  return true;
 }
 
 // ---------- Artículo común (Ins): algo que no está en el catálogo ----------
@@ -78,7 +100,7 @@ function abrirArticuloComun() {
   const modal = abrirModal(`
     <h3>Artículo común</h3>
     <p>Agrega a la venta un artículo que no está en el catálogo.</p>
-    <label>Nombre <input type="text" id="com-nombre" placeholder="Ej. Jeringa suelta"></label>
+    <label>Nombre <input type="text" id="com-nombre" placeholder="Ej. Jeringa suelta" maxlength="200"></label>
     <div class="fila">
       <label>Cantidad <input type="number" id="com-cantidad" step="any" min="0.01" value="1"></label>
       <label>Precio ($) <input type="number" id="com-precio" step="0.01" min="0" placeholder="0.00"></label>
@@ -126,18 +148,30 @@ function alternarMayoreo() {
 // ---------- Captura con escáner / teclado ----------
 const entradaCodigo = document.getElementById('entrada-codigo');
 
+// "3*7501234567890" agrega 3 piezas de golpe
+function leerCaptura(texto) {
+  const partes = texto.match(/^\s*(\d+(?:[.,]\d+)?)\s*\*\s*(.+)$/);
+  if (!partes) return { cantidad: 1, codigo: texto.trim() };
+  return { cantidad: Number(partes[1].replace(',', '.')), codigo: partes[2].trim() };
+}
+
 entradaCodigo.addEventListener('keydown', async (e) => {
   if (e.key !== 'Enter') return;
   e.preventDefault();
   const texto = entradaCodigo.value.trim();
   if (!texto) return;
+  const { cantidad, codigo } = leerCaptura(texto);
+  if (!(cantidad > 0) || !codigo) {
+    aviso('Escribe la cantidad, un asterisco y el código. Ej. 3*7501234567890', 'error');
+    return;
+  }
 
   try {
-    const producto = await api('/api/productos/codigo/' + encodeURIComponent(texto));
-    agregarProducto(producto, 1);
-    entradaCodigo.value = '';
+    const producto = await api('/api/productos/codigo/' + encodeURIComponent(codigo));
+    if (agregarProducto(producto, cantidad)) entradaCodigo.value = '';
+    else entradaCodigo.select();
   } catch (err) {
-    aviso(`No se encontró el código "${texto}"`, 'error');
+    aviso(err.status === 404 ? `No se encontró el código "${codigo}"` : err.message, 'error');
     entradaCodigo.select();
   }
 });
@@ -149,7 +183,7 @@ document.getElementById('cuerpo-venta').addEventListener('change', (e) => {
   const nueva = Number(e.target.value);
   if (nueva > 0) {
     const existencia = existenciaLocal(Venta.carrito[i].producto);
-    if (nueva > existencia) {
+    if (nueva > existencia + 1e-9) {
       aviso(`No hay suficiente existencia de "${Venta.carrito[i].producto.descripcion}" (hay ${existencia})`, 'error');
     } else {
       Venta.carrito[i].cantidad = nueva;
@@ -179,6 +213,7 @@ document.getElementById('cuerpo-venta').addEventListener('click', (e) => {
 
 document.addEventListener('keydown', (e) => {
   if (!['+', '-'].includes(e.key) || hayModalAbierto() || Venta.filaSeleccionada < 0) return;
+  if (!document.getElementById('seccion-venta').classList.contains('activa')) return;
   const renglon = Venta.carrito[Venta.filaSeleccionada];
   if (!renglon) return;
   e.preventDefault();
@@ -186,7 +221,7 @@ document.addEventListener('keydown', (e) => {
     agregarProducto(renglon.producto, 1);
     return;
   }
-  renglon.cantidad -= 1;
+  renglon.cantidad = Math.round((renglon.cantidad - 1) * 1000) / 1000;
   if (renglon.cantidad <= 0) {
     Venta.carrito.splice(Venta.filaSeleccionada, 1);
     Venta.filaSeleccionada = Math.min(Venta.filaSeleccionada, Venta.carrito.length - 1);
@@ -211,7 +246,7 @@ function abrirBusquedaProducto() {
     <input type="text" id="entrada-busqueda" class="entrada" placeholder="Escribe el nombre del producto…" autocomplete="off">
     <div class="resultados-busqueda">
       <table class="tabla">
-        <thead><tr><th>Descripción</th><th class="num">Precio</th><th class="num">Existencia</th></tr></thead>
+        <thead><tr><th>Descripción</th><th class="num">Precio</th><th class="num">Mayoreo</th><th class="num">Existencia</th></tr></thead>
         <tbody id="resultados-productos"></tbody>
       </table>
     </div>
@@ -225,21 +260,28 @@ function abrirBusquedaProducto() {
 
   function pintarResultados() {
     cuerpo.innerHTML = resultados
-      .map(
-        (p, i) => `<tr data-indice="${i}" class="${i === seleccion ? 'seleccionado' : ''}">
-          <td>${escaparHtml(p.descripcion)}</td>
+      .map((p, i) => {
+        const existencia = existenciaLocal(p);
+        return `<tr data-indice="${i}" class="${i === seleccion ? 'seleccionado' : ''}">
+          <td>${escaparHtml(p.descripcion)}${p.codigo_barras ? `<br><small>${escaparHtml(p.codigo_barras)}</small>` : ''}</td>
           <td class="num">${dinero(p.precio_venta)}</td>
-          <td class="num">${p.usa_inventario ? existenciaLocal(p) : '—'}</td>
-        </tr>`
-      )
-      .join('');
+          <td class="num">${p.precio_mayoreo != null ? dinero(p.precio_mayoreo) + (p.cantidad_mayoreo ? `<br><small>desde ${p.cantidad_mayoreo}</small>` : '') : '—'}</td>
+          <td class="num ${p.usa_inventario && existencia <= 0 ? 'texto-rojo' : ''}">${p.usa_inventario ? existencia : '—'}</td>
+        </tr>`;
+      })
+      .join('') || '<tr><td colspan="4" class="vacio">Sin resultados</td></tr>';
   }
 
   let temporizador = null;
   entrada.addEventListener('input', () => {
     clearTimeout(temporizador);
     temporizador = setTimeout(async () => {
-      resultados = await api('/api/productos/buscar?q=' + encodeURIComponent(entrada.value));
+      try {
+        resultados = await api('/api/productos/buscar?q=' + encodeURIComponent(entrada.value));
+      } catch (err) {
+        aviso(err.message, 'error');
+        resultados = [];
+      }
       seleccion = 0;
       pintarResultados();
     }, 200);
@@ -247,8 +289,7 @@ function abrirBusquedaProducto() {
 
   function elegir(i) {
     if (!resultados[i]) return;
-    agregarProducto(resultados[i], 1);
-    cerrarModal();
+    if (agregarProducto(resultados[i], 1)) cerrarModal();
   }
 
   entrada.addEventListener('keydown', (e) => {
@@ -268,10 +309,17 @@ async function abrirCobro() {
     aviso('No hay artículos en la venta', 'error');
     return;
   }
+  if (!App.apertura) {
+    await pedirApertura();
+    if (!App.apertura) return;
+  }
   const total = totalVenta();
   const tipoCambio = App.apertura?.tipo_cambio || 0;
   // Solo se puede fiar a clientes con crédito autorizado
-  const clientes = (await api('/api/clientes')).filter((c) => c.credito_autorizado);
+  let clientes = [];
+  try {
+    clientes = (await api('/api/clientes')).filter((c) => c.credito_autorizado);
+  } catch { /* sin clientes, el crédito no estará disponible */ }
   const modal = abrirModal(`
     <h3>Cobrar</h3>
     <div class="total-cobro">${dinero(total)}</div>
@@ -297,7 +345,7 @@ async function abrirCobro() {
       </label>
       <label id="etiqueta-cliente" hidden>Cliente
         <select id="cobro-cliente">
-          ${clientes.map((c) => `<option value="${c.id}">${escaparHtml(c.nombre)} (debe ${dinero(c.saldo)})</option>`).join('') ||
+          ${clientes.map((c) => `<option value="${c.id}">${escaparHtml(c.nombre)} (debe ${dinero(c.saldo)}${c.credito_disponible != null ? `, disponible ${dinero(c.credito_disponible)}` : ''})</option>`).join('') ||
             '<option value="" disabled selected>No hay clientes con crédito autorizado</option>'}
         </select>
       </label>
@@ -305,7 +353,7 @@ async function abrirCobro() {
     <div class="fila-esperado" id="fila-cambio">Cambio (pesos): <b id="cobro-cambio">$0.00</b></div>
     <div class="fila-esperado" id="fila-tarjeta" hidden>Se cobra a tarjeta: <b id="cobro-tarjeta">$0.00</b></div>
     <label>Notas del ticket (opcional)
-      <input type="text" id="cobro-nota" placeholder="Ej. Se entrega en la tarde" autocomplete="off">
+      <input type="text" id="cobro-nota" placeholder="Ej. Se entrega en la tarde" autocomplete="off" maxlength="300">
     </label>
     <div id="cobro-error" class="mensaje-error" hidden></div>
     <div class="pie">
@@ -353,9 +401,12 @@ async function abrirCobro() {
   pago.select();
   actualizar();
 
+  let cobrando = false;
   async function confirmar(imprimir) {
+    if (cobrando) return; // evita cobrar dos veces con doble Enter
     const errorEl = modal.querySelector('#cobro-error');
     errorEl.hidden = true;
+    cobrando = true;
     try {
       const respuesta = await api('/api/ventas', {
         method: 'POST',
@@ -383,6 +434,14 @@ async function abrirCobro() {
     } catch (err) {
       errorEl.textContent = err.message;
       errorEl.hidden = false;
+      if (err.codigo === 'SIN_APERTURA') {
+        App.apertura = null;
+        cerrarModal();
+        await pedirApertura();
+        aviso('Caja abierta. Vuelve a cobrar la venta (F12).');
+      }
+    } finally {
+      cobrando = false;
     }
   }
 
@@ -397,12 +456,12 @@ async function abrirCobro() {
   });
 }
 
-function mostrarVentaTerminada({ folio, cambio, inventarioSincronizado, avisoSincronizacion }) {
+function mostrarVentaTerminada({ folio, cambio, inventarioPendiente, avisoSincronizacion }) {
   const modal = abrirModal(`
     <h3>Venta realizada — Folio ${folio}</h3>
     <div>CAMBIO:</div>
     <div class="cambio-grande">${dinero(cambio)}</div>
-    ${inventarioSincronizado === false ? `<div class="mensaje-error">La venta quedó guardada localmente, pero el inventario central no se actualizó: ${escaparHtml(avisoSincronizacion || 'reintenta con internet')}.</div>` : ''}
+    ${inventarioPendiente ? `<div class="franja-aviso info">${escaparHtml(avisoSincronizacion || 'El inventario se actualizará en la central cuando vuelva el internet.')}</div>` : ''}
     <div class="pie">
       <button class="boton primario grande" id="terminada-cerrar">Cerrar (Enter/Esc)</button>
     </div>
@@ -420,58 +479,16 @@ function descripcionPago(venta) {
   if (venta.forma_pago === 'mixto') {
     return `${dinero(venta.pago_efectivo)} efectivo + ${dinero(venta.pago_tarjeta)} tarjeta`;
   }
-  return venta.forma_pago;
-}
-
-// Renglones del ticket según la forma de pago
-function formaPagoTicket(venta) {
-  if (venta.forma_pago === 'efectivo') {
-    return `<tr><td>Su pago</td><td class="num">${dinero(venta.pago)}</td></tr>
-      <tr><td>Su cambio</td><td class="num">${dinero(venta.cambio)}</td></tr>`;
-  }
-  if (venta.forma_pago === 'dolar') {
-    return `<tr><td>Su pago (USD)</td><td class="num">${(venta.pago_usd || 0).toFixed(2)} USD</td></tr>
-      <tr><td>Tipo de cambio</td><td class="num">${dinero(venta.tipo_cambio)}</td></tr>
-      <tr><td>Su cambio (pesos)</td><td class="num">${dinero(venta.cambio)}</td></tr>`;
-  }
-  if (venta.forma_pago === 'mixto') {
-    return `<tr><td>Efectivo</td><td class="num">${dinero(venta.pago_efectivo)}</td></tr>
-      <tr><td>Tarjeta</td><td class="num">${dinero(venta.pago_tarjeta)}</td></tr>`;
-  }
-  return `<tr><td>Forma de pago</td><td class="num">${venta.forma_pago}</td></tr>`;
+  return NOMBRES_FORMA_PAGO[venta.forma_pago] || venta.forma_pago;
 }
 
 async function imprimirTicket(ventaId, cerrarAlTerminar = true) {
-  const venta = await api('/api/ventas/' + ventaId);
-  const ticket = document.getElementById('ticket');
-  ticket.innerHTML = `
-    <h4>${escaparHtml(venta.sucursal)}</h4>
-    ${venta.direccion ? `<div class="centro">${escaparHtml(venta.direccion)}</div>` : ''}
-    ${venta.telefono ? `<div class="centro">Tel: ${escaparHtml(venta.telefono)}</div>` : ''}
-    <div class="centro">${escaparHtml(venta.fecha)} — Folio ${venta.folio}</div>
-    <div class="centro">Le atendió: ${escaparHtml(venta.cajero)}</div>
-    <hr>
-    <table>
-      ${venta.partidas
-        .map(
-          (p) => `<tr>
-            <td>${p.cantidad} x ${escaparHtml(p.descripcion)}</td>
-            <td class="num">${dinero(p.importe)}</td>
-          </tr>`
-        )
-        .join('')}
-    </table>
-    <hr>
-    <table>
-      <tr class="total"><td>TOTAL</td><td class="num">${dinero(venta.total)}</td></tr>
-      ${formaPagoTicket(venta)}
-      ${venta.cliente ? `<tr><td>Cliente</td><td class="num">${escaparHtml(venta.cliente)}</td></tr>` : ''}
-    </table>
-    ${venta.nota ? `<hr><div>Nota: ${escaparHtml(venta.nota)}</div>` : ''}
-    <hr>
-    <div class="centro">¡Gracias por su compra!</div>
-  `;
-  window.print();
+  try {
+    const venta = await api('/api/ventas/' + ventaId);
+    await Impresion.imprimirVenta(venta);
+  } catch (err) {
+    aviso('No se pudo imprimir el ticket: ' + err.message, 'error');
+  }
   if (cerrarAlTerminar) cerrarModal();
 }
 
@@ -495,7 +512,7 @@ async function abrirVentasDelDia() {
         <input type="text" id="hv-buscar" class="entrada" placeholder="Puedes buscar por folio o nombre del cliente…" autocomplete="off">
         <div class="resultados-busqueda historial-tabla">
           <table class="tabla">
-            <thead><tr><th class="num">Folio</th><th class="num">Arts.</th><th>Hora</th><th class="num">Total</th></tr></thead>
+            <thead><tr><th class="num">Folio</th><th class="num">Arts.</th><th>Hora</th><th>Pago</th><th class="num">Total</th></tr></thead>
             <tbody id="hv-cuerpo"></tbody>
           </table>
         </div>
@@ -504,15 +521,17 @@ async function abrirVentasDelDia() {
           <button class="boton" id="hv-hoy" style="align-self:flex-end">Hoy</button>
           <label>Cajero <select id="hv-cajero"><option value="">Todos</option></select></label>
         </div>
-        <small><span class="muestra-credito"></span> Ventas a crédito</small>
+        <small><span class="muestra-credito"></span> Ventas a crédito · las canceladas aparecen tachadas</small>
+        <div id="hv-resumen" class="dato-secundario"></div>
       </div>
       <div class="historial-detalle">
         <div id="hv-sin-seleccion">Selecciona una venta para ver su detalle</div>
         <div id="hv-detalle" hidden>
-          <p><b>Folio:</b> <span id="hv-d-folio">-</span><br>
+          <p><b>Folio:</b> <span id="hv-d-folio">-</span> <span id="hv-d-estado"></span><br>
              <b>Cajero:</b> <span id="hv-d-cajero">-</span><br>
              <b>Cliente:</b> <span id="hv-d-cliente">-</span><br>
              <b>Fecha:</b> <span id="hv-d-fecha">-</span></p>
+          <div id="hv-d-cancelacion" class="mensaje-error" hidden></div>
           <div class="resultados-busqueda historial-tabla">
             <table class="tabla">
               <thead><tr><th class="num">Cant.</th><th>Descripción</th><th class="num">Importe</th></tr></thead>
@@ -520,11 +539,15 @@ async function abrirVentasDelDia() {
             </table>
           </div>
           <table class="tabla-simple">
+            <tr><td>Forma de pago:</td><td class="num" id="hv-d-forma">-</td></tr>
             <tr><td>Pagó con:</td><td class="num" id="hv-d-pago">$0.00</td></tr>
             <tr><td>Cambio:</td><td class="num" id="hv-d-cambio">$0.00</td></tr>
             <tr><td><b>Total:</b></td><td class="num"><b id="hv-d-total">$0.00</b></td></tr>
           </table>
-          <button class="boton primario" id="hv-imprimir"><svg class="icono"><use href="#i-imprimir"/></svg>Imprimir copia</button>
+          <div class="acciones">
+            <button class="boton primario" id="hv-imprimir"><svg class="icono"><use href="#i-imprimir"/></svg>Imprimir copia</button>
+            <button class="boton peligro-suave" id="hv-cancelar" hidden><svg class="icono"><use href="#i-x"/></svg>Cancelar venta</button>
+          </div>
         </div>
       </div>
     </div>
@@ -546,14 +569,17 @@ async function abrirVentasDelDia() {
     );
     cuerpo.innerHTML = visibles
       .map(
-        (v) => `<tr data-venta="${v.id}" class="${v.forma_pago === 'credito' ? 'venta-credito' : ''} ${v.id === ventaSeleccionada ? 'seleccionado' : ''}">
+        (v) => `<tr data-venta="${v.id}" class="${v.forma_pago === 'credito' ? 'venta-credito' : ''} ${v.cancelada ? 'venta-cancelada' : ''} ${v.id === ventaSeleccionada ? 'seleccionado' : ''}">
           <td class="num">${v.folio}</td>
           <td class="num">${v.articulos}</td>
-          <td>${escaparHtml(v.fecha.slice(11, 16))}</td>
+          <td>${escaparHtml(String(v.fecha).slice(11, 16))}</td>
+          <td>${escaparHtml(NOMBRES_FORMA_PAGO[v.forma_pago] || v.forma_pago)}</td>
           <td class="num">${dinero(v.total)}</td>
         </tr>`
       )
-      .join('') || '<tr><td colspan="4">Sin ventas ese día</td></tr>';
+      .join('') || '<tr><td colspan="5">Sin ventas ese día</td></tr>';
+    const activas = visibles.filter((v) => !v.cancelada);
+    modal.querySelector('#hv-resumen').innerHTML = `<span>${activas.length} venta(s)</span><b>${dinero(activas.reduce((t, v) => t + v.total, 0))}</b>`;
   }
 
   async function cargarVentas() {
@@ -576,27 +602,55 @@ async function abrirVentasDelDia() {
     modal.querySelector('#hv-sin-seleccion').hidden = true;
     modal.querySelector('#hv-detalle').hidden = false;
     modal.querySelector('#hv-d-folio').textContent = venta.folio;
+    modal.querySelector('#hv-d-estado').innerHTML = venta.cancelada ? '<span class="chip cancelada">Cancelada</span>' : '';
     modal.querySelector('#hv-d-cajero').textContent = venta.cajero;
     modal.querySelector('#hv-d-cliente').textContent = venta.cliente || '—';
     modal.querySelector('#hv-d-fecha').textContent = venta.fecha;
+    const cancelacion = modal.querySelector('#hv-d-cancelacion');
+    cancelacion.hidden = !venta.cancelada;
+    cancelacion.textContent = venta.cancelada
+      ? `Cancelada el ${venta.cancelada_fecha} por ${venta.cancelada_por_nombre || ''}: ${venta.motivo_cancelacion || ''}`
+      : '';
     modal.querySelector('#hv-d-partidas').innerHTML = venta.partidas
-      .map(
-        (p) => `<tr><td class="num">${p.cantidad}</td><td>${escaparHtml(p.descripcion)}</td><td class="num">${dinero(p.importe)}</td></tr>`
-      )
+      .map((p) => `<tr><td class="num">${p.cantidad}</td><td>${escaparHtml(p.descripcion)}</td><td class="num">${dinero(p.importe)}</td></tr>`)
       .join('');
+    modal.querySelector('#hv-d-forma').textContent = NOMBRES_FORMA_PAGO[venta.forma_pago] || venta.forma_pago;
     modal.querySelector('#hv-d-pago').textContent = descripcionPago(venta);
     modal.querySelector('#hv-d-cambio').textContent = dinero(venta.cambio);
     modal.querySelector('#hv-d-total').textContent = dinero(venta.total);
+    // Solo se cancelan ventas del turno actual (todavía sin corte de caja)
+    modal.querySelector('#hv-cancelar').hidden = Boolean(venta.cancelada || venta.corte_id);
     pintarLista();
+  }
+
+  async function cancelarSeleccionada() {
+    const venta = ventas.find((v) => v.id === ventaSeleccionada);
+    if (!venta) return;
+    const motivo = await pedirTexto({
+      titulo: `Cancelar la venta folio ${venta.folio}`,
+      mensaje: `Se cancelará la venta por ${dinero(venta.total)}. La mercancía regresa al inventario${venta.forma_pago === 'credito' ? ' y se quita el cargo de la cuenta del cliente' : ''}. Devuelve el dinero al cliente.`,
+      etiqueta: 'Motivo de la cancelación',
+      boton: 'Sí, cancelar la venta',
+    });
+    if (motivo === null) return;
+    try {
+      await api(`/api/ventas/${venta.id}/cancelar`, { method: 'POST', body: { motivo } });
+      aviso(`Venta folio ${venta.folio} cancelada`, 'exito');
+      await cargarVentas();
+      await mostrarDetalle(venta.id);
+    } catch (err) {
+      aviso(err.message, 'error');
+    }
   }
 
   cuerpo.addEventListener('click', (e) => {
     const fila = e.target.closest('tr[data-venta]');
-    if (fila) mostrarDetalle(Number(fila.dataset.venta));
+    if (fila) mostrarDetalle(Number(fila.dataset.venta)).catch((err) => aviso(err.message, 'error'));
   });
   modal.querySelector('#hv-imprimir').addEventListener('click', () => {
     if (ventaSeleccionada) imprimirTicket(ventaSeleccionada, false);
   });
+  modal.querySelector('#hv-cancelar').addEventListener('click', cancelarSeleccionada);
   modal.querySelector('#hv-fecha').addEventListener('change', cargarVentas);
   modal.querySelector('#hv-hoy').addEventListener('click', () => {
     modal.querySelector('#hv-fecha').value = new Date().toLocaleDateString('sv-SE');
@@ -604,7 +658,7 @@ async function abrirVentasDelDia() {
   });
   modal.querySelector('#hv-buscar').addEventListener('input', pintarLista);
   modal.querySelector('#hv-cajero').addEventListener('change', pintarLista);
-  cargarVentas();
+  cargarVentas().catch((err) => aviso(err.message, 'error'));
 }
 
 // ---------- Botones y teclas de la venta ----------

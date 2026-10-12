@@ -20,8 +20,14 @@
     </label>
     <div id="error-login" class="mensaje-error" hidden></div>
     <button type="submit" class="boton primario grande">Entrar</button>
+    <button type="button" id="configurar-programa" class="enlace-programa" hidden>Configurar este programa (conexión e impresoras)</button>
   </form>
   <script>
+    if (window.farmaciaEscritorio) {
+      const enlace = document.getElementById('configurar-programa');
+      enlace.hidden = false;
+      enlace.addEventListener('click', () => window.farmaciaEscritorio.abrirConfiguracion());
+    }
     document.getElementById('form-login').addEventListener('submit', async (e) => {
       e.preventDefault();
       const error = document.getElementById('error-login');
@@ -35,7 +41,10 @@
         }),
       });
       if (r.ok) {
-        location.href = '/';
+        // Regresar a donde venía (por ejemplo la sección del celular); en pantallas chicas, al celular
+        const volver = new URLSearchParams(location.search).get('volver') || '';
+        const destinoSeguro = /^\/(?!\/)[\w\-./?=&]*$/.test(volver) ? volver : null;
+        location.href = destinoSeguro || (window.matchMedia('(max-width: 700px)').matches ? '/movil.html' : '/');
       } else {
         const datos = await r.json().catch(() => ({}));
         error.textContent = datos.error || 'No se pudo iniciar sesión';

@@ -1,0 +1,96 @@
+{
+  "name": "farmacia-escritorio",
+  "productName": "Farmacia",
+  "version": "1.0.0",
+  "description": "Punto de venta Farmacia San Francisco",
+  "author": "Farmacia San Francisco",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "construir": "node ../scripts/construir-escritorio.js"
+  },
+  "dependencies": {
+    "electron-updater": "6.8.9"
+  },
+  "devDependencies": {
+    "electron": "44.7.0",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "mx.farmacia.sanfrancisco.pos",
+    "productName": "Farmacia",
+    "executableName": "Farmacia",
+    "copyright": "Farmacia San Francisco",
+    "directories": {
+      "output": "../salida",
+      "buildResources": "recursos"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "paginas/**/*",
+      "recursos/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../paquete",
+        "to": ".",
+        "filter": [
+          "servidor/**/*"
+        ]
+      }
+    ],
+    "asar": true,
+    "electronFuses": {
+      "runAsNode": false,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "enableCookieEncryption": true,
+      "enableEmbeddedAsarIntegrityValidation": true,
+      "onlyLoadAppFromAsar": true
+    },
+    "electronLanguages": [
+      "es",
+      "es-419",
+      "en-US"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "recursos/icono.png",
+      "verifyUpdateCodeSignature": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "Farmacia",
+      "uninstallDisplayName": "Farmacia (punto de venta)",
+      "artifactName": "Farmacia-Instalador-${version}.${ext}",
+      "installerLanguages": [
+        "es_ES"
+      ],
+      "language": "3082",
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": true
+    },
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://actualizaciones.invalid/farmacia"
+      }
+    ]
+  }
+}

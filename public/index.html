@@ -7,6 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;700;800;900&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/app.css">
+  <link rel="stylesheet" href="css/impresion.css">
 </head>
 <body>
   <!-- Librería de iconos (símbolos SVG reutilizables) -->
@@ -33,6 +34,10 @@
     <symbol id="i-recibir" viewBox="0 0 24 24"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></symbol>
     <symbol id="i-atras" viewBox="0 0 24 24"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></symbol>
     <symbol id="i-lista" viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></symbol>
+    <symbol id="i-historial" viewBox="0 0 24 24"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><polyline points="12 7 12 12 15 15"/></symbol>
+    <symbol id="i-nube" viewBox="0 0 24 24"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></symbol>
+    <symbol id="i-celular" viewBox="0 0 24 24"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></symbol>
   </svg>
 
   <header class="barra-superior">
@@ -50,6 +55,8 @@
       <button class="pestania solo-admin" data-seccion="admin" hidden><svg class="icono"><use href="#i-admin"/></svg>Administración</button>
     </nav>
     <div class="info-sesion">
+      <button id="estado-sync" class="estado-sync" type="button" hidden></button>
+      <button id="boton-celular" class="boton chico" type="button" title="Abrir el inventario en el celular"><svg class="icono"><use href="#i-celular"/></svg>Celular</button>
       <span id="info-usuario"></span>
       <button id="boton-salir" class="boton chico"><svg class="icono"><use href="#i-salir"/></svg>Salir</button>
     </div>
@@ -102,7 +109,7 @@
       <div class="acciones">
         <input type="text" id="buscar-productos" class="entrada" aria-label="Buscar productos" placeholder="Buscar por nombre o código…">
         <button id="boton-bajo-minimo" class="boton advertencia"><svg class="icono"><use href="#i-alerta"/></svg>Bajo mínimo</button>
-        <button id="boton-nuevo-producto" class="boton primario"><svg class="icono"><use href="#i-mas"/></svg>Nuevo producto</button>
+        <button id="boton-nuevo-producto" class="boton primario solo-admin" hidden><svg class="icono"><use href="#i-mas"/></svg>Nuevo producto</button>
       </div>
     </div>
     <div class="contenedor-tabla">
@@ -132,30 +139,76 @@
 
   <!-- ============ CORTE ============ -->
   <main id="seccion-corte" class="seccion">
-    <div class="encabezado-seccion"><h2>Corte de caja</h2></div>
+    <div class="encabezado-seccion">
+      <h2>Corte de caja</h2>
+      <div class="acciones">
+        <button id="boton-entrada-efectivo" class="boton"><svg class="icono"><use href="#i-mas"/></svg>Entrada de efectivo</button>
+        <button id="boton-salida-efectivo" class="boton advertencia"><svg class="icono"><use href="#i-salir"/></svg>Salida de efectivo</button>
+      </div>
+    </div>
     <div class="zona-corte">
       <div class="tarjeta">
-        <h3>Desde el último corte</h3>
+        <h3>Turno actual <small id="corte-apertura" class="dato-turno"></small></h3>
         <table class="tabla-simple">
+          <tr><td>Ventas realizadas</td><td class="num" id="corte-num">0</td></tr>
           <tr><td>Ventas en efectivo</td><td class="num" id="corte-efectivo">$0.00</td></tr>
-          <tr><td>Abonos recibidos</td><td class="num" id="corte-abonos">$0.00</td></tr>
           <tr><td>Ventas con tarjeta</td><td class="num" id="corte-tarjeta">$0.00</td></tr>
-          <tr><td>Ventas en dólares (equivalente en pesos)</td><td class="num" id="corte-dolares">$0.00</td></tr>
           <tr><td>Ventas a crédito (fiado)</td><td class="num" id="corte-credito">$0.00</td></tr>
-          <tr><td>Número de ventas</td><td class="num" id="corte-num">0</td></tr>
+          <tr><td>Ventas en dólares <small id="corte-usd"></small></td><td class="num" id="corte-dolares">$0.00</td></tr>
+          <tr><td>Abonos de clientes</td><td class="num" id="corte-abonos">$0.00</td></tr>
+          <tr><td>Ventas canceladas</td><td class="num" id="corte-canceladas">0</td></tr>
         </table>
-        <hr>
-        <div class="fila-esperado">Fondo de caja (apertura): <b id="corte-fondo">$0.00</b></div>
-        <div class="fila-esperado">Efectivo esperado: <b id="corte-esperado">$0.00</b></div>
-        <button id="boton-hacer-corte" class="boton exito grande">Realizar corte</button>
+        <h4 class="subtitulo-corte">Efectivo que debe haber en la caja</h4>
+        <table class="tabla-simple">
+          <tr><td>Fondo inicial</td><td class="num" id="corte-fondo">$0.00</td></tr>
+          <tr><td>+ Ventas en efectivo</td><td class="num" id="corte-efectivo-caja">$0.00</td></tr>
+          <tr><td>+ Abonos en efectivo</td><td class="num" id="corte-abonos-efectivo">$0.00</td></tr>
+          <tr><td>+ Entradas de efectivo</td><td class="num" id="corte-entradas">$0.00</td></tr>
+          <tr><td>− Salidas de efectivo</td><td class="num" id="corte-salidas">$0.00</td></tr>
+          <tr><td>− Cambio entregado en ventas con dólares</td><td class="num" id="corte-cambio-dolares">$0.00</td></tr>
+          <tr class="fila-total"><td>Efectivo esperado</td><td class="num" id="corte-esperado">$0.00</td></tr>
+        </table>
+        <div class="fila-campos">
+          <label>Efectivo contado ($)
+            <input type="number" id="corte-contado" class="entrada num" step="0.01" min="0" placeholder="Cuenta billetes y monedas">
+          </label>
+          <label id="etiqueta-usd-contado" hidden>Dólares contados (USD)
+            <input type="number" id="corte-usd-contado" class="entrada num" step="0.01" min="0">
+          </label>
+        </div>
+        <div id="corte-diferencia" class="diferencia-corte" hidden></div>
+        <label class="campo-suelto">Nota del corte (opcional)
+          <input type="text" id="corte-nota" class="entrada" placeholder="Ej. se dejaron 500 de fondo para mañana" autocomplete="off">
+        </label>
+        <button id="boton-hacer-corte" class="boton exito grande"><svg class="icono"><use href="#i-imprimir"/></svg>Realizar corte e imprimir</button>
       </div>
-      <div class="tarjeta">
-        <h3>Cortes anteriores</h3>
-        <div class="contenedor-tabla">
-          <table class="tabla">
-            <thead><tr><th>Fecha</th><th>Usuario</th><th class="num">Fondo</th><th class="num">Efectivo</th><th class="num">Tarjeta</th><th class="num">Crédito</th><th class="num">Ventas</th></tr></thead>
-            <tbody id="cuerpo-cortes"></tbody>
-          </table>
+      <div class="columna-corte">
+        <div class="tarjeta">
+          <h3>Entradas y salidas de efectivo del turno</h3>
+          <div class="contenedor-tabla">
+            <table class="tabla">
+              <thead><tr><th>Hora</th><th>Tipo</th><th>Concepto</th><th>Usuario</th><th class="num">Monto</th></tr></thead>
+              <tbody id="cuerpo-movimientos-caja"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="tarjeta">
+          <h3>Ventas del turno por cajero</h3>
+          <div class="contenedor-tabla">
+            <table class="tabla">
+              <thead><tr><th>Cajero</th><th class="num">Ventas</th><th class="num">Total</th></tr></thead>
+              <tbody id="cuerpo-por-cajero"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="tarjeta">
+          <h3>Cortes anteriores</h3>
+          <div class="contenedor-tabla">
+            <table class="tabla">
+              <thead><tr><th>Fecha</th><th>Usuario</th><th class="num">Ventas</th><th class="num">Esperado</th><th class="num">Contado</th><th class="num">Diferencia</th><th></th></tr></thead>
+              <tbody id="cuerpo-cortes"></tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>
@@ -172,13 +225,18 @@
         <button id="boton-generar-reporte" class="boton primario">Generar</button>
       </div>
     </div>
+    <div id="rep-aviso-modo" class="franja-aviso" hidden></div>
     <div class="tarjetas-resumen">
       <div class="tarjeta-dato"><small>Total vendido</small><b id="rep-total">$0.00</b></div>
       <div class="tarjeta-dato"><small>Ganancia</small><b id="rep-ganancia">$0.00</b></div>
       <div class="tarjeta-dato"><small>Ventas</small><b id="rep-num">0</b></div>
+      <div class="tarjeta-dato"><small>Ticket promedio</small><b id="rep-promedio">$0.00</b></div>
       <div class="tarjeta-dato"><small>Efectivo</small><b id="rep-efectivo">$0.00</b></div>
+      <div class="tarjeta-dato"><small>Dólares (en pesos)</small><b id="rep-dolares">$0.00</b></div>
       <div class="tarjeta-dato"><small>Tarjeta</small><b id="rep-tarjeta">$0.00</b></div>
       <div class="tarjeta-dato"><small>Crédito</small><b id="rep-credito">$0.00</b></div>
+      <div class="tarjeta-dato"><small>Abonos cobrados</small><b id="rep-abonos">$0.00</b></div>
+      <div class="tarjeta-dato"><small>Canceladas</small><b id="rep-canceladas">0</b></div>
     </div>
     <div class="zona-reportes">
       <div class="tarjeta">
@@ -190,8 +248,20 @@
         <table class="tabla"><thead><tr><th>Sucursal</th><th class="num">Ventas</th><th class="num">Total</th></tr></thead><tbody id="rep-por-sucursal"></tbody></table>
       </div>
       <div class="tarjeta">
+        <h3>Por cajero</h3>
+        <table class="tabla"><thead><tr><th>Cajero</th><th class="num">Ventas</th><th class="num">Total</th></tr></thead><tbody id="rep-por-cajero"></tbody></table>
+      </div>
+      <div class="tarjeta">
+        <h3>Por forma de pago</h3>
+        <table class="tabla"><thead><tr><th>Forma de pago</th><th class="num">Ventas</th><th class="num">Total</th></tr></thead><tbody id="rep-por-forma"></tbody></table>
+      </div>
+      <div class="tarjeta">
+        <h3>Por departamento</h3>
+        <table class="tabla"><thead><tr><th>Departamento</th><th class="num">Piezas</th><th class="num">Importe</th><th class="num">Ganancia</th></tr></thead><tbody id="rep-por-departamento"></tbody></table>
+      </div>
+      <div class="tarjeta">
         <h3>Productos más vendidos</h3>
-        <table class="tabla"><thead><tr><th>Producto</th><th class="num">Cantidad</th><th class="num">Importe</th></tr></thead><tbody id="rep-mas-vendidos"></tbody></table>
+        <table class="tabla"><thead><tr><th>Producto</th><th class="num">Cantidad</th><th class="num">Importe</th><th class="num">Ganancia</th></tr></thead><tbody id="rep-mas-vendidos"></tbody></table>
       </div>
     </div>
 
@@ -205,11 +275,14 @@
       <div class="tarjeta-dato"><small>Productos</small><b id="rep-inv-total">0</b></div>
       <div class="tarjeta-dato"><small>Unidades</small><b id="rep-inv-unidades">0</b></div>
       <div class="tarjeta-dato"><small>Bajo mínimo</small><b id="rep-inv-bajo">0</b></div>
+      <div class="tarjeta-dato"><small>Agotados</small><b id="rep-inv-agotados">0</b></div>
+      <div class="tarjeta-dato"><small>Valor a costo</small><b id="rep-inv-costo">$0.00</b></div>
+      <div class="tarjeta-dato"><small>Valor a precio de venta</small><b id="rep-inv-venta">$0.00</b></div>
     </div>
     <div class="zona-reportes">
       <div class="tarjeta">
         <h3>Existencias por sucursal</h3>
-        <table class="tabla"><thead><tr><th>Sucursal</th><th class="num">Productos</th><th class="num">Unidades</th><th class="num">Bajo mínimo</th></tr></thead><tbody id="rep-inv-por-sucursal"></tbody></table>
+        <table class="tabla"><thead><tr><th>Sucursal</th><th class="num">Productos</th><th class="num">Unidades</th><th class="num">Agotados</th><th class="num">Bajo mínimo</th><th class="num">Valor a costo</th></tr></thead><tbody id="rep-inv-por-sucursal"></tbody></table>
       </div>
       <div class="tarjeta">
         <h3>Productos bajo mínimo</h3>
@@ -300,6 +373,57 @@
           <tbody id="cuerpo-departamentos"></tbody>
         </table>
       </div>
+      <div class="tarjeta">
+        <h3>Datos del ticket</h3>
+        <p><small>Lo que aparece en tickets, comprobantes y estados de cuenta impresos en esta computadora.</small></p>
+        <form id="form-config" class="form-config">
+          <label>Nombre del negocio <input type="text" id="cfg-nombre" class="entrada" maxlength="120"></label>
+          <label>Lema (debajo del nombre) <input type="text" id="cfg-encabezado" class="entrada" maxlength="120"></label>
+          <label>RFC (opcional) <input type="text" id="cfg-rfc" class="entrada" maxlength="20"></label>
+          <label>Mensaje de agradecimiento <input type="text" id="cfg-mensaje" class="entrada" maxlength="150"></label>
+          <label>Pie del ticket <input type="text" id="cfg-pie" class="entrada" maxlength="200"></label>
+          <label>Ancho del papel
+            <select id="cfg-ancho" class="entrada">
+              <option value="80">80 mm (el más común)</option><option value="58">58 mm</option><option value="otro">Otro ancho…</option>
+            </select>
+            <input type="number" id="cfg-ancho-otro" class="entrada" min="40" max="120" step="1" placeholder="Ancho en mm (ej. 76)" hidden>
+            <small id="cfg-ancho-nota" hidden>En el programa de esta computadora el ancho se elige junto con la impresora
+              (Programa de esta computadora → Impresoras y opciones).</small>
+          </label>
+          <label>Dirección de la app del celular (https://…)
+            <input type="url" id="cfg-url-movil" class="entrada" maxlength="200" placeholder="https://farmacia-inventario.pages.dev">
+          </label>
+          <div class="acciones">
+            <button type="submit" class="boton exito">Guardar</button>
+            <button type="button" id="cfg-prueba" class="boton"><svg class="icono"><use href="#i-imprimir"/></svg>Imprimir ticket de prueba</button>
+          </div>
+        </form>
+      </div>
+      <div class="tarjeta" id="tarjeta-sincronizacion">
+        <h3>Sincronización con la central</h3>
+        <div id="admin-sync-estado"><small>Cargando…</small></div>
+        <div class="acciones">
+          <button type="button" id="boton-sincronizar" class="boton primario"><svg class="icono"><use href="#i-nube"/></svg>Sincronizar ahora</button>
+        </div>
+        <div id="admin-sync-errores"></div>
+      </div>
+      <div class="tarjeta" id="tarjeta-respaldos">
+        <h3>Respaldos de esta computadora</h3>
+        <p><small>Las ventas, clientes, crédito y cortes viven en esta computadora: cada día se guarda una copia automática.</small></p>
+        <div id="admin-respaldos"><small>Cargando…</small></div>
+        <div class="acciones">
+          <button type="button" id="boton-respaldar" class="boton primario"><svg class="icono"><use href="#i-archivo"/></svg>Respaldar ahora</button>
+        </div>
+      </div>
+      <div class="tarjeta" id="tarjeta-programa" hidden>
+        <h3>Programa de esta computadora</h3>
+        <div id="admin-programa"></div>
+        <div class="acciones">
+          <button type="button" id="boton-programa-config" class="boton primario"><svg class="icono"><use href="#i-imprimir"/></svg>Impresoras y opciones</button>
+          <button type="button" id="boton-programa-respaldos" class="boton">Abrir carpeta de respaldos</button>
+          <button type="button" id="boton-programa-actualizar" class="boton">Buscar actualizaciones</button>
+        </div>
+      </div>
     </div>
   </main>
 
@@ -307,16 +431,21 @@
   <div id="fondo-modal" class="fondo-modal" hidden>
     <div id="contenido-modal" class="modal"></div>
   </div>
+  <!-- Diálogo de confirmación encima de la ventana abierta -->
+  <div id="fondo-dialogo" class="fondo-modal fondo-dialogo" hidden>
+    <div id="contenido-dialogo" class="modal dialogo" role="dialog" aria-modal="true"></div>
+  </div>
 
   <div id="aviso" class="aviso" hidden></div>
 
-  <!-- Ticket para imprimir -->
+  <!-- Ticket para imprimir (impresora térmica) -->
   <div id="ticket" class="ticket"></div>
 
-  <!-- Documento tamaño carta para imprimir (apoyos y pedidos) -->
+  <!-- Documento tamaño carta para imprimir (estado de cuenta, apoyos y pedidos) -->
   <div id="documento" class="documento"></div>
 
   <script src="js/app.js"></script>
+  <script src="js/impresion.js"></script>
   <script src="js/venta.js"></script>
   <script src="js/productos.js"></script>
   <script src="js/clientes.js"></script>
