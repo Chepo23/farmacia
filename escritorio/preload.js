@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('farmaciaEscritorio', {
   leerImpresion,
   imprimir: (opciones) => ipcRenderer.invoke('imprimir', opciones),
   abrirConfiguracion: () => ipcRenderer.invoke('config:abrir'),
+  cerrarPrograma: () => ipcRenderer.invoke('ventana:cerrar'),
   abrirCarpetaRespaldos: () => ipcRenderer.invoke('respaldos:abrir'),
   buscarActualizaciones: () => ipcRenderer.invoke('actualizar:buscar'),
   // Solo para las pantallas propias del programa (configuración y error)

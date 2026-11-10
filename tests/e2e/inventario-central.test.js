@@ -79,8 +79,12 @@ test('inventario conectado entre farmacias que comparten la central', async (t) 
   });
 
   await t.test('solo el administrador de la central fija precios y el cambio llega a todas', async () => {
-    const alta = await norte.post('/api/productos', { descripcion: 'Producto de sucursal', precio_venta: 10 });
-    assert.equal(alta.status, 403, 'una sucursal no da de alta productos');
+    // Dar de alta un producto nuevo sí lo puede hacer una sucursal (con su existencia ahí)
+    const alta = await norte.post('/api/productos', { codigo_barras: '7509999000017', descripcion: 'Producto de sucursal', precio_venta: 10, existencia_inicial: 3 });
+    assert.equal(alta.status, 200, JSON.stringify(alta.body));
+    const nuevo = (await norte.get('/api/productos/codigo/7509999000017')).body;
+    assert.equal(nuevo.existencias.find((e) => e.sucursal_id === 2).existencia, 3);
+    assert.equal(nuevo.existencias.find((e) => e.sucursal_id === 1).existencia, 0);
     const actual = (await norte.get(`/api/productos/codigo/${CODIGO}`)).body;
     const base = {
       codigo_barras: CODIGO, descripcion: actual.descripcion, departamento: actual.departamento,
@@ -261,10 +265,13 @@ test('inventario conectado entre farmacias que comparten la central', async (t) 
     const sugerencias = await norte.get('/api/pedidos/sugerencias');
     assert.equal(sugerencias.body[0]?.producto_id, productoId);
     assert.equal(sugerencias.body[0]?.existencia, 2);
+    // El reporte usa la copia completa de esta computadora (se renueva cada pocos segundos): "Sincronizar
+    // ahora" la trae al día, así también cuenta el producto que la sucursal dio de alta hace un momento
+    assert.equal((await admin.post('/api/sync/sincronizar', {})).status, 200);
     const reporte = await admin.get('/api/reportes/inventario?sucursal_id=todas');
     const porSucursal = Object.fromEntries(reporte.body.por_sucursal.map((s) => [s.sucursal, s.unidades]));
     assert.equal(porSucursal['Farmacia Central'], 14);
-    assert.equal(porSucursal['Sucursal Norte'], 2);
+    assert.equal(porSucursal['Sucursal Norte'], 5, '2 de este producto + 3 del producto que dio de alta la sucursal');
     const kardex = await admin.get(`/api/productos/${productoId}/kardex?sucursal_id=2`);
     assert.equal(kardex.status, 200, JSON.stringify(kardex.body));
     const resultantes = kardex.body.movimientos.map((m) => m.existencia_resultante).reverse();

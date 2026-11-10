@@ -41,9 +41,21 @@ async function generarReporte() {
     : '0';
 
   const franjaModo = document.getElementById('rep-aviso-modo');
-  franjaModo.hidden = !r.ventas_solo_de_esta_computadora;
-  franjaModo.className = 'franja-aviso info';
-  franjaModo.textContent = 'Cada farmacia guarda sus ventas en su propia computadora: este reporte muestra las ventas registradas aquí. El inventario sí es el de todas las sucursales.';
+  franjaModo.hidden = !r.ventas_solo_de_esta_computadora && r.fuente !== 'central';
+  franjaModo.className = r.sin_conexion_central ? 'franja-aviso' : 'franja-aviso info';
+  franjaModo.textContent = r.fuente === 'central'
+    ? 'Ventas de todas las farmacias: cada caja las sube a la central al momento (sin internet, en cuanto vuelve).'
+    : r.sin_conexion_central
+      ? 'Sin conexión con la central: este reporte muestra solo las ventas registradas en esta computadora.'
+      : 'Cada farmacia guarda sus ventas en su propia computadora: este reporte muestra las ventas registradas aquí. El inventario sí es el de todas las sucursales.';
+
+  // Ventas canceladas (el jefe, con las de todas las farmacias)
+  const canceladas = r.canceladas_detalle || [];
+  document.getElementById('rep-tarjeta-canceladas').hidden = !canceladas.length;
+  document.getElementById('rep-canceladas-detalle').innerHTML = canceladas.map((v) => `<tr>
+    <td>${escaparHtml(fechaHora(v.cancelada_fecha || v.fecha))}</td><td>${escaparHtml(v.sucursal)}</td>
+    <td>${v.caja ? `${escaparHtml(v.caja)} · ` : ''}Folio ${v.folio}</td><td class="num">${dinero(v.total)}</td>
+    <td>${escaparHtml(v.vendio)}</td><td>${escaparHtml(v.cancelo)}</td><td>${escaparHtml(v.motivo)}</td></tr>`).join('');
 
   document.getElementById('rep-por-dia').innerHTML = filasReporte(r.por_dia, [
     { valor: (d) => escaparHtml(d.dia) },
@@ -121,9 +133,11 @@ document.addEventListener('app:listo', () => {
   document.getElementById('reporte-hasta').value = fechaHoy();
   if (App.usuario.rol === 'admin' && App.usuario.es_central === 1) {
     const selector = document.getElementById('reporte-sucursal');
+    // El jefe empieza viendo todas las farmacias
+    const propia = Number(App.usuario.jefe) === 1 ? null : App.usuario.sucursal_id;
     selector.innerHTML =
       '<option value="todas">Todas las sucursales</option>' +
-      App.sucursales.map((s) => `<option value="${s.id}" ${s.id === App.usuario.sucursal_id ? 'selected' : ''}>${escaparHtml(s.nombre)}</option>`).join('');
+      App.sucursales.map((s) => `<option value="${s.id}" ${s.id === propia ? 'selected' : ''}>${escaparHtml(s.nombre)}</option>`).join('');
   }
 });
 

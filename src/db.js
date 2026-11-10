@@ -217,60 +217,6 @@ CREATE TABLE IF NOT EXISTS apoyo_detalle (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_apoyo_detalle_producto
   ON apoyo_detalle(apoyo_id, producto_id);
 
--- ---------- Inventario compartido / sincronización ----------
-CREATE TABLE IF NOT EXISTS sync_estado (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  entidad TEXT NOT NULL,
-  entidad_id INTEGER NOT NULL,
-  sucursal_id INTEGER NOT NULL REFERENCES sucursales(id),
-  accion TEXT NOT NULL CHECK (accion IN ('create', 'update', 'delete')),
-  payload TEXT NOT NULL,
-  estado TEXT NOT NULL DEFAULT 'pendiente' CHECK (estado IN ('pendiente', 'sincronizado', 'conflicto')),
-  version INTEGER NOT NULL DEFAULT 1,
-  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
-);
-CREATE INDEX IF NOT EXISTS idx_sync_estado_entidad ON sync_estado(entidad, estado, updated_at);
-CREATE INDEX IF NOT EXISTS idx_sync_estado_sucursal ON sync_estado(sucursal_id, estado);
-
-CREATE TABLE IF NOT EXISTS sync_resumen (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  sucursal_id INTEGER NOT NULL REFERENCES sucursales(id),
-  ultima_sync TEXT,
-  ultimo_evento_id INTEGER,
-  estado TEXT NOT NULL DEFAULT 'ok' CHECK (estado IN ('ok', 'pendiente', 'error')),
-  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
-);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_sync_resumen_sucursal ON sync_resumen(sucursal_id);
-
-CREATE TABLE IF NOT EXISTS sync_conflictos (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  entidad TEXT NOT NULL,
-  entidad_id INTEGER NOT NULL,
-  sucursal_id INTEGER NOT NULL REFERENCES sucursales(id),
-  detalle TEXT NOT NULL,
-  estado TEXT NOT NULL DEFAULT 'abierto' CHECK (estado IN ('abierto', 'resuelto')),
-  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
-);
-
--- Mini apoyo: cuando una sucursal tiene un producto que la central no tiene o no tiene suficiente.
-CREATE TABLE IF NOT EXISTS mini_apoyos (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  origen_sucursal_id INTEGER NOT NULL REFERENCES sucursales(id),
-  destino_sucursal_id INTEGER NOT NULL REFERENCES sucursales(id),
-  producto_id INTEGER NOT NULL REFERENCES productos(id),
-  cantidad REAL NOT NULL DEFAULT 0,
-  tipo TEXT NOT NULL CHECK (tipo IN ('faltante', 'redistribucion', 'apoyo', 'reconciliacion')),
-  estado TEXT NOT NULL DEFAULT 'pendiente' CHECK (estado IN ('pendiente', 'aceptado', 'enviado', 'recibido', 'rechazado')),
-  nota TEXT DEFAULT '',
-  creado_por INTEGER NOT NULL REFERENCES usuarios(id),
-  creado TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
-  actualizado TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
-);
-CREATE INDEX IF NOT EXISTS idx_mini_apoyos_origen ON mini_apoyos(origen_sucursal_id, estado);
-CREATE INDEX IF NOT EXISTS idx_mini_apoyos_destino ON mini_apoyos(destino_sucursal_id, estado);
-
 CREATE TABLE IF NOT EXISTS sync_config (
   clave TEXT PRIMARY KEY,
   valor TEXT NOT NULL DEFAULT ''
@@ -309,6 +255,59 @@ CREATE TABLE IF NOT EXISTS movimientos_caja (
   fecha TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
 CREATE INDEX IF NOT EXISTS idx_movimientos_caja ON movimientos_caja(sucursal_id, corte_id);
+
+-- Cotizaciones: el administrador de la central las arma (desde el celular) y la sucursal las
+-- cobra en la caja. Con Supabase viven en la central; estas tablas son para el modo sin central.
+CREATE TABLE IF NOT EXISTS cotizaciones (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  folio INTEGER NOT NULL UNIQUE,
+  creado_por INTEGER NOT NULL REFERENCES usuarios(id),
+  origen_sucursal_id INTEGER NOT NULL REFERENCES sucursales(id),
+  destino_sucursal_id INTEGER NOT NULL REFERENCES sucursales(id),
+  destino_usuario_id INTEGER REFERENCES usuarios(id),
+  cliente TEXT NOT NULL DEFAULT '',
+  nota TEXT NOT NULL DEFAULT '',
+  estado TEXT NOT NULL DEFAULT 'enviada' CHECK (estado IN ('enviada', 'vendida', 'cancelada')),
+  total REAL NOT NULL DEFAULT 0,
+  vigente_hasta TEXT NOT NULL,
+  creado TEXT NOT NULL,
+  vendida_por INTEGER,
+  vendida_fecha TEXT,
+  vendida_folio INTEGER,
+  cancelada_por INTEGER,
+  cancelada_fecha TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_cotizaciones_destino ON cotizaciones(destino_sucursal_id, estado);
+
+CREATE TABLE IF NOT EXISTS cotizacion_detalle (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  cotizacion_id INTEGER NOT NULL REFERENCES cotizaciones(id) ON DELETE CASCADE,
+  producto_id INTEGER NOT NULL REFERENCES productos(id),
+  codigo_barras TEXT,
+  descripcion TEXT NOT NULL,
+  cantidad REAL NOT NULL,
+  precio_unitario REAL NOT NULL,
+  precio_lista REAL NOT NULL DEFAULT 0,
+  importe REAL NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_cotizacion_detalle ON cotizacion_detalle(cotizacion_id);
+
+-- Registro de cambios (precios, altas, usuarios, cancelaciones, cortes, salidas de efectivo...).
+-- Con Supabase se sube a la central para que lo vea el jefe; "subido" marca lo que ya llegó.
+CREATE TABLE IF NOT EXISTS bitacora (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  clave TEXT NOT NULL UNIQUE,
+  fecha TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  sucursal_id INTEGER,
+  usuario_id INTEGER,
+  tipo TEXT NOT NULL,
+  descripcion TEXT NOT NULL DEFAULT '',
+  detalle TEXT,
+  alerta INTEGER NOT NULL DEFAULT 0,
+  subido INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_bitacora_fecha ON bitacora(fecha);
+CREATE INDEX IF NOT EXISTS idx_bitacora_subir ON bitacora(subido, id);
 `);
 
 // Reconstruir la tabla ventas si fue creada con el CHECK viejo de formas de pago
@@ -373,6 +372,9 @@ agregarColumna('apoyos', 'motivo_cancelacion', "TEXT DEFAULT ''");
 // Sesiones con vencimiento por inactividad
 agregarColumna('sesiones', 'ultimo_uso', 'TEXT');
 
+// Jefe: administrador de la central que además ve movimientos, cambios e inventario de todas las sucursales
+agregarColumna('usuarios', 'jefe', 'INTEGER NOT NULL DEFAULT 0');
+
 // Kardex: existencia que quedó después de cada movimiento
 agregarColumna('movimientos_inventario', 'existencia_resultante', 'REAL');
 
@@ -413,6 +415,28 @@ agregarColumna('cortes', 'num_canceladas', 'INTEGER NOT NULL DEFAULT 0');
 agregarColumna('cortes', 'total_canceladas', 'REAL NOT NULL DEFAULT 0');
 agregarColumna('cortes', 'tipo_cambio', 'REAL NOT NULL DEFAULT 0');
 agregarColumna('cortes', 'nota', "TEXT DEFAULT ''");
+
+// Ventas en la central: "subir" = 1 cuando falta subirlo (o volver a subirlo porque cambió), 2 mientras
+// se sube. Lo que ya existía antes de esta versión no se sube (eran ventas de prueba).
+for (const tabla of ['ventas', 'cortes', 'abonos', 'clientes']) {
+  if (agregarColumna(tabla, 'subir', 'INTEGER NOT NULL DEFAULT 1')) db.prepare(`UPDATE ${tabla} SET subir = 0`).run();
+}
+agregarColumna('ventas', 'central_id', 'INTEGER');
+db.exec(`
+CREATE INDEX IF NOT EXISTS idx_ventas_subir ON ventas(subir);
+CREATE TRIGGER IF NOT EXISTS subir_venta_cambio AFTER UPDATE OF cancelada, corte_id ON ventas
+BEGIN UPDATE ventas SET subir = 1 WHERE id = NEW.id; END;
+CREATE TRIGGER IF NOT EXISTS subir_cliente_por_venta AFTER INSERT ON ventas WHEN NEW.cliente_id IS NOT NULL
+BEGIN UPDATE clientes SET subir = 1 WHERE id = NEW.cliente_id; END;
+CREATE TRIGGER IF NOT EXISTS subir_cliente_por_cancelacion AFTER UPDATE OF cancelada ON ventas WHEN NEW.cliente_id IS NOT NULL
+BEGIN UPDATE clientes SET subir = 1 WHERE id = NEW.cliente_id; END;
+CREATE TRIGGER IF NOT EXISTS subir_cliente_por_abono AFTER INSERT ON abonos
+BEGIN UPDATE clientes SET subir = 1 WHERE id = NEW.cliente_id; END;
+CREATE TRIGGER IF NOT EXISTS subir_abono_cambio AFTER UPDATE OF corte_id ON abonos
+BEGIN UPDATE abonos SET subir = 1 WHERE id = NEW.id; END;
+CREATE TRIGGER IF NOT EXISTS subir_cliente_cambio AFTER UPDATE OF nombre, telefono, limite_credito, credito_autorizado, notas, activo ON clientes
+BEGIN UPDATE clientes SET subir = 1 WHERE id = NEW.id; END;
+`);
 
 // Apoyos y pedidos descargados antes con fechas de la central en UTC ('2026-09-12T18:26:55+00:00'):
 // se pasan a hora local 'AAAA-MM-DD HH:MM:SS' como el resto del sistema

@@ -2,7 +2,9 @@ const express = require('express');
 const db = require('../db');
 const catalogo = require('../catalogo');
 const inventario = require('../inventario');
-const { manejar } = require('../central');
+const cotizaciones = require('../cotizaciones');
+const bitacora = require('../bitacora');
+const { manejar, ErrorApp } = require('../central');
 const { aperturaVigente } = require('../caja');
 
 const router = express.Router();
@@ -63,9 +65,22 @@ function cargarVenta(id) {
   return venta;
 }
 
+// Sin conexión con la central no se puede usar la cotización (la venta normal sí se puede hacer)
+async function conCotizacion(fn) {
+  try {
+    return await fn();
+  } catch (error) {
+    if (!error.sinConexion) throw error;
+    throw new ErrorApp(
+      'Sin conexión con la central no se puede usar la cotización. Quítala de la venta para cobrar con los precios de hoy, o intenta de nuevo.',
+      { status: 503, codigo: 'COTIZACION_SIN_CONEXION' }
+    );
+  }
+}
+
 // Registrar una venta completa
 router.post('/', manejar(async (req, res) => {
-  const { partidas, forma_pago, pago, cliente_id, mayoreo, nota, pago_usd, pago_efectivo } = req.body || {};
+  const { partidas, forma_pago, pago, cliente_id, mayoreo, nota, pago_usd, pago_efectivo, cotizacion_id } = req.body || {};
   const sucursalId = Number(req.usuario.sucursal_id);
 
   if (!Array.isArray(partidas) || partidas.length === 0) {
@@ -94,6 +109,13 @@ router.post('/', manejar(async (req, res) => {
     }
   }
   const productos = await catalogo.porIds([...cantidadPorProducto.keys()]);
+
+  // Cotización: mientras esté vigente se respeta su precio (o el de hoy, si es más bajo), siempre
+  // que no se lleven más piezas de las cotizadas
+  let cotizacion = null;
+  if (cotizacion_id) {
+    cotizacion = await conCotizacion(() => cotizaciones.paraVenta(cotizacion_id, req.usuario));
+  }
 
   let total = 0;
   const renglones = [];
@@ -130,7 +152,9 @@ router.post('/', manejar(async (req, res) => {
     const totalProducto = cantidadPorProducto.get(producto.id) || cantidad;
     const aplicaMayoreo = producto.precio_mayoreo != null
       && (Boolean(mayoreo) || (producto.cantidad_mayoreo > 0 && totalProducto >= producto.cantidad_mayoreo));
-    const precio = aplicaMayoreo ? producto.precio_mayoreo : producto.precio_venta;
+    let precio = aplicaMayoreo ? producto.precio_mayoreo : producto.precio_venta;
+    const cotizado = cotizacion && cotizacion.vigente ? cotizacion.precios.get(producto.id) : null;
+    if (cotizado && totalProducto <= cotizado.cantidad + 1e-9) precio = Math.min(precio, cotizado.precio);
     const importe = redondear(precio * cantidad);
     total += importe;
     renglones.push({
@@ -197,33 +221,44 @@ router.post('/', manejar(async (req, res) => {
     }
   }
 
+  // La cotización se aparta antes de guardar la venta, así dos cajas no la cobran dos veces
+  if (cotizacion) await conCotizacion(() => cotizaciones.apartar(cotizacion.id, req.usuario));
+  const notaVenta = [cotizacion ? `Cotización folio ${cotizacion.folio}${cotizacion.cliente ? ` · ${cotizacion.cliente}` : ''}` : '',
+    String(nota || '').trim()].filter(Boolean).join(' · ').slice(0, 300);
+
   // 1) Se guarda la venta (así queda apartado el folio)
-  const { ventaId, folio } = db.transaction(() => {
-    const siguiente = db
-      .prepare('SELECT COALESCE(MAX(folio), 0) + 1 AS f FROM ventas WHERE sucursal_id = ?')
-      .get(sucursalId).f;
-    const id = db
-      .prepare(
-        `INSERT INTO ventas (folio, sucursal_id, usuario_id, cliente_id, forma_pago, total, pago, cambio,
-           pago_usd, tipo_cambio, pago_efectivo, pago_tarjeta, nota)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        siguiente, sucursalId, req.usuario.id, forma_pago === 'credito' ? Number(cliente_id) : null,
-        forma_pago, total, pagoNum, cambio, pagoUsd, tipoCambio, pagoEfectivo, pagoTarjeta,
-        String(nota || '').trim().slice(0, 300)
-      ).lastInsertRowid;
-    const insDetalle = db.prepare(
-      `INSERT INTO venta_detalle (venta_id, producto_id, descripcion, cantidad, precio_unitario, costo_unitario,
-         importe, descuenta_inventario, precio_lista)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    );
-    for (const r of renglones) {
-      insDetalle.run(id, r.producto_id, r.descripcion, r.cantidad, r.precio_unitario, r.costo_unitario, r.importe,
-        r.usa_inventario, r.precio_lista);
-    }
-    return { ventaId: id, folio: siguiente };
-  })();
+  let guardada;
+  try {
+    guardada = db.transaction(() => {
+      const siguiente = db
+        .prepare('SELECT COALESCE(MAX(folio), 0) + 1 AS f FROM ventas WHERE sucursal_id = ?')
+        .get(sucursalId).f;
+      const id = db
+        .prepare(
+          `INSERT INTO ventas (folio, sucursal_id, usuario_id, cliente_id, forma_pago, total, pago, cambio,
+             pago_usd, tipo_cambio, pago_efectivo, pago_tarjeta, nota)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          siguiente, sucursalId, req.usuario.id, forma_pago === 'credito' ? Number(cliente_id) : null,
+          forma_pago, total, pagoNum, cambio, pagoUsd, tipoCambio, pagoEfectivo, pagoTarjeta, notaVenta
+        ).lastInsertRowid;
+      const insDetalle = db.prepare(
+        `INSERT INTO venta_detalle (venta_id, producto_id, descripcion, cantidad, precio_unitario, costo_unitario,
+           importe, descuenta_inventario, precio_lista)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      );
+      for (const r of renglones) {
+        insDetalle.run(id, r.producto_id, r.descripcion, r.cantidad, r.precio_unitario, r.costo_unitario, r.importe,
+          r.usa_inventario, r.precio_lista);
+      }
+      return { ventaId: id, folio: siguiente };
+    })();
+  } catch (error) {
+    if (cotizacion) await cotizaciones.liberar(cotizacion.id);
+    throw error;
+  }
+  const { ventaId, folio } = guardada;
 
   // 2) Se descuenta el inventario (en la central si hay internet; si no, queda en cola)
   const porProducto = new Map();
@@ -243,6 +278,7 @@ router.post('/', manejar(async (req, res) => {
     plan = await inventario.preparar(movimientos, { usuarioId: req.usuario.id, permitirSinConexion: true });
   } catch (error) {
     borrarVenta(ventaId);
+    if (cotizacion) await cotizaciones.liberar(cotizacion.id);
     throw error;
   }
   try {
@@ -250,7 +286,14 @@ router.post('/', manejar(async (req, res) => {
   } catch (error) {
     borrarVenta(ventaId);
     await plan.revertir();
+    if (cotizacion) await cotizaciones.liberar(cotizacion.id);
     throw error;
+  }
+  if (cotizacion) {
+    // La venta ya quedó: si no se puede anotar el folio, la cotización igual queda como vendida
+    await cotizaciones.confirmarVenta(cotizacion.id, folio).catch((error) => {
+      console.error('No se pudo anotar el folio de venta en la cotización:', error.message);
+    });
   }
 
   res.json({
@@ -262,6 +305,7 @@ router.post('/', manejar(async (req, res) => {
     inventarioPendiente: plan.pendiente,
     inventarioSincronizado: !plan.pendiente,
     avisoSincronizacion: plan.pendiente ? AVISO_SIN_CONEXION : null,
+    cotizacion: cotizacion ? { id: cotizacion.id, folio: cotizacion.folio, vigente: cotizacion.vigente } : null,
   });
 }));
 
@@ -333,6 +377,12 @@ router.post('/:id/cancelar', manejar(async (req, res) => {
     ).run(venta.id);
     throw error;
   }
+  bitacora.registrar({
+    usuario: req.usuario, sucursal_id: venta.sucursal_id, tipo: 'venta_cancelada',
+    descripcion: `Folio ${venta.folio} por $${Number(venta.total).toFixed(2)} (${venta.forma_pago}): ${motivo}`,
+    detalle: { venta_id: venta.id, folio: venta.folio, total: venta.total, forma_pago: venta.forma_pago, motivo, vendio: venta.usuario_id },
+    alerta: true,
+  });
   res.json({ ok: true, venta: cargarVenta(venta.id) });
 }));
 

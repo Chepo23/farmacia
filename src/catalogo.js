@@ -183,10 +183,6 @@ async function asegurarLocales(ids) {
   return unicos.filter((id) => !db.prepare('SELECT 1 FROM productos WHERE id = ?').get(id));
 }
 
-function articuloComun() {
-  return db.prepare('SELECT * FROM productos WHERE id = ?').get(ID_ARTICULO_COMUN);
-}
-
 // ---------- Escritura ----------
 function validar(body) {
   const descripcion = String(body.descripcion || '').trim();
@@ -350,7 +346,6 @@ module.exports = {
   porIds,
   porId,
   asegurarLocales,
-  articuloComun,
   validar,
   crear,
   actualizar,

@@ -11,6 +11,8 @@
 //                        Si no existe se usa SUPABASE_SERVICE_ROLE_KEY, que Supabase pone sola.
 //   MOVIL_ORIGENES       opcional: direcciones permitidas de la app, separadas por comas
 //                        (por ejemplo https://farmacia-inventario.pages.dev). Por defecto, todas.
+//   FARMACIA_ZONA_HORARIA opcional: zona horaria del "día" del inventario (por defecto America/Mexico_City;
+//                        si se cambia, poner la misma en el .env de las computadoras).
 import { createClient } from 'npm:@supabase/supabase-js@2.116.0';
 import { crearManejador } from './manejador.mjs';
 
@@ -27,4 +29,4 @@ const origenesPermitidos = (Deno.env.get('MOVIL_ORIGENES') || '*')
   .map((origen) => origen.trim().replace(/\/+$/, ''))
   .filter(Boolean);
 
-Deno.serve(crearManejador({ supabase, origenesPermitidos }));
+Deno.serve(crearManejador({ supabase, origenesPermitidos, zona: Deno.env.get('FARMACIA_ZONA_HORARIA') || undefined }));

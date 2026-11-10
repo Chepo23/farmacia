@@ -9,6 +9,7 @@ const db = require('../db');
 const catalogo = require('../catalogo');
 const inventario = require('../inventario');
 const traspasos = require('../traspasos');
+const bitacora = require('../bitacora');
 const { manejar } = require('../central');
 
 const router = express.Router();
@@ -62,15 +63,21 @@ function cargarApoyo(id) {
   return apoyo;
 }
 
-// El apoyo con la existencia actual de cada producto en la farmacia que lo manda
+// El apoyo con la existencia actual de cada producto en la farmacia que lo manda y en la que lo recibe
 async function cargarApoyoCompleto(id) {
   const apoyo = cargarApoyo(id);
   if (!apoyo) return null;
   const ids = apoyo.renglones.filter((r) => r.usa_inventario).map((r) => r.producto_id);
-  const { mapa, fuente } = await inventario.leerExistencias(ids, { sucursalId: apoyo.origen_id });
+  const { mapa, fuente } = await inventario.leerExistencias(ids);
   apoyo.renglones = apoyo.renglones.map((r) => {
     const valor = mapa.get(Number(r.producto_id))?.get(Number(apoyo.origen_id));
-    return { ...r, existencia_origen: valor ? valor.existencia : 0, minimo: valor ? valor.minimo : 0 };
+    const destino = mapa.get(Number(r.producto_id))?.get(Number(apoyo.destino_id));
+    return {
+      ...r,
+      existencia_origen: valor ? valor.existencia : 0,
+      minimo: valor ? valor.minimo : 0,
+      existencia_destino: destino ? destino.existencia : 0,
+    };
   });
   apoyo.fuente_inventario = fuente;
   return apoyo;
@@ -296,6 +303,12 @@ router.post('/:id/enviar', requiereCentral, manejar(async (req, res) => {
     await traspasos.ajustarSurtido(apoyo.pedido_id, apoyo.renglones, 1);
     await traspasos.actualizar('pedidos', apoyo.pedido_id, { estado: 'surtido' }, { estadoEsperado: ['enviado', 'borrador'] });
   }
+  const piezas = redondear(apoyo.renglones.reduce((t, r) => t + r.cantidad, 0));
+  bitacora.registrar({
+    usuario: req.usuario, sucursal_id: apoyo.origen_id, tipo: 'apoyo_enviado',
+    descripcion: `Folio ${apoyo.folio} a ${apoyo.destino}: ${apoyo.renglones.length} producto(s), ${piezas} pieza(s)`,
+    detalle: { apoyo_id: apoyo.id, folio: apoyo.folio, destino_id: apoyo.destino_id, productos: apoyo.renglones.length, piezas },
+  });
   res.json(await cargarApoyoCompleto(apoyo.id));
 }));
 
@@ -327,9 +340,12 @@ router.post('/:id/recibir', manejar(async (req, res) => {
     recibidas.push({ renglon: r, cantidad: redondear(cantidad) });
   }
 
+  // Las diferencias que se encontraron al revisar (por ejemplo desde el celular) quedan en la nota
+  const notaRecepcion = String(req.body?.nota_recepcion || '').trim().slice(0, 700);
+  const nota = notaRecepcion ? [apoyo.nota, `Recepción: ${notaRecepcion}`].filter(Boolean).join(' · ') : apoyo.nota;
   const tomado = await traspasos.actualizar(
     'apoyos', apoyo.id,
-    { estado: 'recibido', recibido_por: req.usuario.id, recibido: new Date() },
+    { estado: 'recibido', recibido_por: req.usuario.id, recibido: new Date(), nota },
     { estadoEsperado: 'enviado' }
   );
   if (!tomado) return res.status(400).json({ error: 'Este apoyo ya fue recibido o cancelado; actualiza la pantalla' });
@@ -348,10 +364,21 @@ router.post('/:id/recibir', manejar(async (req, res) => {
       { usuarioId: req.usuario.id }
     );
   } catch (error) {
-    await traspasos.actualizar('apoyos', apoyo.id, { estado: 'enviado', recibido_por: null, recibido: null }, { estadoEsperado: 'recibido' });
+    await traspasos.actualizar('apoyos', apoyo.id, { estado: 'enviado', recibido_por: null, recibido: null, nota: apoyo.nota }, { estadoEsperado: 'recibido' });
     throw error;
   }
   await traspasos.marcarRecibido(apoyo.id, recibidas);
+  const faltantes = recibidas.filter(({ renglon, cantidad }) => cantidad < renglon.cantidad - 1e-9);
+  bitacora.registrar({
+    usuario: req.usuario, sucursal_id: apoyo.destino_id, tipo: 'apoyo_recibido',
+    descripcion: `Folio ${apoyo.folio} de ${apoyo.origen}: ${faltantes.length ? `llegó con diferencias en ${faltantes.length} producto(s)` : 'llegó completo'}`
+      + `${notaRecepcion ? ` — ${notaRecepcion}` : ''}`,
+    detalle: {
+      apoyo_id: apoyo.id, folio: apoyo.folio,
+      faltantes: faltantes.map(({ renglon, cantidad }) => ({ producto: renglon.descripcion, enviado: renglon.cantidad, recibido: cantidad })),
+    },
+    alerta: faltantes.length > 0,
+  });
   res.json(await cargarApoyoCompleto(apoyo.id));
 }));
 
@@ -404,6 +431,15 @@ router.post('/:id/cancelar', manejar(async (req, res) => {
       throw error;
     }
     if (apoyo.pedido_id) await traspasos.ajustarSurtido(apoyo.pedido_id, apoyo.renglones, -1);
+  }
+
+  if (estadoPrevio === 'enviado') {
+    bitacora.registrar({
+      usuario: req.usuario, sucursal_id: apoyo.origen_id, tipo: 'apoyo_cancelado',
+      descripcion: `Folio ${apoyo.folio} a ${apoyo.destino} (ya enviado; la mercancía regresa a ${apoyo.origen}): ${motivo}`,
+      detalle: { apoyo_id: apoyo.id, folio: apoyo.folio, motivo },
+      alerta: true,
+    });
   }
 
   // Si la central solo descarta su borrador, el pedido sigue pendiente de surtir

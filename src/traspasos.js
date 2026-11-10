@@ -253,6 +253,40 @@ async function detallesDe(tabla, campo, ids) {
   return filas;
 }
 
+// ---------- Lo que la central ya no tiene ----------
+// La copia local puede quedarse con pedidos o apoyos que la central ya no tiene: datos de prueba que
+// se borraron en la central, o una base vieja que se trajo con "Traer datos del sistema anterior".
+// Con la central como autoridad, esos se quitan de la copia local para que no aparezcan en pantalla.
+async function ausentesEnCentral(tabla, candidatos) {
+  const existen = new Set();
+  for (const lote of lotes(idsValidos(candidatos))) {
+    const { data } = await consultar(sb().from(tabla).select('id').in('id', lote));
+    for (const f of data || []) existen.add(Number(f.id));
+  }
+  return idsValidos(candidatos).filter((id) => !existen.has(id));
+}
+
+const quitarLocales = db.transaction(({ apoyos = [], pedidos = [] }) => {
+  for (const id of apoyos) {
+    db.prepare('DELETE FROM apoyo_detalle WHERE apoyo_id = ?').run(id);
+    db.prepare('DELETE FROM apoyos WHERE id = ?').run(id);
+  }
+  for (const id of pedidos) {
+    db.prepare('UPDATE apoyos SET pedido_id = NULL WHERE pedido_id = ?').run(id);
+    db.prepare('DELETE FROM pedido_detalle WHERE pedido_id = ?').run(id);
+    db.prepare('DELETE FROM pedidos WHERE id = ?').run(id);
+  }
+});
+
+// Revisa los más recientes que se ven en esta computadora y que la central no mandó en su lista
+async function depurarLista(tabla, sqlVisibles, parametros, vistos) {
+  const candidatos = db.prepare(`${sqlVisibles} ORDER BY id DESC LIMIT 200`).all(...parametros)
+    .map((f) => Number(f.id)).filter((id) => !vistos.has(id));
+  if (!candidatos.length) return;
+  const ausentes = await ausentesEnCentral(tabla, candidatos);
+  if (ausentes.length) quitarLocales(tabla === 'apoyos' ? { apoyos: ausentes } : { pedidos: ausentes });
+}
+
 // Trae de la central pedidos (por ids, o los visibles para la sucursal) y los refleja en SQLite
 async function traerPedidos({ ids = null, sucursalId = null, esCentral = false, limite = 200 } = {}) {
   if (!modoCentral() || !centralDisponible()) return false;
@@ -264,6 +298,16 @@ async function traerPedidos({ ids = null, sucursalId = null, esCentral = false, 
     const { data: pedidos } = await consultar(consulta.order('id', { ascending: false }).limit(limite));
     const detallesPedido = await detallesDe('pedido_detalle', 'pedido_id', (pedidos || []).map((p) => p.id));
     await prepararEspejo({ pedidos: pedidos || [], detallesPedido });
+    const vistos = new Set((pedidos || []).map((p) => Number(p.id)));
+    if (ids) {
+      // Se pidieron por id: los que la central no devolvió ya no existen allá
+      const ausentes = idsValidos(ids).filter((id) => !vistos.has(id));
+      if (ausentes.length) quitarLocales({ pedidos: ausentes });
+    } else if (esCentral) {
+      await depurarLista('pedidos', "SELECT id FROM pedidos WHERE sucursal_id = ? OR estado <> 'borrador'", [Number(sucursalId)], vistos);
+    } else {
+      await depurarLista('pedidos', 'SELECT id FROM pedidos WHERE sucursal_id = ?', [Number(sucursalId)], vistos);
+    }
     return true;
   } catch (error) {
     if (error.sinConexion) return false;
@@ -279,6 +323,7 @@ async function traerApoyos({ ids = null, sucursalId = null, limite = 200 } = {})
     if (ids) consulta = consulta.in('id', idsValidos(ids));
     else consulta = consulta.or(`origen_id.eq.${Number(sucursalId)},destino_id.eq.${Number(sucursalId)}`);
     const { data: apoyos } = await consultar(consulta.order('id', { ascending: false }).limit(limite));
+    const vistos = new Set((apoyos || []).map((a) => Number(a.id)));
     const detallesApoyo = await detallesDe('apoyo_detalle', 'apoyo_id', (apoyos || []).map((a) => a.id));
     const idsPedidos = idsValidos((apoyos || []).map((a) => a.pedido_id)).filter((id) => !existe('pedidos', id));
     let pedidos = [];
@@ -289,6 +334,12 @@ async function traerApoyos({ ids = null, sucursalId = null, limite = 200 } = {})
       detallesPedido = await detallesDe('pedido_detalle', 'pedido_id', pedidos.map((p) => p.id));
     }
     await prepararEspejo({ pedidos, detallesPedido, apoyos: apoyos || [], detallesApoyo });
+    if (ids) {
+      const ausentes = idsValidos(ids).filter((id) => !vistos.has(id));
+      if (ausentes.length) quitarLocales({ apoyos: ausentes });
+    } else {
+      await depurarLista('apoyos', 'SELECT id FROM apoyos WHERE origen_id = ? OR destino_id = ?', [Number(sucursalId), Number(sucursalId)], vistos);
+    }
     return true;
   } catch (error) {
     if (error.sinConexion) return false;

@@ -82,6 +82,7 @@ CREATE TABLE usuarios_central (
   id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL, usuario TEXT NOT NULL, password_hash TEXT NOT NULL,
   rol TEXT NOT NULL DEFAULT 'admin' CHECK (rol IN ('admin', 'cajero')),
   sucursal_id INTEGER NOT NULL REFERENCES sucursales(id), activo INTEGER NOT NULL DEFAULT 1,
+  jefe INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00','now')),
   CONSTRAINT usuarios_central_usuario_key UNIQUE (usuario));
@@ -99,6 +100,103 @@ CREATE TABLE sesiones_movil (
   ultimo_uso TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00','now')),
   revocada TEXT,
   CONSTRAINT sesiones_movil_token_hash_key UNIQUE (token_hash));
+CREATE TABLE cotizaciones (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, folio INTEGER NOT NULL,
+  creado_por INTEGER NOT NULL REFERENCES usuarios_central(id),
+  origen_sucursal_id INTEGER NOT NULL REFERENCES sucursales(id),
+  destino_sucursal_id INTEGER NOT NULL REFERENCES sucursales(id),
+  destino_usuario_id INTEGER REFERENCES usuarios_central(id),
+  cliente TEXT NOT NULL DEFAULT '', nota TEXT NOT NULL DEFAULT '',
+  estado TEXT NOT NULL DEFAULT 'enviada' CHECK (estado IN ('enviada', 'vendida', 'cancelada')),
+  total REAL NOT NULL DEFAULT 0, vigente_hasta TEXT NOT NULL,
+  creado TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00','now')),
+  vendida_por INTEGER, vendida_fecha TEXT, vendida_folio INTEGER, cancelada_por INTEGER, cancelada_fecha TEXT,
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00','now')),
+  CONSTRAINT cotizaciones_folio_key UNIQUE (folio));
+CREATE TABLE cotizacion_detalle (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  cotizacion_id INTEGER NOT NULL REFERENCES cotizaciones(id) ON DELETE CASCADE,
+  producto_id INTEGER NOT NULL REFERENCES productos(id),
+  codigo_barras TEXT, descripcion TEXT NOT NULL, cantidad REAL NOT NULL, precio_unitario REAL NOT NULL,
+  precio_lista REAL NOT NULL DEFAULT 0, importe REAL NOT NULL DEFAULT 0);
+CREATE TABLE bitacora (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, clave TEXT NOT NULL,
+  fecha TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00','now')),
+  sucursal_id INTEGER, usuario_id INTEGER, tipo TEXT NOT NULL,
+  descripcion TEXT NOT NULL DEFAULT '', detalle TEXT, alerta INTEGER NOT NULL DEFAULT 0, origen TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00','now')),
+  CONSTRAINT bitacora_clave_key UNIQUE (clave));
+CREATE TABLE conteos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, sucursal_id INTEGER NOT NULL REFERENCES sucursales(id), fecha TEXT NOT NULL,
+  estado TEXT NOT NULL DEFAULT 'abierto' CHECK (estado IN ('abierto', 'por_autorizar', 'cerrado', 'cancelado')),
+  productos INTEGER NOT NULL DEFAULT 0, contados INTEGER NOT NULL DEFAULT 0, sin_diferencia INTEGER NOT NULL DEFAULT 0,
+  nota TEXT NOT NULL DEFAULT '', creado TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00','now')),
+  terminado TEXT, terminado_por INTEGER, cerrado TEXT, cerrado_por INTEGER,
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00','now')),
+  CONSTRAINT conteos_sucursal_id_fecha_key UNIQUE (sucursal_id, fecha));
+CREATE TABLE conteo_detalle (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  conteo_id INTEGER NOT NULL REFERENCES conteos(id) ON DELETE CASCADE,
+  sucursal_id INTEGER NOT NULL REFERENCES sucursales(id),
+  producto_id INTEGER NOT NULL REFERENCES productos(id) ON DELETE CASCADE,
+  codigo_barras TEXT, descripcion TEXT NOT NULL, departamento TEXT NOT NULL DEFAULT '', orden INTEGER NOT NULL DEFAULT 0,
+  razon TEXT NOT NULL DEFAULT '', costo REAL NOT NULL DEFAULT 0, existencia_sistema REAL, primer_conteo REAL, contado REAL,
+  diferencia REAL, reconteos INTEGER NOT NULL DEFAULT 0, motivo TEXT NOT NULL DEFAULT '', contado_por INTEGER, contado_fecha TEXT,
+  decision TEXT NOT NULL DEFAULT 'pendiente' CHECK (decision IN ('pendiente', 'cuadra', 'aprobado', 'rechazado', 'no_contado')),
+  decidido_por INTEGER, decidido TEXT,
+  CONSTRAINT conteo_detalle_conteo_id_producto_id_key UNIQUE (conteo_id, producto_id));
+CREATE TABLE conteo_ultimos (
+  sucursal_id INTEGER NOT NULL REFERENCES sucursales(id) ON DELETE CASCADE,
+  producto_id INTEGER NOT NULL REFERENCES productos(id) ON DELETE CASCADE,
+  contado TEXT NOT NULL, diferencia REAL NOT NULL DEFAULT 0,
+  PRIMARY KEY (sucursal_id, producto_id));
+CREATE TABLE conteo_config (
+  sucursal_id INTEGER PRIMARY KEY REFERENCES sucursales(id) ON DELETE CASCADE,
+  productos_por_dia INTEGER NOT NULL DEFAULT 40 CHECK (productos_por_dia BETWEEN 5 AND 500),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00','now')));
+CREATE TABLE conteo_importantes (
+  producto_id INTEGER PRIMARY KEY REFERENCES productos(id) ON DELETE CASCADE, creado_por INTEGER,
+  creado TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00','now')));
+CREATE TABLE cajas (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, clave TEXT NOT NULL, sucursal_id INTEGER NOT NULL REFERENCES sucursales(id),
+  numero INTEGER NOT NULL DEFAULT 1, nombre TEXT NOT NULL DEFAULT '',
+  creada TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00','now')), ultima_subida TEXT,
+  CONSTRAINT cajas_clave_key UNIQUE (clave));
+CREATE TABLE ventas (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, clave TEXT NOT NULL, caja_id INTEGER NOT NULL REFERENCES cajas(id),
+  sucursal_id INTEGER NOT NULL REFERENCES sucursales(id), venta_local_id INTEGER NOT NULL, folio INTEGER NOT NULL,
+  usuario_id INTEGER, cliente_clave TEXT, cliente_nombre TEXT NOT NULL DEFAULT '', forma_pago TEXT NOT NULL,
+  total REAL NOT NULL DEFAULT 0, costo REAL NOT NULL DEFAULT 0, piezas REAL NOT NULL DEFAULT 0, pago REAL NOT NULL DEFAULT 0,
+  cambio REAL NOT NULL DEFAULT 0, pago_usd REAL, tipo_cambio REAL, pago_efectivo REAL, pago_tarjeta REAL,
+  nota TEXT NOT NULL DEFAULT '', fecha TEXT NOT NULL, cancelada INTEGER NOT NULL DEFAULT 0, cancelada_por INTEGER,
+  cancelada_fecha TEXT, motivo_cancelacion TEXT NOT NULL DEFAULT '', corte_clave TEXT,
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00','now')),
+  CONSTRAINT ventas_clave_key UNIQUE (clave));
+CREATE TABLE venta_detalle (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, venta_id INTEGER NOT NULL REFERENCES ventas(id) ON DELETE CASCADE,
+  sucursal_id INTEGER NOT NULL, fecha TEXT NOT NULL, producto_id INTEGER, descripcion TEXT NOT NULL,
+  departamento TEXT NOT NULL DEFAULT '', cantidad REAL NOT NULL, precio_unitario REAL NOT NULL, precio_lista REAL,
+  costo_unitario REAL NOT NULL DEFAULT 0, importe REAL NOT NULL);
+CREATE TABLE cortes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, clave TEXT NOT NULL, caja_id INTEGER NOT NULL REFERENCES cajas(id),
+  sucursal_id INTEGER NOT NULL REFERENCES sucursales(id), corte_local_id INTEGER NOT NULL, usuario_id INTEGER,
+  fecha TEXT NOT NULL, num_ventas INTEGER NOT NULL DEFAULT 0, total_vendido REAL NOT NULL DEFAULT 0,
+  efectivo_esperado REAL NOT NULL DEFAULT 0, efectivo_contado REAL NOT NULL DEFAULT 0, diferencia REAL NOT NULL DEFAULT 0,
+  num_canceladas INTEGER NOT NULL DEFAULT 0, total_canceladas REAL NOT NULL DEFAULT 0, salidas_efectivo REAL NOT NULL DEFAULT 0,
+  detalle TEXT, CONSTRAINT cortes_clave_key UNIQUE (clave));
+CREATE TABLE clientes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, clave TEXT NOT NULL, caja_id INTEGER NOT NULL REFERENCES cajas(id),
+  sucursal_id INTEGER NOT NULL REFERENCES sucursales(id), cliente_local_id INTEGER NOT NULL, nombre TEXT NOT NULL,
+  telefono TEXT NOT NULL DEFAULT '', limite_credito REAL NOT NULL DEFAULT 0, credito_autorizado INTEGER NOT NULL DEFAULT 0,
+  notas TEXT NOT NULL DEFAULT '', activo INTEGER NOT NULL DEFAULT 1, saldo REAL NOT NULL DEFAULT 0,
+  ultima_compra TEXT, ultimo_abono TEXT, updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00','now')),
+  CONSTRAINT clientes_clave_key UNIQUE (clave));
+CREATE TABLE abonos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, clave TEXT NOT NULL, caja_id INTEGER NOT NULL REFERENCES cajas(id),
+  sucursal_id INTEGER NOT NULL REFERENCES sucursales(id), abono_local_id INTEGER NOT NULL, cliente_clave TEXT NOT NULL,
+  cliente_nombre TEXT NOT NULL DEFAULT '', usuario_id INTEGER, monto REAL NOT NULL, forma_pago TEXT NOT NULL DEFAULT 'efectivo',
+  saldo_anterior REAL, saldo_nuevo REAL, fecha TEXT NOT NULL, corte_clave TEXT,
+  CONSTRAINT abonos_clave_key UNIQUE (clave));
 `;
 
 // Columnas booleanas (SQLite guarda 0/1; PostgREST responde true/false)
@@ -106,7 +204,16 @@ const BOOLEANAS = {
   sucursales: ['es_central', 'activa'],
   productos: ['usa_inventario', 'es_comun', 'activo'],
   departamentos: ['activo'],
-  usuarios_central: ['activo'],
+  usuarios_central: ['activo', 'jefe'],
+  bitacora: ['alerta'],
+  ventas: ['cancelada'],
+  clientes: ['credito_autorizado', 'activo'],
+};
+
+// Columnas jsonb (SQLite las guarda como texto; PostgREST responde el objeto)
+const JSON_COLUMNAS = {
+  bitacora: ['detalle'],
+  cortes: ['detalle'],
 };
 
 function errorPg(status, code, message, details = null) {
@@ -271,9 +378,11 @@ function iniciarCentralFalsa({ dbPath = null, rpc = {} } = {}) {
   function aJson(tabla, fila, seleccion) {
     const salida = {};
     const booleanas = BOOLEANAS[tabla] || [];
+    const json = JSON_COLUMNAS[tabla] || [];
     for (const columna of seleccion) {
       const valor = fila[columna];
-      salida[columna] = booleanas.includes(columna) && valor !== null && valor !== undefined ? Boolean(valor) : valor;
+      if (json.includes(columna) && typeof valor === 'string') salida[columna] = JSON.parse(valor);
+      else salida[columna] = booleanas.includes(columna) && valor !== null && valor !== undefined ? Boolean(valor) : valor;
     }
     return salida;
   }
@@ -292,12 +401,14 @@ function iniciarCentralFalsa({ dbPath = null, rpc = {} } = {}) {
   function filaParaSql(tabla, objeto) {
     const columnas = columnasDe(tabla);
     const booleanas = BOOLEANAS[tabla] || [];
+    const json = JSON_COLUMNAS[tabla] || [];
     const salida = {};
     for (const [clave, valor] of Object.entries(objeto)) {
       if (!columnas.includes(clave)) {
         throw errorPg(400, 'PGRST204', `Could not find the '${clave}' column of '${tabla}' in the schema cache`);
       }
-      salida[clave] = booleanas.includes(clave) && typeof valor === 'boolean' ? (valor ? 1 : 0) : valor;
+      if (json.includes(clave)) salida[clave] = valor === null || valor === undefined ? null : JSON.stringify(valor);
+      else salida[clave] = booleanas.includes(clave) && typeof valor === 'boolean' ? (valor ? 1 : 0) : valor;
     }
     return salida;
   }

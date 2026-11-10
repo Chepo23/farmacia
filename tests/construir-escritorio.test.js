@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
-const { sirveAlServidor } = require('../scripts/construir-escritorio');
+const { sirveAlServidor, COMPARTIDOS } = require('../scripts/construir-escritorio');
 
 const M = 'C:\\farmacia-construccion\\paquete\\servidor\\node_modules';
 
@@ -40,4 +40,13 @@ test('la configuración del instalador incluye el servidor y protege el ejecutab
   assert.equal(paquete.build.electronFuses.enableNodeOptionsEnvironmentVariable, false);
   assert.equal(paquete.build.nsis.deleteAppDataOnUninstall, false, 'desinstalar no borra las ventas');
   assert.match(paquete.version, /^\d+\.\d+\.\d+$/);
+});
+
+test('el servidor del programa lleva lo que comparte con la función del celular', () => {
+  const repo = path.join(__dirname, '..');
+  const servidor = fs.readFileSync(path.join(repo, 'src', 'supervision.js'), 'utf8');
+  for (const archivo of COMPARTIDOS) {
+    assert.ok(fs.existsSync(path.join(repo, archivo)), archivo);
+    assert.ok(servidor.includes(archivo), `src/supervision.js usa ${archivo}`);
+  }
 });

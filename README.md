@@ -62,6 +62,11 @@ Usuario inicial: **admin** / contraseña: **admin**
   estantes aplicando solo las diferencias. Funciona **aunque las computadoras estén apagadas** (habla
   directo con la central en Supabase). Cada celular se vincula una vez con un código QR de la computadora
   y se puede desvincular en cualquier momento. Publicación y uso: [docs/celular.md](docs/celular.md).
+- **Jefe** (cuenta de jefe en la central) — ve todas las farmacias desde su celular o desde la
+  computadora: lo vendido hoy y la utilidad de cada una, reportes, cortes (para verlos y reimprimirlos),
+  créditos de clientes, **Movimientos** de inventario, **registro de cambios** (quién cambió qué) e
+  **inventario del día** (conteo diario a ciegas que él autoriza). También manda **cotizaciones** a las
+  sucursales. Guía: [docs/jefe.md](docs/jefe.md).
 
 Los **precios** solo los fija el administrador de la central y se aplican en todas las sucursales;
 las sucursales manejan el inventario de su farmacia (entradas, salidas, ajustes y mínimos).
@@ -79,9 +84,11 @@ leen y mueven existencias con el mismo módulo, `src/inventario.js`.
 - **Sin internet se sigue vendiendo:** el descuento queda en una cola y se sube solo al volver la
   conexión. La barra superior indica *En línea*, *Sin conexión* o cuántos movimientos faltan por subir.
   Entradas, ajustes y apoyos necesitan conexión, para que nadie trabaje con existencias viejas.
-- Las ventas, clientes, abonos y cortes de cada farmacia se guardan en su propia computadora.
+- Las ventas, clientes, abonos y cortes de cada farmacia se guardan en su propia computadora (para
+  vender sin internet) y se suben solos a la central unos segundos después, para que el jefe vea todas
+  las farmacias.
 
-Para activar el kardex completo en Supabase, ejecuta otra vez `supabase/schema.sql` en el editor SQL.
+La estructura de la central está en `supabase/schema.sql` (ver `supabase/setup-steps.md`).
 
 ## Estructura
 
@@ -90,9 +97,16 @@ Para activar el kardex completo en Supabase, ejecuta otra vez `supabase/schema.s
   Con la variable `FARMACIA_DB` se puede abrir otra base, por ejemplo una copia para pruebas.
 - `src/inventario.js`, `src/catalogo.js` — existencias y catálogo (central o local).
 - `src/traspasos.js` — apoyos y pedidos (central o local).
-- `src/routes/` — API: productos, ventas, clientes, cortes, reportes, admin, apoyos, pedidos, config.
+- `src/subir-ventas.js` — sube ventas, cortes, clientes y abonos de esta computadora a la central.
+- `src/supervision.js`, `src/bitacora.js` — lo del jefe (movimientos, inventario del día) y el registro de cambios.
+- `src/routes/` — API: productos, ventas, clientes, cortes, reportes, admin, apoyos, pedidos, config,
+  movimientos, conteos, supervisión, ventas de la central, celulares, respaldos y sistema.
 - `public/` — interfaz web (HTML/CSS/JS sin frameworks). `public/js/impresion.js` arma los tickets
-  y documentos impresos.
+  y documentos impresos; `public/movil.html` es la app del celular.
+- `supabase/functions/movil/` — función de Supabase que atiende al celular. `supervision.mjs` y
+  `ventas.mjs` también los usa el servidor de cada computadora (mismas reglas en los dos lados).
+- `escritorio/` — programa de escritorio (Electron) e instalador.
+- `scripts/` — armar el instalador y la app del celular, e importar el catálogo desde Eleventa.
 
 ## Pruebas
 

@@ -13,7 +13,7 @@ function requiereAdministrador(req, res, next) {
 
 const CAMPOS = {
   negocio_nombre: 'Farmacia San Francisco',
-  negocio_rfc: '',
+  negocio_rfc: 'RIMA840116U87', // el de los tickets de la farmacia (se puede cambiar en Administración)
   ticket_encabezado: 'La salud es lo más importante',
   ticket_mensaje: '¡Gracias por su compra!',
   ticket_pie: 'Conserve su ticket para cualquier aclaración.',
@@ -32,8 +32,14 @@ function leerConfig() {
   return config;
 }
 
+// Con el número de esta computadora como caja de su farmacia (lo asigna la central al subir las ventas)
+function configConCaja() {
+  const caja = db.prepare("SELECT valor FROM sync_config WHERE clave = 'caja_central'").get();
+  return { ...leerConfig(), caja_numero: caja ? JSON.parse(caja.valor).numero : null };
+}
+
 router.get('/', (req, res) => {
-  res.json(leerConfig());
+  res.json(configConCaja());
 });
 
 router.put('/', requiereAdministrador, (req, res) => {
@@ -60,7 +66,7 @@ router.put('/', requiereAdministrador, (req, res) => {
       guardar.run(`cfg.${campo}`, String(cambios[campo]).trim().slice(0, 300));
     }
   })();
-  res.json(leerConfig());
+  res.json(configConCaja());
 });
 
 module.exports = router;

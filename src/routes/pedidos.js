@@ -21,8 +21,31 @@ function cargarPedido(id) {
     )
     .get(id);
   if (!pedido) return null;
-  pedido.renglones = db.prepare('SELECT * FROM pedido_detalle WHERE pedido_id = ? ORDER BY id').all(pedido.id);
+  pedido.renglones = db
+    .prepare(
+      `SELECT d.*, COALESCE(p.usa_inventario, 1) AS usa_inventario
+       FROM pedido_detalle d LEFT JOIN productos p ON p.id = d.producto_id
+       WHERE d.pedido_id = ? ORDER BY d.id`
+    )
+    .all(pedido.id);
   pedido.piezas = Math.round(pedido.renglones.reduce((t, r) => t + r.cantidad, 0) * 100) / 100;
+  return pedido;
+}
+
+// El pedido con lo que hay de cada producto en la sucursal que pide y en la central, para decidir
+// cuánto pedir y cuánto mandar sin ir a consultar
+async function pedidoCompleto(id) {
+  const pedido = cargarPedido(id);
+  if (!pedido) return null;
+  const central = db.prepare('SELECT id, nombre FROM sucursales WHERE es_central = 1 AND activa = 1 ORDER BY id LIMIT 1').get();
+  const { mapa } = await inventario.leerExistencias(pedido.renglones.filter((r) => r.usa_inventario).map((r) => r.producto_id));
+  const existencia = (productoId, sucursalId) => mapa.get(Number(productoId))?.get(Number(sucursalId))?.existencia ?? 0;
+  pedido.central = central ? central.nombre : 'Central';
+  pedido.renglones = pedido.renglones.map((r) => ({
+    ...r,
+    existencia_sucursal: r.usa_inventario ? existencia(r.producto_id, pedido.sucursal_id) : null,
+    existencia_central: r.usa_inventario && central ? existencia(r.producto_id, central.id) : null,
+  }));
   return pedido;
 }
 
@@ -116,9 +139,9 @@ router.post('/', manejar(async (req, res) => {
   const abierto = db
     .prepare("SELECT id FROM pedidos WHERE sucursal_id = ? AND estado = 'borrador' ORDER BY id DESC")
     .get(req.usuario.sucursal_id);
-  if (abierto) return res.json(cargarPedido(abierto.id));
+  if (abierto) return res.json(await pedidoCompleto(abierto.id));
   const id = await traspasos.crearPedido({ sucursalId: req.usuario.sucursal_id, usuarioId: req.usuario.id });
-  res.json(cargarPedido(id));
+  res.json(await pedidoCompleto(id));
 }));
 
 router.get('/:id', manejar(async (req, res) => {
@@ -126,7 +149,7 @@ router.get('/:id', manejar(async (req, res) => {
   const pedido = cargarPedido(req.params.id);
   if (!pedido) return res.status(404).json({ error: 'Pedido no encontrado' });
   if (!puedeVer(pedido, req.usuario)) return res.status(403).json({ error: 'Ese pedido no es de tu farmacia' });
-  res.json(pedido);
+  res.json(await pedidoCompleto(pedido.id));
 }));
 
 // ---------- Renglones ----------
@@ -145,7 +168,7 @@ router.post('/:id/renglones', manejar(async (req, res) => {
   if (!Number.isFinite(cantidad) || !(cantidad > 0)) return res.status(400).json({ error: 'Cantidad no válida' });
 
   await traspasos.sumarRenglonPedido(pedido.id, producto, cantidad);
-  res.json(cargarPedido(pedido.id));
+  res.json(await pedidoCompleto(pedido.id));
 }));
 
 router.put('/:id/renglones/:renglon', manejar(async (req, res) => {
@@ -158,7 +181,7 @@ router.put('/:id/renglones/:renglon', manejar(async (req, res) => {
   const cantidad = Number(req.body?.cantidad);
   if (!Number.isFinite(cantidad) || !(cantidad > 0)) return res.status(400).json({ error: 'Cantidad no válida' });
   await traspasos.cambiarCantidadPedido(pedido.id, Number(req.params.renglon), cantidad);
-  res.json(cargarPedido(pedido.id));
+  res.json(await pedidoCompleto(pedido.id));
 }));
 
 router.delete('/:id/renglones/:renglon', manejar(async (req, res) => {
@@ -169,7 +192,7 @@ router.delete('/:id/renglones/:renglon', manejar(async (req, res) => {
     return res.status(400).json({ error: 'Solo se puede modificar un pedido en borrador de tu farmacia' });
   }
   await traspasos.quitarRenglonPedido(pedido.id, Number(req.params.renglon));
-  res.json(cargarPedido(pedido.id));
+  res.json(await pedidoCompleto(pedido.id));
 }));
 
 // ---------- Enviar el pedido a la central (o guardar cambios de uno ya enviado) ----------
@@ -190,7 +213,7 @@ router.post('/:id/enviar', manejar(async (req, res) => {
     { estadoEsperado: ['borrador', 'enviado'] }
   );
   if (!tomado) return res.status(400).json({ error: 'El pedido cambió de estado; actualiza la pantalla' });
-  res.json(cargarPedido(pedido.id));
+  res.json(await pedidoCompleto(pedido.id));
 }));
 
 router.post('/:id/cancelar', manejar(async (req, res) => {

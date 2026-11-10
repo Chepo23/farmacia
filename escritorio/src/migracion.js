@@ -64,11 +64,14 @@ function examinar({ carpeta = '', archivo = '' } = {}) {
   };
 }
 
-// ¿El sistema anterior sigue abierto? (si responde en su puerto, no se debe copiar su base)
-async function sistemaAbierto(puerto) {
+// ¿El sistema anterior sigue abierto? (si responde en su puerto, no se debe copiar su base).
+// instanciaPropia: el servidor de este mismo programa, que puede estar en ese puerto y no cuenta.
+async function sistemaAbierto(puerto, instanciaPropia = null) {
   try {
     const r = await fetch(`http://127.0.0.1:${puerto}/api/sync/health`, { signal: AbortSignal.timeout(1200) });
-    return r.ok;
+    if (!r.ok) return false;
+    const salud = await r.json().catch(() => ({}));
+    return !(instanciaPropia && salud.instancia === instanciaPropia);
   } catch {
     return false;
   }

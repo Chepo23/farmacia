@@ -110,10 +110,10 @@ function pintarFranjaAvisos() {
 
   if (porRecibir.length > 0) {
     franja.innerHTML = `
-      <span><svg class="icono"><use href="#i-recibir"/></svg>
-        Tienes ${porRecibir.length} apoyo${porRecibir.length > 1 ? 's' : ''} esperando que confirmes la
-        recepción. La mercancía no entra a tu inventario hasta que la revises.</span>
-      <button class="boton exito" data-accion="recibir" data-id="${porRecibir[0].id}">Revisar y recibir</button>`;
+      <span><svg class="icono"><use href="#i-celular"/></svg>
+        Tienes ${porRecibir.length} apoyo${porRecibir.length > 1 ? 's' : ''} en camino. Cuando llegue la mercancía,
+        verifícala con el celular (app del inventario → Apoyos): no entra a tu inventario hasta que se escanee.</span>
+      <button class="boton exito" data-accion="ver-apoyo" data-id="${porRecibir[0].id}">Ver apoyo</button>`;
     franja.hidden = false;
   } else if (pedidosPendientes.length > 0) {
     const nombres = [...new Set(pedidosPendientes.map((p) => p.sucursal))].join(', ');
@@ -140,11 +140,11 @@ function pintarFarmacias() {
         <b>Pedir apoyo a la central</b>
         <small>${miPedido
           ? `<span class="con-borrador">Tienes un pedido a medias con ${miPedido.renglones} producto(s)</span>`
-          : 'Escanea lo que se te acabó y mándalo'}</small>
+          : 'Escanea o busca lo que necesitas y mándalo'}</small>
       </button>
       <button class="tarjeta-farmacia" data-accion="recibir-primero" ${porRecibir ? '' : 'disabled'}>
-        <b>Apoyos por recibir</b>
-        <small>${porRecibir ? `${porRecibir} pendiente(s) de revisar` : 'Nada pendiente'}</small>
+        <b>Apoyos en camino</b>
+        <small>${porRecibir ? `${porRecibir} por verificar con el celular` : 'Nada pendiente'}</small>
       </button>`;
     return;
   }
@@ -169,36 +169,6 @@ function pintarFarmacias() {
            <b>+ Agregar farmacia</b><small>Da de alta una sucursal nueva</small>
          </button>`
       : '');
-}
-
-function pintarTablaApoyos() {
-  const cuerpo = document.getElementById('cuerpo-apoyos');
-  if (!cuerpo) return;
-  const pendientes = Apoyos.apoyos.filter((a) => !['cancelado', 'recibido'].includes(a.estado));
-  if (pendientes.length === 0) {
-    cuerpo.innerHTML = '<tr><td colspan="9" class="vacio">No hay apoyos pendientes.</td></tr>';
-    return;
-  }
-  cuerpo.innerHTML = pendientes
-    .map((a) => {
-      const puedeRecibir = a.estado === 'enviado' && a.destino_id === App.usuario.sucursal_id;
-      const faltantes = a.estado === 'recibido' && a.faltantes > 0;
-      return `<tr>
-        <td class="num">${a.folio}</td>
-        <td>${escaparHtml(a.origen)}</td>
-        <td>${escaparHtml(a.destino)}</td>
-        <td>${chip(a.estado)}${faltantes ? ' ' + chip('faltante', `Faltaron ${a.faltantes}`) : ''}</td>
-        <td class="num">${a.renglones}</td>
-        <td class="num">${a.piezas}</td>
-        <td class="num">${dinero(a.total_costo)}</td>
-        <td>${fechaCorta(a.enviado || a.creado)}</td>
-        <td style="white-space:nowrap">
-          <button class="boton chico" data-accion="ver-apoyo" data-id="${a.id}">Ver</button>
-          ${puedeRecibir ? `<button class="boton chico exito" data-accion="recibir" data-id="${a.id}">Recibir</button>` : ''}
-        </td>
-      </tr>`;
-    })
-    .join('');
 }
 
 function pintarHistorialApoyos() {
@@ -279,9 +249,10 @@ async function verApoyo(id) {
 
 function filasApoyo(apoyo, editable) {
   if (apoyo.renglones.length === 0) {
-    return '<tr><td colspan="9" class="vacio">Escanea el código de barras del primer producto.</td></tr>';
+    return '<tr><td colspan="12" class="vacio">Escanea el código de barras del primer producto (o búscalo con F3).</td></tr>';
   }
   const mostrarRecibido = apoyo.estado === 'recibido';
+  const conExistencias = apoyo.estado === 'borrador';
   return apoyo.renglones
     .map((r) => {
       const falta = editable && r.usa_inventario && r.cantidad > r.existencia_origen;
@@ -295,6 +266,10 @@ function filasApoyo(apoyo, editable) {
           : r.cantidad}</td>
         ${mostrarRecibido
           ? `<td class="num ${diferencia ? 'texto-rojo' : 'texto-verde'}">${r.cantidad_recibida ?? 0}</td>`
+          : ''}
+        ${conExistencias
+          ? `<td class="num existencia-ref">${r.usa_inventario ? r.existencia_origen : '—'}</td>
+             <td class="num existencia-ref">${r.usa_inventario ? r.existencia_destino : '—'}</td>`
           : ''}
         <td class="num">${dinero(r.precio_costo)}</td>
         <td class="num">${dinero(r.precio_venta)}</td>
@@ -324,8 +299,20 @@ function panelApoyo(apoyo, editable) {
   } else {
     botones = `
       ${soyDestino && apoyo.estado === 'enviado'
-        ? `<button class="boton exito grande" data-accion="recibir" data-id="${apoyo.id}">
-             <svg class="icono"><use href="#i-recibir"/></svg>Revisar y recibir</button>`
+        ? `<div class="espera-celular">
+             <svg class="icono"><use href="#i-celular"/></svg>
+             <b>En espera de verificación con el celular</b>
+             <span>Cuando llegue la mercancía, abre la app del inventario → <b>Apoyos</b> → este apoyo y escanea
+               cada producto. Al terminar, aquí aparece como recibido y entra a tu inventario.</span>
+             <small>¿No tienes el celular a la mano? Vincula otro con el botón <b>Celular</b> de arriba.</small>
+           </div>`
+        : ''}
+      ${soyOrigen && apoyo.estado === 'enviado'
+        ? `<div class="espera-celular">
+             <svg class="icono"><use href="#i-apoyos"/></svg>
+             <b>En camino</b>
+             <span>${escaparHtml(apoyo.destino)} lo verifica con su celular producto por producto al recibirlo.</span>
+           </div>`
         : ''}
       <button class="boton primario" data-accion="imprimir-apoyo">
         <svg class="icono"><use href="#i-imprimir"/></svg>Imprimir</button>
@@ -399,6 +386,10 @@ function pintarApoyo(apoyo) {
             <thead><tr>
               <th>Código</th><th>Descripción</th><th class="num">Cantidad</th>
               ${mostrarRecibido ? '<th class="num">Recibido</th>' : ''}
+              ${apoyo.estado === 'borrador'
+                ? `<th class="num" title="Existencia de hoy">Hay en<br><small>${escaparHtml(apoyo.origen)}</small></th>
+                   <th class="num" title="Existencia de hoy">Hay en<br><small>${escaparHtml(apoyo.destino)}</small></th>`
+                : ''}
               <th class="num">Costo</th><th class="num">Público</th><th class="num">Mayoreo</th>
               <th class="num">Importe</th>${editable ? '<th></th>' : ''}
             </tr></thead>
@@ -412,6 +403,33 @@ function pintarApoyo(apoyo) {
 
   const codigo = document.getElementById('apoyo-codigo');
   if (codigo) codigo.focus();
+  vigilarApoyo(apoyo);
+}
+
+// Mientras se ve un apoyo en camino, se revisa cada 15 segundos si ya se verificó con el celular
+let revisionApoyo = null;
+function vigilarApoyo(apoyo) {
+  clearInterval(revisionApoyo);
+  revisionApoyo = null;
+  if (!apoyo || apoyo.estado !== 'enviado') return;
+  revisionApoyo = setInterval(async () => {
+    const visible = document.getElementById('seccion-apoyos').classList.contains('activa')
+      && Apoyos.actual && Apoyos.actual.id === apoyo.id;
+    if (!visible) {
+      clearInterval(revisionApoyo);
+      revisionApoyo = null;
+      return;
+    }
+    try {
+      const fresco = await api('/api/apoyos/' + apoyo.id);
+      if (fresco.estado === 'enviado') return;
+      pintarApoyo(fresco);
+      if (fresco.estado === 'recibido') {
+        aviso(`El apoyo folio ${fresco.folio} ya se verificó con el celular${fresco.faltantes > 0 ? `: faltaron ${fresco.faltantes} pieza(s)` : ' y llegó completo'}`,
+          fresco.faltantes > 0 ? 'error' : 'exito');
+      }
+    } catch { /* sin conexión: se intenta otra vez */ }
+  }, 15000);
 }
 
 // Redibuja solo la tabla y el panel para no perder el foco del escáner
@@ -469,50 +487,69 @@ function ofrecerAltaProducto(codigo) {
   });
 }
 
-// Buscar por nombre cuando el producto no tiene código legible (F3)
-async function buscarProductoParaApoyo() {
+// Buscar por nombre (F3): para el apoyo que arma la central o para el pedido de una sucursal
+async function buscarProductoParaApoyo(para = 'apoyo') {
+  const esPedido = para === 'pedido';
   const modal = abrirModal(`
-    <h3>Buscar producto</h3>
-    <input type="text" id="ba-texto" class="entrada" placeholder="Escribe parte del nombre…" autocomplete="off">
+    <h3>${esPedido ? 'Buscar producto para pedir' : 'Buscar producto'}</h3>
+    <input type="text" id="ba-texto" class="entrada" placeholder="Escribe parte del nombre o del código…" autocomplete="off">
     <div class="resultados-busqueda">
       <table class="tabla">
-        <thead><tr><th>Código</th><th>Descripción</th><th class="num">Existencia aquí</th><th class="num">Costo</th></tr></thead>
+        <thead><tr><th>Código</th><th>Descripción</th><th class="num">Existencia aquí</th>
+          <th class="num">${esPedido ? 'Hay en la central' : 'Costo'}</th></tr></thead>
         <tbody id="ba-cuerpo"></tbody>
       </table>
     </div>
-    <div class="pie"><button class="boton" onclick="cerrarModal()">Cerrar (Esc)</button></div>`);
+    <div class="pie"><small>Enter agrega el primero de la lista</small><button class="boton" onclick="cerrarModal()">Cerrar (Esc)</button></div>`);
 
   const cuerpo = modal.querySelector('#ba-cuerpo');
+  const enCentral = (p) => (p.existencias || []).find((x) => x.es_central)?.existencia ?? 0;
   let encontrados = [];
   async function buscar() {
     const q = modal.querySelector('#ba-texto').value.trim();
-    if (q.length < 2) { cuerpo.innerHTML = ''; return; }
+    if (q.length < 2) { cuerpo.innerHTML = ''; encontrados = []; return; }
     encontrados = await api('/api/productos/buscar?q=' + encodeURIComponent(q));
     cuerpo.innerHTML = encontrados
       .map((p) => `<tr data-id="${p.id}">
         <td>${escaparHtml(p.codigo_barras || '')}</td>
         <td>${escaparHtml(p.descripcion)}</td>
-        <td class="num">${p.existencia_local}</td>
-        <td class="num">${dinero(p.precio_costo)}</td>
+        <td class="num">${p.usa_inventario ? p.existencia_local : '—'}</td>
+        <td class="num">${esPedido ? (p.usa_inventario ? enCentral(p) : '—') : dinero(p.precio_costo)}</td>
       </tr>`)
       .join('') || '<tr><td colspan="4" class="vacio">Sin resultados</td></tr>';
+  }
+  async function elegir(producto) {
+    if (!producto) return;
+    cerrarModal();
+    try {
+      if (esPedido) {
+        const pedido = await api(`/api/pedidos/${Apoyos.pedidoActual.id}/renglones`, { method: 'POST', body: { producto_id: producto.id, cantidad: 1 } });
+        const renglon = pedido.renglones.find((r) => r.producto_id === producto.id);
+        refrescarPedido(pedido, renglon ? renglon.id : null);
+      } else {
+        const apoyo = await api(`/api/apoyos/${Apoyos.actual.id}/renglones`, { method: 'POST', body: { producto_id: producto.id, cantidad: 1 } });
+        const renglon = apoyo.renglones.find((r) => r.producto_id === producto.id);
+        refrescarApoyo(apoyo, renglon ? renglon.id : null);
+      }
+    } catch (err) {
+      aviso(err.message, 'error');
+    }
   }
   let temporizador = null;
   modal.querySelector('#ba-texto').addEventListener('input', () => {
     clearTimeout(temporizador);
     temporizador = setTimeout(buscar, 250);
   });
-  cuerpo.addEventListener('click', async (e) => {
+  modal.querySelector('#ba-texto').addEventListener('keydown', async (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    clearTimeout(temporizador);
+    await buscar();
+    elegir(encontrados[0]);
+  });
+  cuerpo.addEventListener('click', (e) => {
     const fila = e.target.closest('tr[data-id]');
-    if (!fila) return;
-    const producto = encontrados.find((p) => p.id === Number(fila.dataset.id));
-    cerrarModal();
-    const apoyo = await api(`/api/apoyos/${Apoyos.actual.id}/renglones`, {
-      method: 'POST',
-      body: { producto_id: producto.id, cantidad: 1 },
-    });
-    const renglon = apoyo.renglones.find((r) => r.producto_id === producto.id);
-    refrescarApoyo(apoyo, renglon ? renglon.id : null);
+    if (fila) elegir(encontrados.find((p) => p.id === Number(fila.dataset.id)));
   });
 }
 
@@ -628,81 +665,6 @@ async function descartarApoyo() {
   }
 }
 
-// ---------- Recibir ----------
-async function abrirRecepcion(id) {
-  const apoyo = await api('/api/apoyos/' + id);
-  const modal = abrirModal(`
-    <h3>Recibir apoyo folio ${apoyo.folio} de ${escaparHtml(apoyo.origen)}</h3>
-    <p>Cuenta la mercancía y confirma cuánto llegó de cada producto. Solo lo que confirmes
-       entra a tu inventario.</p>
-    <div class="contenedor-tabla" style="max-height:44vh;overflow-y:auto">
-      <table class="tabla">
-        <thead><tr><th>Código</th><th>Descripción</th><th class="num">Enviado</th><th class="num">Recibido</th></tr></thead>
-        <tbody>
-          ${apoyo.renglones
-            .map((r) => `<tr data-renglon="${r.id}">
-              <td>${escaparHtml(r.codigo_barras || '—')}</td>
-              <td>${escaparHtml(r.descripcion)}</td>
-              <td class="num">${r.cantidad}</td>
-              <td class="num"><input type="number" class="recibido" step="any" min="0" max="${r.cantidad}"
-                    value="${r.cantidad}" style="width:90px;text-align:center" aria-label="Cantidad recibida"></td>
-            </tr>`)
-            .join('')}
-        </tbody>
-      </table>
-    </div>
-    ${apoyo.nota ? `<p><b>Nota de ${escaparHtml(apoyo.origen)}:</b> ${escaparHtml(apoyo.nota)}</p>` : ''}
-    <div id="recibir-resumen" class="dato-secundario"></div>
-    <div id="recibir-error" class="mensaje-error" hidden></div>
-    <div class="pie">
-      <button class="boton" onclick="cerrarModal()">Cerrar</button>
-      <button class="boton" id="recibir-completo">Llegó todo completo</button>
-      <button class="boton exito grande" id="recibir-confirmar">Confirmar recepción</button>
-    </div>`);
-  modal.classList.add('grande');
-
-  const resumen = modal.querySelector('#recibir-resumen');
-  function actualizarResumen() {
-    let recibidas = 0;
-    let faltantes = 0;
-    modal.querySelectorAll('tr[data-renglon]').forEach((fila) => {
-      const enviado = Number(fila.children[2].textContent);
-      const recibido = Number(fila.querySelector('.recibido').value) || 0;
-      recibidas += recibido;
-      faltantes += Math.max(enviado - recibido, 0);
-    });
-    resumen.innerHTML = `<span>Vas a meter <b>${recibidas}</b> pieza(s) a tu inventario</span>
-      ${faltantes > 0 ? `<b class="texto-rojo">Faltan ${faltantes} pieza(s)</b>` : '<b class="texto-verde">Completo</b>'}`;
-  }
-  modal.addEventListener('input', actualizarResumen);
-  actualizarResumen();
-
-  modal.querySelector('#recibir-completo').addEventListener('click', () => {
-    modal.querySelectorAll('tr[data-renglon]').forEach((fila) => {
-      fila.querySelector('.recibido').value = Number(fila.children[2].textContent);
-    });
-    actualizarResumen();
-  });
-
-  modal.querySelector('#recibir-confirmar').addEventListener('click', async () => {
-    const errorEl = modal.querySelector('#recibir-error');
-    errorEl.hidden = true;
-    const renglones = [...modal.querySelectorAll('tr[data-renglon]')].map((fila) => ({
-      id: Number(fila.dataset.renglon),
-      cantidad_recibida: Number(fila.querySelector('.recibido').value) || 0,
-    }));
-    try {
-      const recibido = await api(`/api/apoyos/${apoyo.id}/recibir`, { method: 'POST', body: { renglones } });
-      cerrarModal();
-      aviso(`Apoyo recibido: ${recibido.piezas_recibidas} pieza(s) entraron a tu inventario`, 'exito');
-      pintarApoyo(recibido);
-    } catch (err) {
-      errorEl.textContent = err.message;
-      errorEl.hidden = false;
-    }
-  });
-}
-
 // ============================================================
 //  Pedidos (lo que la sucursal le solicita a la central)
 // ============================================================
@@ -711,10 +673,13 @@ async function abrirPedido(id = null) {
   pintarPedido(pedido);
 }
 
+const pedidoConExistencias = (pedido) => pedido.estado === 'borrador' || pedido.estado === 'enviado';
+
 function filasPedido(pedido, editable) {
   if (pedido.renglones.length === 0) {
-    return '<tr><td colspan="5" class="vacio">Escanea lo que se te acabó o usa el botón de sugerencias.</td></tr>';
+    return '<tr><td colspan="7" class="vacio">Escanea o busca (F3) los productos que quieres pedir, o usa Sugerencias.</td></tr>';
   }
+  const conExistencias = pedidoConExistencias(pedido);
   return pedido.renglones
     .map((r) => `<tr data-renglon="${r.id}">
       <td>${escaparHtml(r.codigo_barras || '—')}</td>
@@ -722,6 +687,10 @@ function filasPedido(pedido, editable) {
       <td class="num">${editable
         ? `<input type="number" class="cantidad" step="any" min="0" value="${r.cantidad}" aria-label="Cantidad">`
         : r.cantidad}</td>
+      ${conExistencias
+        ? `<td class="num existencia-ref">${r.existencia_sucursal ?? '—'}</td>
+           <td class="num existencia-ref">${r.existencia_central ?? '—'}</td>`
+        : ''}
       <td class="num ${r.cantidad_surtida >= r.cantidad ? 'texto-verde' : ''}">${r.cantidad_surtida}</td>
       ${editable
         ? `<td><button class="boton-quitar" data-accion="quitar-renglon-pedido" data-id="${r.id}" title="Quitar">
@@ -748,16 +717,22 @@ function pintarPedido(pedido) {
         ${editable
           ? `<input type="text" id="pedido-codigo" class="entrada-codigo" autocomplete="off"
                     aria-label="Código del producto"
-                    placeholder="Escanea el código de lo que se te acabó…">
+                    placeholder="Escanea los productos que quieres pedir…">
              <div class="ayuda-teclas">
                <span><b>Enter</b> Agrega el producto</span>
-               <span>El sistema ya sabe qué tienes en cero: usa <b>Sugerencias</b></span>
+               <span><b>F3</b> Buscar por nombre</span>
+               <span>Lo que tienes en cero o bajo mínimo: <b>Sugerencias</b></span>
              </div>`
           : ''}
         <div class="contenedor-tabla">
           <table class="tabla tabla-apoyo">
             <thead><tr>
-              <th>Código</th><th>Descripción</th><th class="num">Pedido</th><th class="num">Ya surtido</th><th></th>
+              <th>Código</th><th>Descripción</th><th class="num">Pedido</th>
+              ${pedidoConExistencias(pedido)
+                ? `<th class="num" title="Existencia de hoy">Hay en<br><small>${escaparHtml(pedido.sucursal)}</small></th>
+                   <th class="num" title="Existencia de hoy">Hay en<br><small>${escaparHtml(pedido.central || 'la central')}</small></th>`
+                : ''}
+              <th class="num">Ya surtido</th><th></th>
             </tr></thead>
             <tbody id="pedido-cuerpo">${filasPedido(pedido, editable)}</tbody>
           </table>
@@ -771,7 +746,9 @@ function pintarPedido(pedido) {
         ${pedido.enviado ? `<div class="dato-secundario"><span>Enviado</span><b>${escaparHtml(pedido.enviado)}</b></div>` : ''}
         <hr>
         ${editable
-          ? `<button class="boton advertencia" data-accion="sugerencias">
+          ? `<button class="boton primario" data-accion="buscar-pedido">
+               <svg class="icono"><use href="#i-buscar"/></svg>Buscar producto (F3)</button>
+             <button class="boton advertencia" data-accion="sugerencias">
                <svg class="icono"><use href="#i-alerta"/></svg>Sugerencias (lo que está en cero)</button>
              <label style="display:flex;flex-direction:column;gap:4px;font-size:13px;font-weight:600">Nota
                <input type="text" class="entrada" id="pedido-nota" value="${escaparHtml(pedido.nota || '')}"
@@ -1072,7 +1049,7 @@ document.getElementById('apoyos-farmacias').addEventListener('click', (e) => {
     const pendiente = Apoyos.apoyos.find(
       (a) => a.estado === 'enviado' && a.destino_id === App.usuario.sucursal_id
     );
-    if (pendiente) abrirRecepcion(pendiente.id);
+    if (pendiente) verApoyo(pendiente.id);
   }
 });
 
@@ -1083,7 +1060,6 @@ document.getElementById('apoyos-inicio').addEventListener('click', (e) => {
   switch (boton.dataset.accion) {
     case 'reintentar': cargarApoyosInicio(); break;
     case 'ver-apoyo': verApoyo(id); break;
-    case 'recibir': abrirRecepcion(id); break;
     case 'ver-pedido':
     case 'editar-pedido': abrirPedido(id); break;
     case 'armar-apoyo': abrirApoyoHacia(Number(boton.dataset.sucursal), id); break;
@@ -1101,7 +1077,7 @@ document.getElementById('apoyos-editor').addEventListener('click', (e) => {
     case 'descartar-apoyo': descartarApoyo(); break;
     case 'cancelar-pedido': cancelarPedido(); break;
     case 'imprimir-apoyo': imprimirApoyo(Apoyos.actual); break;
-    case 'recibir': abrirRecepcion(Number(boton.dataset.id)); break;
+    case 'buscar-pedido': buscarProductoParaApoyo('pedido'); break;
     case 'quitar-renglon':
       api(`/api/apoyos/${Apoyos.actual.id}/renglones/${boton.dataset.id}`, { method: 'DELETE' })
         .then(refrescarApoyo)
@@ -1165,13 +1141,17 @@ document.getElementById('apoyos-editor').addEventListener('focusout', (e) => {
   if (e.target.id === 'apoyo-nota') guardarNotaApoyo();
 });
 
-// F3 busca por nombre cuando el código no se puede escanear
+// F3 busca por nombre (en el apoyo que se arma o en el pedido que se hace)
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'F3' || hayModalAbierto()) return;
   if (!document.getElementById('seccion-apoyos').classList.contains('activa')) return;
-  if (!Apoyos.actual || Apoyos.actual.estado !== 'borrador') return;
-  e.preventDefault();
-  buscarProductoParaApoyo();
+  if (Apoyos.actual && Apoyos.actual.estado === 'borrador') {
+    e.preventDefault();
+    buscarProductoParaApoyo('apoyo');
+  } else if (document.getElementById('pedido-codigo')) {
+    e.preventDefault();
+    buscarProductoParaApoyo('pedido');
+  }
 });
 
 document.getElementById('boton-pedir-apoyo').addEventListener('click', () => abrirPedido());
@@ -1181,6 +1161,7 @@ document.querySelectorAll('[data-vista-apoyos]').forEach((boton) => {
 });
 
 App.alMostrarSeccion.apoyos = () => {
+  if (Apoyos.actual) vigilarApoyo(Apoyos.actual);
   if (Apoyos.actual || Apoyos.pedidoActual) return; // no interrumpir una captura a medias
   mostrarInicioApoyos();
 };

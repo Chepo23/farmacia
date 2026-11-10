@@ -234,7 +234,7 @@ const Impresion = (() => {
     return `${encabezadoTicket(v)}
       <div class="t-titulo">TICKET DE VENTA</div>
       ${v.cancelada ? `<div class="t-cancelada">VENTA CANCELADA</div>` : ''}
-      ${fila('Folio', `<b>${folio(v.folio)}</b>`)}
+      ${fila('Folio', `<b>${Number(App.config?.caja_numero) > 1 ? `Caja ${App.config.caja_numero} · ` : ''}${folio(v.folio)}</b>`)}
       ${fila('Fecha', escaparHtml(fechaHora(v.fecha)))}
       ${fila('Atendió', escaparHtml(v.cajero || ''))}
       ${v.cliente ? fila('Cliente', escaparHtml(v.cliente)) : ''}
@@ -365,6 +365,14 @@ const Impresion = (() => {
       `${m.tipo === 'entrada' ? '+' : '−'} ${escaparHtml(m.concepto)}`, dinero(m.monto)
     )).join('');
     const cajeros = (co.por_cajero || []).map((c) => fila(`${escaparHtml(c.cajero)} (${c.num_ventas})`, dinero(c.total))).join('');
+    const piezas = (n) => String(Math.round((Number(n) || 0) * 1000) / 1000);
+    // Como en el corte de Eleventa: ventas totales, dinero en bancos y ventas por departamento
+    const deContado = (Number(co.total_efectivo) || 0) + (Number(co.total_tarjeta) || 0) + (Number(co.total_dolares) || 0);
+    const abonos = Number(co.total_abonos) || 0;
+    const enBancos = (Number(co.total_tarjeta) || 0) + (Number(co.abonos_tarjeta) || 0);
+    const departamentos = (co.departamentos || []).map((d) => fila(escaparHtml(d.departamento), dinero(d.total))).join('');
+    const e = co.estadisticas;
+    const masVendidos = e ? (e.mas_vendidos || []).map((m, i) => fila(`${i + 1}. ${escaparHtml(m.descripcion)}`, piezas(m.piezas))).join('') : '';
     return `${encabezadoTicket(co)}
       <div class="t-titulo">CORTE DE CAJA</div>
       ${fila('Corte núm.', `<b>${folio(co.id)}</b>`)}
@@ -372,6 +380,7 @@ const Impresion = (() => {
       ${fila('Corte', escaparHtml(fechaHora(co.fecha)))}
       ${fila('Realizó', escaparHtml(co.usuario || ''))}
       <hr class="t-sep">
+      <div class="t-seccion">VENTAS DEL TURNO</div>
       ${fila('Ventas realizadas', String(co.num_ventas))}
       ${fila('Efectivo', dinero(co.total_efectivo))}
       ${fila('Tarjeta', dinero(co.total_tarjeta))}
@@ -380,9 +389,15 @@ const Impresion = (() => {
       ${fila('Abonos de clientes', dinero(co.total_abonos))}
       ${co.abonos_tarjeta ? fila('&nbsp;&nbsp;de ellos con tarjeta', dinero(co.abonos_tarjeta)) : ''}
       ${co.num_canceladas ? fila(`Canceladas (${co.num_canceladas})`, dinero(co.total_canceladas)) : ''}
-      ${cajeros ? `<hr class="t-sep"><div class="t-pie"><b>VENTAS POR CAJERO</b></div>${cajeros}` : ''}
       <hr class="t-sep">
-      <div class="t-pie"><b>EFECTIVO EN CAJA</b></div>
+      <div class="t-seccion">VENTAS TOTALES</div>
+      ${fila('Ventas de contado', dinero(deContado))}
+      ${fila('Pagos de clientes', dinero(abonos))}
+      ${fila('<b>Total</b>', `<b>${dinero(deContado + abonos)}</b>`)}
+      ${co.total_credito ? fila('Vendido a crédito (por cobrar)', dinero(co.total_credito)) : ''}
+      ${cajeros ? `<hr class="t-sep"><div class="t-seccion">VENTAS POR CAJERO</div>${cajeros}` : ''}
+      <hr class="t-sep">
+      <div class="t-seccion">EFECTIVO EN CAJA</div>
       ${fila('Fondo inicial', dinero(co.fondo_caja))}
       ${fila('+ Ventas en efectivo', dinero(co.total_efectivo))}
       ${fila('+ Abonos en efectivo', dinero((co.total_abonos || 0) - (co.abonos_tarjeta || 0)))}
@@ -396,6 +411,19 @@ const Impresion = (() => {
         ${fila(`<b>${textoDiferencia}</b>`, `<b>${dinero(Math.abs(diferencia))}</b>`)}
       </div>
       ${co.total_usd ? `<div class="t-caja">${fila('Dólares esperados', `${Number(co.total_usd).toFixed(2)} USD`)}${fila('Dólares contados', `${Number(co.usd_contado).toFixed(2)} USD`)}</div>` : ''}
+      <div class="t-seccion">DINERO EN BANCOS</div>
+      ${fila('Pagos con tarjeta', dinero(co.total_tarjeta))}
+      ${co.abonos_tarjeta ? fila('Abonos con tarjeta', dinero(co.abonos_tarjeta)) : ''}
+      ${fila('<b>Total</b>', `<b>${dinero(enBancos)}</b>`)}
+      ${departamentos ? `<hr class="t-sep"><div class="t-seccion">VENTAS POR DEPARTAMENTO</div>${departamentos}` : ''}
+      ${e && co.num_ventas ? `<hr class="t-sep"><div class="t-seccion">ESTADÍSTICAS DEL TURNO</div>
+        ${fila('<b>Utilidad bruta</b>', `<b>${dinero(e.utilidad_bruta)}</b>`)}
+        ${fila('Margen sobre la venta', `${Number(e.margen).toFixed(1)}%`)}
+        ${e.vendido_sin_costo ? `<div class="t-aclaracion">No cuenta ${dinero(e.vendido_sin_costo)} vendidos sin costo registrado</div>` : ''}
+        ${fila('Ticket promedio', dinero(e.ticket_promedio))}
+        ${fila('Venta más alta', dinero(e.venta_mayor))}
+        ${fila('Artículos vendidos', piezas(e.piezas))}
+        ${masVendidos ? `<div class="t-subseccion">Lo más vendido (piezas)</div>${masVendidos}` : ''}` : ''}
       ${co.nota ? `<div class="t-nota">${escaparHtml(co.nota)}</div>` : ''}
       <div class="t-firma">Entregó — ${escaparHtml(co.usuario || '')}</div>
       <div class="t-firma">Recibió</div>

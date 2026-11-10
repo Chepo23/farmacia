@@ -18,6 +18,7 @@ const DEFECTOS = {
   anchoTicket: 80,
   impresoraDocumentos: '',
   iniciarConWindows: true,
+  pantallaCompleta: true, // sin la barra de tareas de Windows; Ctrl+Shift+F la quita o la pone
   urlMovil: '',
   carpetaRespaldoExtra: '',
   urlActualizaciones: '',
@@ -99,6 +100,7 @@ function validar(datos, anterior) {
   conf.impresoraTicket = String(datos.impresoraTicket || '');
   conf.impresoraDocumentos = String(datos.impresoraDocumentos || '');
   conf.iniciarConWindows = Boolean(datos.iniciarConWindows);
+  conf.pantallaCompleta = datos.pantallaCompleta !== false;
   const urlMovil = String(datos.urlMovil || '').trim().replace(/\/+$/, '');
   if (urlMovil && !esUrl(urlMovil)) return { error: 'La dirección de la app del celular debe empezar con https://' };
   conf.urlMovil = urlMovil;

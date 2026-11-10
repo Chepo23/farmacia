@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Farmacia POS</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;700;800;900&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;700;800;900&family=Inter:wght@400;500;600;700;800&family=Oswald:wght@500;600&display=swap" rel="stylesheet">
+  <link rel="icon" type="image/png" href="img/favicon-32.png">
   <link rel="stylesheet" href="css/app.css">
   <link rel="stylesheet" href="css/impresion.css">
 </head>
@@ -38,12 +39,27 @@
     <symbol id="i-nube" viewBox="0 0 24 24"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></symbol>
     <symbol id="i-celular" viewBox="0 0 24 24"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></symbol>
     <symbol id="i-check" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></symbol>
+    <symbol id="i-pago-efectivo" viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.6"/><path d="M6 12h.01M18 12h.01"/></symbol>
+    <symbol id="i-pago-tarjeta" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/><line x1="6" y1="15" x2="10" y2="15"/></symbol>
+    <symbol id="i-pago-dolar" viewBox="0 0 24 24"><line x1="12" y1="2" x2="12" y2="22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></symbol>
+    <symbol id="i-pago-mixto" viewBox="0 0 24 24"><rect x="1.5" y="3.5" width="13" height="8.5" rx="1.5"/><circle cx="8" cy="7.75" r="1.7"/><rect x="9.5" y="12" width="13" height="8.5" rx="1.5"/><line x1="9.5" y1="15" x2="22.5" y2="15"/></symbol>
+    <symbol id="i-pago-credito" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M17 11h5M19.5 8.5v5"/></symbol>
+    <symbol id="i-movimientos" viewBox="0 0 24 24"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></symbol>
+    <symbol id="i-cotizar" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></symbol>
   </svg>
 
   <header class="barra-superior">
-    <div class="marca">
-      <img src="img/logo-login.png" alt="Farmacia San Francisco" class="logo-header">
-      <div class="marca-texto">SAN FRANCISCO<br>FARMACIA</div>
+    <div class="barra-principal">
+      <div class="marca">
+        <span class="marca-insignia"><img src="img/marca-frasco.svg" alt=""></span>
+        <span class="marca-texto"><b>San Francisco</b><small>Farmacia</small></span>
+      </div>
+      <div class="info-sesion">
+        <button id="estado-sync" class="estado-sync" type="button" hidden></button>
+        <button id="boton-celular" class="boton-barra" type="button" title="Vincular un celular con la app del inventario"><svg class="icono"><use href="#i-celular"/></svg>Celular</button>
+        <div id="info-usuario" class="info-usuario"></div>
+        <button id="boton-salir" class="boton-barra" type="button" title="Cerrar sesión"><svg class="icono"><use href="#i-salir"/></svg>Salir</button>
+      </div>
     </div>
     <nav class="menu">
       <button class="pestania activa" data-seccion="venta"><svg class="icono"><use href="#i-venta"/></svg>Venta <small>F2</small></button>
@@ -52,14 +68,9 @@
       <button class="pestania" data-seccion="corte"><svg class="icono"><use href="#i-corte"/></svg>Corte <small>F7</small></button>
       <button class="pestania" data-seccion="reportes"><svg class="icono"><use href="#i-reportes"/></svg>Reportes <small>F8</small></button>
       <button class="pestania" data-seccion="apoyos"><svg class="icono"><use href="#i-apoyos"/></svg>Apoyos <small>F9</small><span id="aviso-apoyos" class="globo-aviso" hidden></span></button>
+      <button class="pestania solo-administrador" data-seccion="movimientos" hidden><svg class="icono"><use href="#i-movimientos"/></svg>Movimientos<span id="aviso-supervision" class="globo-aviso" hidden></span></button>
       <button class="pestania solo-admin" data-seccion="admin" hidden><svg class="icono"><use href="#i-admin"/></svg>Administración</button>
     </nav>
-    <div class="info-sesion">
-      <button id="estado-sync" class="estado-sync" type="button" hidden></button>
-      <button id="boton-celular" class="boton chico" type="button" title="Abrir el inventario en el celular"><svg class="icono"><use href="#i-celular"/></svg>Celular</button>
-      <span id="info-usuario"></span>
-      <button id="boton-salir" class="boton chico"><svg class="icono"><use href="#i-salir"/></svg>Salir</button>
-    </div>
   </header>
 
   <!-- ============ VENTA ============ -->
@@ -75,7 +86,14 @@
           <span><b>Supr</b> Quitar renglón</span>
           <span><b>F12</b> Cobrar</span>
           <span><b>F4</b> Cancelar venta</span>
+          <span><b>Ctrl+N</b> Nuevo ticket</span>
         </div>
+        <div id="pestanas-venta" class="pestanas-venta" role="tablist" aria-label="Ventas abiertas"></div>
+        <div id="franja-caja" class="franja-aviso franja-caja" hidden>
+          <span>La caja está cerrada (ya se hizo el corte). Puedes armar ventas y dejarlas en sus tickets; al cobrar se pide abrir la caja.</span>
+          <button class="boton" id="boton-abrir-caja">Abrir caja</button>
+        </div>
+        <div id="franja-cotizacion" class="franja-aviso info franja-cotizacion" hidden></div>
         <div class="contenedor-tabla">
           <table class="tabla tabla-venta">
             <thead>
@@ -94,6 +112,7 @@
         <button id="boton-cobrar" class="boton exito grande"><svg class="icono"><use href="#i-cobrar"/></svg>COBRAR (F12)</button>
         <button id="boton-buscar" class="boton primario"><svg class="icono"><use href="#i-buscar"/></svg>Buscar producto (F3)</button>
         <button id="boton-articulo-comun" class="boton primario"><svg class="icono"><use href="#i-mas"/></svg>Artículo común (Ins)</button>
+        <button id="boton-cotizaciones" class="boton boton-cotizaciones"><svg class="icono"><use href="#i-cotizar"/></svg>Cotizaciones<span id="aviso-cotizaciones" class="globo-aviso" hidden></span></button>
         <button id="boton-cancelar-venta" class="boton peligro-suave"><svg class="icono"><use href="#i-x"/></svg>Cancelar venta (F4)</button>
         <hr>
         <button id="boton-reimprimir" class="boton"><svg class="icono"><use href="#i-imprimir"/></svg>Reimprimir último ticket</button>
@@ -202,6 +221,19 @@
           </div>
         </div>
         <div class="tarjeta">
+          <h3>Ventas por departamento</h3>
+          <div class="contenedor-tabla">
+            <table class="tabla">
+              <thead><tr><th>Departamento</th><th class="num">Piezas</th><th class="num">Total</th></tr></thead>
+              <tbody id="cuerpo-departamentos"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="tarjeta">
+          <h3>Estadísticas del turno</h3>
+          <div id="corte-estadisticas" class="estadisticas-corte"></div>
+        </div>
+        <div class="tarjeta">
           <h3>Cortes anteriores</h3>
           <div class="contenedor-tabla">
             <table class="tabla">
@@ -262,6 +294,11 @@
       <div class="tarjeta">
         <h3>Productos más vendidos</h3>
         <table class="tabla"><thead><tr><th>Producto</th><th class="num">Cantidad</th><th class="num">Importe</th><th class="num">Ganancia</th></tr></thead><tbody id="rep-mas-vendidos"></tbody></table>
+      </div>
+      <div class="tarjeta" id="rep-tarjeta-canceladas" hidden>
+        <h3>Ventas canceladas</h3>
+        <div class="contenedor-tabla"><table class="tabla"><thead><tr><th>Cuándo</th><th>Sucursal</th><th>Venta</th><th class="num">Total</th><th>Vendió</th><th>Canceló</th><th>Motivo</th></tr></thead>
+          <tbody id="rep-canceladas-detalle"></tbody></table></div>
       </div>
     </div>
 
@@ -345,6 +382,131 @@
 
     <!-- Vista 2: captura por código de barras (apoyo o pedido) -->
     <div id="apoyos-editor" hidden></div>
+  </main>
+
+  <!-- ============ MOVIMIENTOS (administradores y jefe) ============ -->
+  <main id="seccion-movimientos" class="seccion">
+    <div class="encabezado-seccion">
+      <h2 id="sup-titulo">Movimientos</h2>
+      <div class="acciones vista-sup-toggle">
+        <button class="boton solo-jefe" data-vista-sup="resumen" type="button" hidden>Resumen</button>
+        <button class="boton" data-vista-sup="movimientos" type="button">Movimientos</button>
+        <button class="boton" data-vista-sup="conteos" type="button">Inventario del día</button>
+        <button class="boton solo-jefe" data-vista-sup="cortes" type="button" hidden>Cortes</button>
+        <button class="boton solo-jefe" data-vista-sup="creditos" type="button" hidden>Créditos</button>
+        <button class="boton solo-jefe" data-vista-sup="cambios" type="button" hidden>Registro de cambios</button>
+      </div>
+    </div>
+
+    <!-- Resumen del jefe: cada sucursal, lo que falta autorizar y las alertas -->
+    <div id="sup-resumen" class="vista-sup" hidden>
+      <div class="acciones sup-barra"><span id="sup-resumen-fecha" class="texto-suave"></span><button class="boton" id="sup-resumen-actualizar" type="button">Actualizar</button></div>
+      <div id="sup-por-autorizar"></div>
+      <div id="sup-sucursales" class="sup-sucursales"></div>
+      <div class="tarjeta">
+        <h3>Alertas de los últimos 7 días</h3>
+        <div class="contenedor-tabla"><table class="tabla"><thead><tr><th>Fecha</th><th>Sucursal</th><th>Qué pasó</th><th>Detalle</th><th>Quién</th></tr></thead>
+          <tbody id="sup-alertas"></tbody></table></div>
+      </div>
+    </div>
+
+    <!-- Movimientos de inventario como en Eleventa -->
+    <div id="sup-movimientos" class="vista-sup" hidden>
+      <div class="acciones sup-filtros">
+        <label>Del <input type="date" id="sup-mov-desde" class="entrada"></label>
+        <label>al <input type="date" id="sup-mov-hasta" class="entrada"></label>
+        <select id="sup-mov-sucursal" class="entrada" aria-label="Sucursal"></select>
+        <select id="sup-mov-tipo" class="entrada" aria-label="Tipo">
+          <option value="">Todos los movimientos</option><option value="venta">Ventas</option><option value="entrada">Entradas</option>
+          <option value="salida">Salidas</option><option value="ajuste">Ajustes</option><option value="apoyo">Apoyos</option>
+          <option value="conteo">Conteos</option><option value="cancelacion">Ventas canceladas</option>
+          <option value="recepcion">Recepción de mercancía</option><option value="alta">Altas de producto</option>
+        </select>
+        <select id="sup-mov-usuario" class="entrada" aria-label="Persona"></select>
+        <input type="search" id="sup-mov-producto" class="entrada" placeholder="Producto (nombre o código)" maxlength="80">
+        <button id="sup-mov-buscar" class="boton primario" type="button">Buscar</button>
+      </div>
+      <div id="sup-mov-aviso" class="franja-aviso" hidden></div>
+      <div id="sup-mov-resumen" class="sup-chips"></div>
+      <div class="contenedor-tabla">
+        <table class="tabla tabla-movimientos">
+          <thead><tr><th>Fecha</th><th>Sucursal</th><th>Producto</th><th>Tipo</th><th class="num">Cantidad</th><th class="num">Había</th><th class="num">Hay</th><th>Usuario</th><th>Nota</th></tr></thead>
+          <tbody id="sup-mov-cuerpo"></tbody>
+        </table>
+      </div>
+      <div class="acciones sup-mas"><button id="sup-mov-mas" class="boton" type="button" hidden>Cargar más</button></div>
+    </div>
+
+    <!-- Inventario del día: avance, exactitud y diferencias por autorizar -->
+    <div id="sup-conteos" class="vista-sup" hidden>
+      <div class="zona-sup-conteos">
+        <div class="tarjeta">
+          <h3>Inventarios del día <button class="boton chico" id="sup-conteos-actualizar" type="button">Actualizar</button></h3>
+          <div class="contenedor-tabla"><table class="tabla"><thead><tr><th>Día</th><th>Sucursal</th><th>Estado</th><th class="num">Contados</th><th class="num">Cuadró</th><th class="num">Faltan</th><th class="num">Sobran</th><th class="num">Por autorizar</th></tr></thead>
+            <tbody id="sup-conteos-cuerpo"></tbody></table></div>
+          <div class="solo-jefe sup-config-caja" hidden>
+            <h4>Productos por día</h4>
+            <p class="texto-suave">Cuántos productos cuenta cada sucursal en el inventario del día (el cambio se nota en la lista de mañana).
+              Para que un producto se cuente seguido, márcalo como <b>importante</b> desde el celular.</p>
+            <div id="sup-config" class="sup-config"></div>
+          </div>
+        </div>
+        <div class="tarjeta" id="sup-conteo-detalle">
+          <h3>Detalle</h3>
+          <p class="texto-suave">Elige un inventario de la lista para ver lo que se contó.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Cortes de caja de todas las farmacias (solo el jefe): consultar y reimprimir -->
+    <div id="sup-cortes" class="vista-sup" hidden>
+      <div class="acciones sup-filtros">
+        <label>Del <input type="date" id="sup-cor-desde" class="entrada"></label>
+        <label>al <input type="date" id="sup-cor-hasta" class="entrada"></label>
+        <select id="sup-cor-sucursal" class="entrada" aria-label="Sucursal"></select>
+        <button id="sup-cor-buscar" class="boton primario" type="button">Buscar</button>
+      </div>
+      <div class="contenedor-tabla">
+        <table class="tabla"><thead><tr><th>Fecha</th><th>Sucursal</th><th>Cajero</th><th class="num">Ventas</th><th class="num">Vendido</th>
+          <th class="num">Esperado</th><th class="num">Contado</th><th class="num">Diferencia</th><th></th></tr></thead>
+          <tbody id="sup-cor-cuerpo"></tbody></table>
+      </div>
+    </div>
+
+    <!-- Créditos: lo que deben los clientes en cada farmacia (solo el jefe) -->
+    <div id="sup-creditos" class="vista-sup" hidden>
+      <div class="acciones sup-filtros">
+        <select id="sup-cre-sucursal" class="entrada" aria-label="Sucursal"></select>
+        <button id="sup-cre-buscar" class="boton primario" type="button">Actualizar</button>
+      </div>
+      <div id="sup-cre-resumen" class="tarjetas-resumen"></div>
+      <div class="contenedor-tabla">
+        <table class="tabla"><thead><tr><th>Cliente</th><th>Sucursal</th><th>Teléfono</th><th class="num">Debe</th><th class="num">Límite</th><th>Última compra</th><th>Último abono</th></tr></thead>
+          <tbody id="sup-cre-cuerpo"></tbody></table>
+      </div>
+    </div>
+
+    <!-- Registro de cambios (solo el jefe) -->
+    <div id="sup-cambios" class="vista-sup" hidden>
+      <div class="acciones sup-filtros">
+        <label>Del <input type="date" id="sup-cam-desde" class="entrada"></label>
+        <label>al <input type="date" id="sup-cam-hasta" class="entrada"></label>
+        <select id="sup-cam-sucursal" class="entrada" aria-label="Sucursal"></select>
+        <select id="sup-cam-usuario" class="entrada" aria-label="Persona"></select>
+        <select id="sup-cam-grupo" class="entrada" aria-label="Qué cambios">
+          <option value="">Todos los cambios</option><option value="alertas">Solo alertas</option><option value="productos">Productos y precios</option>
+          <option value="caja">Caja: cancelaciones, cortes y efectivo</option><option value="usuarios">Usuarios y sucursales</option>
+          <option value="apoyos">Apoyos</option><option value="cotizaciones">Cotizaciones</option><option value="conteos">Inventario del día</option>
+        </select>
+        <button id="sup-cam-buscar" class="boton primario" type="button">Buscar</button>
+      </div>
+      <div id="sup-cam-aviso" class="franja-aviso" hidden></div>
+      <div class="contenedor-tabla">
+        <table class="tabla"><thead><tr><th>Fecha</th><th>Sucursal</th><th>Quién</th><th>Qué</th><th>Detalle</th></tr></thead>
+          <tbody id="sup-cam-cuerpo"></tbody></table>
+      </div>
+      <div class="acciones sup-mas"><button id="sup-cam-mas" class="boton" type="button" hidden>Cargar más</button></div>
+    </div>
   </main>
 
   <!-- ============ ADMINISTRACIÓN ============ -->
@@ -452,6 +614,7 @@
   <script src="js/corte.js"></script>
   <script src="js/reportes.js"></script>
   <script src="js/apoyos.js"></script>
+  <script src="js/supervision.js"></script>
   <script src="js/admin.js"></script>
 </body>
 </html>

@@ -214,7 +214,7 @@ test('app del celular en la nube (función "movil" de Supabase)', async (t) => {
     assert.equal(existenciaCentral(central, 2, 2), 0);
   });
 
-  await t.test('precios y altas: solo el administrador de la central', async () => {
+  await t.test('precios: solo el administrador de la central; altas: cualquier usuario en su sucursal', async () => {
     const datos = { codigo_barras: PARACETAMOL, descripcion: 'Paracetamol 500 mg c/10', departamento: '', usa_inventario: true, precio_venta: 30, precio_costo: 15, precio_mayoreo: 26, cantidad_mayoreo: 3 };
     let r = await nube.pedir('PUT', '/api/productos/1', { token: cajero, cuerpo: datos });
     assert.deepEqual([r.status, r.body.codigo], [403, 'SOLO_CENTRAL']);
@@ -232,10 +232,11 @@ test('app del celular en la nube (función "movil" de Supabase)', async (t) => {
     assert.equal(r.status, 400);
     assert.match(r.body.error, /Ya existe/);
 
-    r = await nube.pedir('POST', '/api/productos', { token: cajero, cuerpo: { codigo_barras: '7500000000039', descripcion: 'Nuevo', precio_venta: 10 } });
-    assert.equal(r.status, 403);
+    // Altas: también el cajero (con existencia solo en su sucursal)
+    r = await nube.pedir('POST', '/api/productos', { token: cajero, cuerpo: { codigo_barras: '7500000000039', descripcion: 'Nuevo', precio_venta: 10, sucursal_id: 1 } });
+    assert.equal(r.status, 403, 'el cajero no pone existencia en otra sucursal');
     r = await nube.pedir('POST', '/api/productos', {
-      token: admin,
+      token: cajero,
       cuerpo: { codigo_barras: '7500000000039', descripcion: 'Suero oral 500 ml', precio_costo: 12, precio_venta: 22, sucursal_id: 2, existencia_inicial: 6 },
     });
     assert.equal(r.status, 200, JSON.stringify(r.body));

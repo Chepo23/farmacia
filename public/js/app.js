@@ -174,9 +174,35 @@ document.querySelectorAll('.pestania').forEach((p) => {
   p.addEventListener('click', () => mostrarSeccion(p.dataset.seccion));
 });
 
-document.getElementById('boton-salir').addEventListener('click', async () => {
+async function cerrarSesion() {
   await api('/api/auth/logout', { method: 'POST' });
   location.href = '/login.html';
+}
+
+// En el programa de escritorio "Salir" cierra el sistema (como en Eleventa); también se puede solo
+// cambiar de usuario. En el navegador cierra la sesión.
+document.getElementById('boton-salir').addEventListener('click', () => {
+  if (!window.farmaciaEscritorio || !window.farmaciaEscritorio.cerrarPrograma) {
+    cerrarSesion();
+    return;
+  }
+  const dialogo = abrirDialogo(`
+    <h3>Salir</h3>
+    <p>Al cerrar el sistema se guarda un respaldo de los datos. Si hay ventas sin cobrar, se pregunta si las dejas para después.</p>
+    <div class="pie">
+      <button class="boton" data-respuesta="cancelar">Cancelar</button>
+      <button class="boton" data-respuesta="usuario">Cambiar de usuario</button>
+      <button class="boton exito" data-respuesta="cerrar">Cerrar el sistema</button>
+    </div>`);
+  dialogo.querySelector('[data-respuesta="cancelar"]').addEventListener('click', cerrarDialogo);
+  dialogo.querySelector('[data-respuesta="usuario"]').addEventListener('click', () => {
+    cerrarDialogo();
+    cerrarSesion();
+  });
+  dialogo.querySelector('[data-respuesta="cerrar"]').addEventListener('click', () => {
+    cerrarDialogo();
+    window.farmaciaEscritorio.cerrarPrograma();
+  });
 });
 
 // Teclas rápidas globales
@@ -195,17 +221,19 @@ document.addEventListener('keydown', (e) => {
 // ---------- Apertura de caja ----------
 // Antes de poder usar el sistema se registra el fondo de caja y el tipo de cambio.
 // Si la caja de la sucursal ya se abrió hoy, la sesión se une a ese turno sin preguntar.
-async function pedirApertura() {
+// cancelable: cuando se pide después de un corte (al cobrar o con "Abrir caja") se puede cancelar.
+async function pedirApertura({ cancelable = false } = {}) {
   App.apertura = await api('/api/cortes/apertura');
   if (App.apertura) {
     pintarInfoUsuario();
+    if (typeof pintarVenta === 'function') pintarVenta();
     return;
   }
 
   App.modalBloqueado = true;
   const modal = abrirModal(`
     <h3>Apertura de caja — ${escaparHtml(App.usuario.sucursal)}</h3>
-    <p>Antes de entrar al sistema, registra con cuánto abre la caja y el tipo de cambio del día.</p>
+    <p>Registra con cuánto abre la caja y el tipo de cambio del día.</p>
     <div class="fila">
       <label>Fondo de caja ($)
         <input type="number" id="apertura-fondo" step="0.01" min="0" placeholder="0.00">
@@ -216,11 +244,21 @@ async function pedirApertura() {
     </div>
     <div id="apertura-error" class="mensaje-error" hidden></div>
     <div class="pie">
-      <button class="boton exito grande" id="apertura-guardar">Iniciar el día (Enter)</button>
+      ${cancelable ? '<button class="boton" id="apertura-cancelar">Cancelar (Esc)</button>' : ''}
+      <button class="boton exito grande" id="apertura-guardar">Abrir la caja (Enter)</button>
     </div>
   `);
 
   await new Promise((listo) => {
+    function cancelar() {
+      App.modalBloqueado = false;
+      cerrarModal();
+      listo();
+    }
+    modal.querySelector('#apertura-cancelar')?.addEventListener('click', cancelar);
+    modal.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && cancelable) { e.preventDefault(); cancelar(); }
+    });
     async function guardar() {
       const errorEl = modal.querySelector('#apertura-error');
       errorEl.hidden = true;
@@ -235,6 +273,7 @@ async function pedirApertura() {
         App.modalBloqueado = false;
         cerrarModal();
         pintarInfoUsuario();
+        if (typeof pintarVenta === 'function') pintarVenta();
         listo();
       } catch (err) {
         errorEl.textContent = err.message;
@@ -243,7 +282,7 @@ async function pedirApertura() {
     }
     modal.querySelector('#apertura-guardar').addEventListener('click', guardar);
     modal.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); guardar(); }
+      if (e.key === 'Enter' && e.target.id !== 'apertura-cancelar') { e.preventDefault(); guardar(); }
     });
   });
 }
@@ -251,8 +290,10 @@ async function pedirApertura() {
 function pintarInfoUsuario() {
   if (!App.usuario) return;
   const tipoCambio = Number(App.apertura?.tipo_cambio) || 0;
-  document.getElementById('info-usuario').textContent =
-    `${App.usuario.nombre} — ${App.usuario.sucursal}${tipoCambio ? ` — T.C. $${tipoCambio.toFixed(2)}` : ''}`;
+  const detalle = `${App.usuario.sucursal}${tipoCambio ? ` · T.C. $${tipoCambio.toFixed(2)}` : ''}`;
+  const info = document.getElementById('info-usuario');
+  info.innerHTML = `<b>${escaparHtml(App.usuario.nombre)}</b><small>${escaparHtml(detalle)}</small>`;
+  info.title = `${App.usuario.nombre} — ${detalle}`;
 }
 
 // ---------- Sincronización con la central (solo cuando hay Supabase) ----------
@@ -329,7 +370,7 @@ async function vincularCelular() {
        estantes, aunque las computadoras estén apagadas. Cada celular se vincula una sola vez y queda listo.</p>
     ${esAdminCentral && usuarios.length ? `<label>¿De quién es el celular?
       <select id="celular-usuario">${usuarios.map((u) => `<option value="${u.id}" ${Number(u.id) === Number(App.usuario.id) ? 'selected' : ''}>
-        ${escaparHtml(u.nombre)} — ${escaparHtml(u.sucursal || '')}${u.rol === 'admin' ? ' (administrador)' : ''}</option>`).join('')}
+        ${escaparHtml(u.nombre)} — ${escaparHtml(u.sucursal || '')}${Number(u.jefe) === 1 ? ' (jefe)' : u.rol === 'admin' ? ' (administrador)' : ''}</option>`).join('')}
       </select></label>` : ''}
     <div id="celular-vinculo"></div>
     <div class="pie">
@@ -487,12 +528,43 @@ document.getElementById('boton-celular').addEventListener('click', () => {
   abrirEnCelular().catch((err) => aviso(err.message, 'error'));
 });
 
-document.getElementById('estado-sync').addEventListener('click', () => {
-  if (App.usuario?.rol === 'admin' && App.usuario.es_central === 1) {
-    mostrarSeccion('admin');
-    return;
+// Al tocar el indicador se explica el estado de la conexión (sin cambiar de pantalla)
+document.getElementById('estado-sync').addEventListener('click', async () => {
+  let estado = null;
+  try {
+    estado = await api('/api/productos/sincronizacion');
+  } catch { /* se explica abajo */ }
+  revisarSincronizacion();
+  let titulo = 'En línea';
+  let explicacion = 'Esta computadora está conectada con la central: el inventario, los apoyos y las cotizaciones están al día.';
+  if (!estado) {
+    titulo = 'No se pudo revisar la conexión';
+    explicacion = 'Intenta de nuevo en un momento.';
+  } else if (estado.disponible === false) {
+    titulo = 'Sin conexión con la central';
+    explicacion = 'Puedes seguir vendiendo e imprimiendo tickets: lo vendido se descuenta del inventario de la central en cuanto vuelva el internet. Mientras tanto no se pueden recibir apoyos, cargar cotizaciones ni cambiar productos.';
+  } else if (estado.errores > 0) {
+    titulo = `${estado.errores} movimiento(s) con error`;
+    explicacion = 'Son movimientos de inventario que no se pudieron subir a la central después de varios intentos. El administrador los revisa en Administración → Sincronización con la central.';
+  } else if (estado.pendientes > 0) {
+    titulo = `${estado.pendientes} movimiento(s) por subir`;
+    explicacion = 'Se hicieron sin conexión y se están subiendo solos a la central. No hace falta hacer nada.';
   }
-  aviso(document.getElementById('estado-sync').title);
+  const esAdminCentral = App.usuario?.rol === 'admin' && App.usuario.es_central === 1;
+  const conDetalle = esAdminCentral && estado && (estado.errores > 0 || estado.pendientes > 0);
+  const dialogo = abrirDialogo(`
+    <h3>${escaparHtml(titulo)}</h3>
+    <p>${escaparHtml(explicacion)}</p>
+    ${estado && estado.ultima_respuesta ? `<p class="texto-suave">Última respuesta de la central: ${escaparHtml(fechaHora(estado.ultima_respuesta))}</p>` : ''}
+    <div class="pie">
+      ${conDetalle ? '<button class="boton" data-respuesta="detalle">Ver en Administración</button>' : ''}
+      <button class="boton exito" data-respuesta="cerrar">Cerrar</button>
+    </div>`);
+  dialogo.querySelector('[data-respuesta="cerrar"]').addEventListener('click', cerrarDialogo);
+  dialogo.querySelector('[data-respuesta="detalle"]')?.addEventListener('click', () => {
+    cerrarDialogo();
+    mostrarSeccion('admin');
+  });
 });
 
 // ---------- Arranque ----------
@@ -516,6 +588,9 @@ async function iniciar() {
   if (App.usuario.rol === 'admin' && App.usuario.es_central === 1) {
     document.querySelectorAll('.solo-admin').forEach((el) => { el.hidden = false; });
   }
+  // Movimientos: cualquier administrador (de su sucursal); el jefe además ve el resumen y los cambios
+  if (App.usuario.rol === 'admin') document.querySelectorAll('.solo-administrador').forEach((el) => { el.hidden = false; });
+  if (Number(App.usuario.jefe) === 1) document.querySelectorAll('.solo-jefe').forEach((el) => { el.hidden = false; });
   revisarSincronizacion();
   setInterval(revisarSincronizacion, 30000);
   document.getElementById('entrada-codigo').focus();

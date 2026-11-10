@@ -3,13 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#2e5f45">
+  <meta name="theme-color" content="#084A63">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="Inventario">
   <title>Inventario — Farmacia</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@700;800;900&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@700;800;900&family=Inter:wght@400;500;600;700;800&family=Oswald:wght@500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/movil.css">
   <!-- app-instalable: aquí el armado de la app en la nube agrega el manifiesto y los íconos -->
 </head>
@@ -29,13 +29,29 @@
     <symbol id="i-precio" viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></symbol>
     <symbol id="i-menu" viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></symbol>
     <symbol id="i-qr" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3h-3zM20 14v.01M14 20h.01M17 20h4v-3"/></symbol>
+    <symbol id="i-apoyos" viewBox="0 0 24 24"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></symbol>
+    <symbol id="i-cotizar" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></symbol>
+    <symbol id="i-enviar" viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></symbol>
+    <symbol id="i-atras" viewBox="0 0 24 24"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></symbol>
     <symbol id="i-compartir" viewBox="0 0 24 24"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></symbol>
+    <symbol id="i-inicio" viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h5v-6h4v6h5V9.5"/></symbol>
+    <symbol id="i-movimientos" viewBox="0 0 24 24"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></symbol>
+    <symbol id="i-puntos" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></symbol>
+    <symbol id="i-estrella" viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></symbol>
+    <symbol id="i-alerta" viewBox="0 0 24 24"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></symbol>
+    <symbol id="i-lista" viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></symbol>
+    <symbol id="i-caja" viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></symbol>
+    <symbol id="i-ajustes" viewBox="0 0 24 24"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></symbol>
   </svg>
 
   <!-- Vincular este celular (solo en la app en la nube) -->
   <section id="vista-vincular" class="m-vincular" hidden>
-    <img src="img/logo-login.png" alt="" class="m-vincular-logo">
-    <h1>Inventario de la farmacia</h1>
+    <div class="m-vincular-logo" role="img" aria-label="Farmacia San Francisco">
+      <img src="img/marca.svg" alt="">
+      <div class="m-marca-texto"><b>San Francisco</b><small>Farmacia</small></div>
+    </div>
+    <h1>Inventario</h1>
     <div id="vincular-instalar" class="m-instalar" hidden>
       <h2>Instala la app en tu iPhone</h2>
       <ol>
@@ -57,10 +73,11 @@
       </form>
       <div id="vincular-error" class="m-error" hidden></div>
     </div>
+    <footer class="m-creditos"><img src="img/swagit.png" alt=""><span>Desarrollado por <b>SwagIT</b> Technological Solutions</span></footer>
   </section>
 
   <header class="m-barra">
-    <img src="img/logo-login.png" alt="" class="m-logo">
+    <span class="m-logo"><img src="img/marca-frasco.svg" alt=""></span>
     <div class="m-titulo">
       <b>Inventario</b>
       <select id="m-sucursal" class="m-sucursal" aria-label="Sucursal" hidden></select>
@@ -85,13 +102,25 @@
   </div>
 
   <main>
+    <!-- Inicio del jefe: cada sucursal, lo que falta autorizar y las alertas -->
+    <section id="vista-inicio" class="m-vista" hidden>
+      <div class="m-inicio-cabecera">
+        <div><b id="ini-saludo">Inicio</b><small id="ini-fecha"></small></div>
+        <button id="ini-actualizar" class="m-icono-boton claro" aria-label="Actualizar"><svg class="icono"><use href="#i-girar"/></svg></button>
+      </div>
+      <div id="ini-autorizar"></div>
+      <div id="ini-sucursales" class="m-lista"><div class="m-cargando">Cargando…</div></div>
+      <div class="m-titulo-seccion">Alertas de los últimos 7 días</div>
+      <ul id="ini-alertas" class="m-historial m-cambios"></ul>
+    </section>
+
     <!-- Consultar: precio y existencias -->
     <section id="vista-consultar" class="m-vista">
       <div id="consulta-resultado">
         <div class="m-vacio">
           <svg class="icono grande"><use href="#i-camara"/></svg>
           <p><b>Escanea un producto</b> para ver su precio y cuántas piezas hay en cada farmacia.</p>
-          <p>Desde aquí también puedes registrar entradas, mermas, conteos y mínimos.</p>
+          <p id="consulta-ayuda">Desde aquí también puedes registrar entradas, mermas, conteos y mínimos.</p>
         </div>
       </div>
       <div id="consulta-recientes"></div>
@@ -110,23 +139,124 @@
       <button id="rec-vaciar" class="m-boton secundario">Vaciar lista</button>
     </section>
 
-    <!-- Contar (toma de inventario) -->
+    <!-- Contar: el inventario del día (lista corta, a ciegas) y el conteo libre de un estante -->
     <section id="vista-contar" class="m-vista" hidden>
-      <div class="m-explicacion">Escanea las piezas que hay en el estante: <b>cada escaneo cuenta una</b>.
-        Se compara contra lo que dice el sistema y al aplicar solo se ajustan las diferencias.</div>
-      <div class="m-resumen"><span><b id="con-productos">0</b> contados</span><span><b id="con-diferencias">0</b> con diferencia</span></div>
-      <ul id="con-lista" class="m-lista"></ul>
-      <div id="con-no-encontrados"></div>
-      <input id="con-nota" class="m-campo" type="text" maxlength="200" placeholder="Nota del conteo (ej. estante 3)">
-      <button id="con-aplicar" class="m-boton principal" disabled>Aplicar ajustes</button>
-      <button id="con-vaciar" class="m-boton secundario">Vaciar conteo</button>
+      <div id="dia-tarjeta"></div>
+      <div id="dia-vista" class="m-vista" hidden>
+        <div class="m-apoyo-cabecera">
+          <button id="dia-volver" class="m-icono-boton claro" aria-label="Volver"><svg class="icono"><use href="#i-atras"/></svg></button>
+          <div><b>Inventario del día</b><small id="dia-subtitulo"></small></div>
+        </div>
+        <div class="m-progreso" aria-hidden="true"><span id="dia-barra"></span></div>
+        <div class="m-resumen"><span><b id="dia-contados">0</b> de <b id="dia-total">0</b> contados</span><span><b id="dia-cuadran">0</b> cuadran</span></div>
+        <div class="m-explicacion">Escanea cada producto de la lista y escribe <b>cuántas piezas hay</b> (estante y bodega).
+          Aquí no se ve lo que dice el sistema. Si no cuadra te pedirá contarlo otra vez y, si sigue sin cuadrar, el motivo.</div>
+        <ul id="dia-lista" class="m-lista"></ul>
+        <button id="dia-terminar" class="m-boton principal con-icono"><svg class="icono"><use href="#i-check"/></svg>Terminar el inventario del día</button>
+      </div>
+      <div id="con-libre" class="m-vista">
+        <div class="m-titulo-seccion">Conteo libre (un estante o un producto)</div>
+        <div class="m-explicacion">Escanea las piezas que hay en el estante: <b>cada escaneo cuenta una</b>.
+          Se compara contra lo que dice el sistema y al aplicar solo se ajustan las diferencias.</div>
+        <div class="m-resumen"><span><b id="con-productos">0</b> contados</span><span><b id="con-diferencias">0</b> con diferencia</span></div>
+        <ul id="con-lista" class="m-lista"></ul>
+        <div id="con-no-encontrados"></div>
+        <input id="con-nota" class="m-campo" type="text" maxlength="200" placeholder="Nota del conteo (ej. estante 3)">
+        <button id="con-aplicar" class="m-boton principal" disabled>Aplicar ajustes</button>
+        <button id="con-vaciar" class="m-boton secundario">Vaciar conteo</button>
+      </div>
+    </section>
+
+    <!-- Movimientos de inventario (jefe y administradores), como en Eleventa -->
+    <section id="vista-movimientos" class="m-vista" hidden>
+      <div class="m-filtros">
+        <select id="mov-dias" aria-label="Días">
+          <option value="1">Hoy</option><option value="ayer">Ayer</option><option value="7">Últimos 7 días</option><option value="30">Últimos 30 días</option>
+        </select>
+        <select id="mov-sucursal" aria-label="Sucursal"></select>
+        <select id="mov-tipo" aria-label="Tipo de movimiento">
+          <option value="">Todos</option><option value="venta">Ventas</option><option value="entrada">Entradas</option>
+          <option value="salida">Salidas</option><option value="ajuste">Ajustes</option><option value="apoyo">Apoyos</option>
+          <option value="conteo">Conteos</option><option value="cancelacion">Ventas canceladas</option>
+          <option value="recepcion">Recepción de mercancía</option><option value="alta">Altas de producto</option>
+        </select>
+      </div>
+      <div id="mov-producto"></div>
+      <div id="mov-resumen" class="m-chips"></div>
+      <ul id="mov-lista" class="m-historial m-movs"></ul>
+      <button id="mov-mas" class="m-boton secundario" hidden>Ver más</button>
+    </section>
+
+    <!-- Más (jefe): inventario de las sucursales, inventarios del día, cambios y lo de operación -->
+    <section id="vista-mas" class="m-vista" hidden>
+      <div id="mas-menu" class="m-menu-mas">
+        <button data-mas="ventas"><svg class="icono"><use href="#i-precio"/></svg><span><b>Ventas y utilidad</b><small>De todas las farmacias: por día, cajero, departamento y lo más vendido</small></span></button>
+        <button data-mas="cortes"><svg class="icono"><use href="#i-lista"/></svg><span><b>Cortes de caja</b><small>De cada farmacia, con lo que faltó o sobró</small></span></button>
+        <button data-mas="creditos"><svg class="icono"><use href="#i-historial"/></svg><span><b>Créditos de clientes</b><small>Quién debe y cuánto en cada farmacia</small></span></button>
+        <button data-mas="inventario"><svg class="icono"><use href="#i-caja"/></svg><span><b>Inventario de las sucursales</b><small>Valor, bajo mínimo, agotados, negativos y sin movimiento</small></span></button>
+        <button data-mas="conteos"><svg class="icono"><use href="#i-contar"/></svg><span><b>Inventario del día</b><small>Avance, exactitud y diferencias por autorizar</small></span><span id="mas-globo-conteos" class="m-globo" hidden></span></button>
+        <button data-mas="cambios"><svg class="icono"><use href="#i-historial"/></svg><span><b>Registro de cambios</b><small>Precios, altas, usuarios, cancelaciones, cortes y efectivo</small></span></button>
+        <button data-mas="config"><svg class="icono"><use href="#i-ajustes"/></svg><span><b>Productos por día</b><small>Cuántos productos cuenta cada sucursal</small></span></button>
+        <button data-mas="recibir"><svg class="icono"><use href="#i-recibir"/></svg><span><b>Recibir mercancía</b><small>Entrada de lo que llegó</small></span></button>
+        <button data-mas="contar"><svg class="icono"><use href="#i-contar"/></svg><span><b>Contar</b><small>Inventario del día o un estante</small></span></button>
+      </div>
+      <div id="mas-detalle" class="m-vista" hidden>
+        <div class="m-apoyo-cabecera">
+          <button id="mas-volver" class="m-icono-boton claro" aria-label="Volver"><svg class="icono"><use href="#i-atras"/></svg></button>
+          <div><b id="mas-titulo"></b><small id="mas-subtitulo"></small></div>
+        </div>
+        <div id="mas-contenido" class="m-vista"></div>
+      </div>
+    </section>
+
+    <!-- Cotizar (solo el administrador de la central) -->
+    <section id="vista-cotizar" class="m-vista" hidden>
+      <div class="m-explicacion">Escanea o busca los productos: <b>cada escaneo suma una pieza</b>. Puedes cambiar la cantidad
+        y el precio. Al enviarla, a la sucursal le aparece en la caja (botón <b>Cotizaciones</b>) y el precio se respeta 7 días.</div>
+      <div class="m-resumen"><span><b id="cot-productos">0</b> productos</span><span>Total <b id="cot-total">$0.00</b></span></div>
+      <ul id="cot-lista" class="m-lista"></ul>
+      <input id="cot-cliente" class="m-campo" type="text" maxlength="120" placeholder="Nombre del cliente (opcional)" aria-label="Cliente">
+      <input id="cot-nota" class="m-campo" type="text" maxlength="300" placeholder="Nota para la sucursal (opcional)" aria-label="Nota">
+      <label class="m-etiqueta">Enviar a la sucursal <select id="cot-sucursal" class="m-campo"></select></label>
+      <label class="m-etiqueta">Para el usuario <select id="cot-usuario" class="m-campo"><option value="">Cualquiera de la sucursal</option></select></label>
+      <button id="cot-enviar" class="m-boton principal con-icono" disabled><svg class="icono"><use href="#i-enviar"/></svg>Enviar cotización</button>
+      <button id="cot-vaciar" class="m-boton secundario">Vaciar</button>
+      <div class="m-titulo-seccion">Cotizaciones enviadas</div>
+      <ul id="cot-enviadas" class="m-lista"></ul>
+    </section>
+
+    <!-- Apoyos: revisar con el celular lo que mandó la central -->
+    <section id="vista-apoyos" class="m-vista" hidden>
+      <div id="apo-inicio" class="m-vista">
+        <div class="m-explicacion">Aquí aparecen los apoyos que la central mandó a tu farmacia. Cuando llegue la mercancía,
+          ábrelo y <b>escanea cada pieza</b>: se va palomeando lo que llegó. Al final te dice si el apoyo llegó completo.</div>
+        <ul id="apo-lista" class="m-lista"></ul>
+        <button id="apo-actualizar" class="m-boton secundario">Actualizar</button>
+      </div>
+      <div id="apo-revision" class="m-vista" hidden>
+        <div class="m-apoyo-cabecera">
+          <button id="apo-volver" class="m-icono-boton claro" aria-label="Volver a los apoyos"><svg class="icono"><use href="#i-atras"/></svg></button>
+          <div><b id="apo-titulo"></b><small id="apo-subtitulo"></small></div>
+        </div>
+        <div class="m-progreso" aria-hidden="true"><span id="apo-barra"></span></div>
+        <div class="m-resumen"><span><b id="apo-completos">0</b> de <b id="apo-renglones-total">0</b> completos</span><span><b id="apo-piezas">0</b> de <b id="apo-piezas-total">0</b> piezas</span></div>
+        <ul id="apo-renglones" class="m-lista"></ul>
+        <div id="apo-extras"></div>
+        <button id="apo-terminar" class="m-boton principal con-icono"><svg class="icono"><use href="#i-check"/></svg>Terminar revisión</button>
+        <button id="apo-reiniciar" class="m-boton secundario">Empezar de nuevo</button>
+      </div>
     </section>
   </main>
 
   <nav class="m-nav">
+    <button data-vista="inicio" hidden><svg class="icono"><use href="#i-inicio"/></svg>Inicio<span id="nav-inicio" class="m-globo" hidden></span></button>
     <button data-vista="consultar" class="activa"><svg class="icono"><use href="#i-buscar"/></svg>Consultar</button>
-    <button data-vista="recibir"><svg class="icono"><use href="#i-recibir"/></svg>Recibir<span id="nav-recibir" class="m-globo" hidden></span></button>
-    <button data-vista="contar"><svg class="icono"><use href="#i-contar"/></svg>Contar<span id="nav-contar" class="m-globo" hidden></span></button>
+    <button data-vista="movimientos" hidden><svg class="icono"><use href="#i-movimientos"/></svg>Movimientos</button>
+    <button data-vista="cotizar" hidden><svg class="icono"><use href="#i-cotizar"/></svg>Cotizar<span id="nav-cotizar" class="m-globo" hidden></span></button>
+    <button data-vista="recibir" hidden><svg class="icono"><use href="#i-recibir"/></svg>Recibir<span id="nav-recibir" class="m-globo" hidden></span></button>
+    <button data-vista="contar" hidden><svg class="icono"><use href="#i-contar"/></svg>Contar<span id="nav-contar" class="m-globo" hidden></span></button>
+    <button data-vista="apoyos" hidden><svg class="icono"><use href="#i-apoyos"/></svg>Apoyos<span id="nav-apoyos" class="m-globo" hidden></span></button>
+    <button data-vista="mas" hidden><svg class="icono"><use href="#i-puntos"/></svg>Más<span id="nav-mas" class="m-globo" hidden></span></button>
   </nav>
 
   <!-- Cámara -->
@@ -157,5 +287,7 @@
   <script src="config.js"></script>
   <script src="js/escaner.js"></script>
   <script src="js/movil.js"></script>
+  <script src="js/movil-conteo.js"></script>
+  <script src="js/movil-jefe.js"></script>
 </body>
 </html>

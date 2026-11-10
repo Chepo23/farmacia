@@ -1,9 +1,9 @@
 {
   "name": "farmacia-escritorio",
   "productName": "Farmacia",
-  "version": "1.0.0",
+  "version": "1.0.8",
   "description": "Punto de venta Farmacia San Francisco",
-  "author": "Farmacia San Francisco",
+  "author": "SwagIT Technological Solutions",
   "license": "UNLICENSED",
   "private": true,
   "main": "main.js",
@@ -22,7 +22,7 @@
     "appId": "mx.farmacia.sanfrancisco.pos",
     "productName": "Farmacia",
     "executableName": "Farmacia",
-    "copyright": "Farmacia San Francisco",
+    "copyright": "Farmacia San Francisco · Desarrollado por SwagIT Technological Solutions",
     "directories": {
       "output": "../salida",
       "buildResources": "recursos"

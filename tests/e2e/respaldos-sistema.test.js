@@ -85,6 +85,21 @@ test('respaldos y rutas internas del programa de escritorio', async (t) => {
     assert.ok(estado.respaldos.total >= 2);
     const respaldo = await interno('POST', '/respaldar');
     assert.equal(respaldo.status, 200);
+
+    // Al cerrar el programa se actualiza el respaldo del día (no se suma otro con hora)
+    const delDia = path.join(carpeta, `farmacia-${hoy()}.db`);
+    const antes = fs.statSync(delDia).mtimeMs;
+    const totalAntes = (await (await interno('GET', '/estado')).json()).respaldos.total;
+    await esperar(50);
+    const cierre = await fetch(`${pc.base}/api/sistema/respaldar`, {
+      method: 'POST',
+      headers: { 'x-farmacia-interno': TOKEN, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tipo: 'cierre' }),
+    });
+    assert.equal(cierre.status, 200);
+    assert.equal((await cierre.json()).nombre, `farmacia-${hoy()}.db`);
+    assert.ok(fs.statSync(delDia).mtimeMs > antes, 'el respaldo del día quedó con lo último');
+    assert.equal((await (await interno('GET', '/estado')).json()).respaldos.total, totalAntes);
   });
 
   await t.test('ancho de papel libre (de 40 a 120 mm)', async () => {

@@ -66,6 +66,11 @@ async function cargarCorte() {
       </tr>`)
       .join('') || '<tr><td colspan="5" class="vacio">Sin entradas ni salidas de efectivo en este turno</td></tr>';
 
+    document.getElementById('cuerpo-departamentos').innerHTML = (p.departamentos || [])
+      .map((d) => `<tr><td>${escaparHtml(d.departamento)}</td><td class="num">${d.piezas}</td><td class="num">${dinero(d.total)}</td></tr>`)
+      .join('') || '<tr><td colspan="3" class="vacio">Sin ventas en este turno</td></tr>';
+    pintarEstadisticas(p.estadisticas, p.num_ventas);
+
     document.getElementById('cuerpo-por-cajero').innerHTML = (p.por_cajero || [])
       .map((c) => `<tr><td>${escaparHtml(c.cajero)}</td><td class="num">${c.num_ventas}</td><td class="num">${dinero(c.total)}</td></tr>`)
       .join('') || '<tr><td colspan="3" class="vacio">Sin ventas en este turno</td></tr>';
@@ -90,7 +95,32 @@ async function cargarCorte() {
   }
 }
 
+// Utilidad bruta (solo de lo que tiene costo registrado), ticket promedio y lo más vendido
+function pintarEstadisticas(e, numVentas) {
+  const caja = document.getElementById('corte-estadisticas');
+  if (!e || !numVentas) {
+    caja.innerHTML = '<p class="vacio">Sin ventas en este turno</p>';
+    return;
+  }
+  const dato = (titulo, valor, detalle = '') => `<div class="dato-estadistica"><small>${titulo}</small><b>${valor}</b>${detalle ? `<span>${detalle}</span>` : ''}</div>`;
+  caja.innerHTML = `
+    <div class="datos-estadistica">
+      ${dato('Utilidad bruta', dinero(e.utilidad_bruta), `${Number(e.margen).toFixed(1)}% de margen`)}
+      ${dato('Ticket promedio', dinero(e.ticket_promedio), `${numVentas} venta(s)`)}
+      ${dato('Venta más alta', dinero(e.venta_mayor))}
+      ${dato('Artículos vendidos', e.piezas)}
+    </div>
+    ${e.vendido_sin_costo ? `<p class="aclaracion">La utilidad no cuenta ${dinero(e.vendido_sin_costo)} vendidos sin costo registrado (por ejemplo, artículos comunes). Captura el costo de esos productos para que salga completa.</p>` : ''}
+    ${(e.mas_vendidos || []).length ? `<h4 class="subtitulo-corte">Lo más vendido</h4>
+      <table class="tabla-simple">${e.mas_vendidos.map((m) => `<tr><td>${escaparHtml(m.descripcion)}</td><td class="num">${m.piezas} pza.</td><td class="num">${dinero(m.total)}</td></tr>`).join('')}</table>` : ''}`;
+}
+
 async function movimientoDeCaja(tipo) {
+  if (!App.apertura) {
+    await pedirApertura({ cancelable: true });
+    if (!App.apertura) return;
+    cargarCorte();
+  }
   const concepto = await pedirTexto({
     titulo: tipo === 'entrada' ? 'Entrada de efectivo' : 'Salida de efectivo',
     mensaje: tipo === 'entrada'
@@ -146,7 +176,7 @@ document.getElementById('boton-hacer-corte').addEventListener('click', async () 
     titulo: 'Realizar el corte de caja',
     mensaje: `Efectivo esperado ${dinero(Corte.pendiente?.efectivo_esperado)}, contado ${dinero(Number(contado))}`
       + `${Math.abs(diferencia) >= 0.005 ? ` (${diferencia > 0 ? 'sobran' : 'faltan'} ${dinero(Math.abs(diferencia))})` : ''}. `
-      + 'Las ventas del turno quedarán cerradas y se pedirá una nueva apertura de caja.',
+      + 'Las ventas del turno quedarán cerradas. Para volver a cobrar se pedirá abrir la caja otra vez.',
     boton: 'Hacer corte e imprimir',
   });
   if (!confirmado) return;
@@ -164,10 +194,12 @@ document.getElementById('boton-hacer-corte').addEventListener('click', async () 
     document.getElementById('corte-usd-contado').value = '';
     document.getElementById('corte-nota').value = '';
     await Impresion.imprimirCorte(r.corte);
+    // La caja queda cerrada: si llega alguien se puede armar su venta y dejarla abierta; al cobrar
+    // (o con "Abrir caja") se pide la apertura del siguiente turno
     App.apertura = null;
+    pintarInfoUsuario();
+    if (typeof pintarVenta === 'function') pintarVenta();
     await cargarCorte();
-    await pedirApertura();
-    cargarCorte();
   } catch (err) {
     aviso(err.message, 'error');
   }

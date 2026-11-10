@@ -34,8 +34,10 @@ router.get('/estado', (req, res) => {
   res.json({ sincronizacion: inventario.estadoSincronizacion(), respaldos: respaldos.resumen() });
 });
 
+// tipo 'cierre': al cerrar el programa se actualiza el respaldo del día (queda como terminó el día);
+// si no, es un respaldo adicional con la hora
 router.post('/respaldar', manejar(async (req, res) => {
-  const r = await respaldos.respaldar({ manual: true });
+  const r = await respaldos.respaldar({ manual: req.body?.tipo !== 'cierre' });
   res.json({ ok: true, ...r });
 }));
 

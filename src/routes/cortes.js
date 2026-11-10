@@ -5,6 +5,7 @@
 // Los dólares recibidos se cuentan aparte. Las ventas canceladas no suman.
 const express = require('express');
 const db = require('../db');
+const bitacora = require('../bitacora');
 const { manejar } = require('../central');
 const { aperturaActual, aperturaVigente } = require('../caja');
 
@@ -40,6 +41,63 @@ router.post('/apertura', (req, res) => {
   })();
   res.json(db.prepare('SELECT * FROM aperturas_caja WHERE id = ?').get(id));
 });
+
+// Ventas por departamento y estadísticas de un grupo de ventas: las de un corte, o las que la
+// sucursal tiene pendientes de corte. La utilidad bruta (venta − costo) solo cuenta los artículos
+// que tienen costo registrado; lo vendido sin costo se informa aparte para no inflarla.
+function estadisticasVentas({ corteId = null, sucursalId = null }) {
+  const filtro = corteId ? 'v.corte_id = @corte' : 'v.sucursal_id = @suc AND v.corte_id IS NULL';
+  const parametros = { corte: corteId, suc: sucursalId };
+  const departamentos = db
+    .prepare(
+      `SELECT CASE WHEN d.producto_id = 0 THEN 'Artículo común'
+                   ELSE COALESCE(NULLIF(TRIM(p.departamento), ''), 'Sin departamento') END AS grupo,
+              COALESCE(SUM(d.importe), 0) AS total, COALESCE(SUM(d.cantidad), 0) AS piezas
+       FROM venta_detalle d
+       JOIN ventas v ON v.id = d.venta_id
+       LEFT JOIN productos p ON p.id = d.producto_id
+       WHERE ${filtro} AND v.cancelada = 0
+       GROUP BY grupo ORDER BY total DESC`
+    )
+    .all(parametros);
+  const renglones = db
+    .prepare(
+      `SELECT COALESCE(SUM(d.importe), 0) AS vendido,
+              COALESCE(SUM(d.cantidad), 0) AS piezas,
+              COALESCE(SUM(CASE WHEN d.costo_unitario > 0 THEN d.importe ELSE 0 END), 0) AS vendido_con_costo,
+              COALESCE(SUM(CASE WHEN d.costo_unitario > 0 THEN d.costo_unitario * d.cantidad ELSE 0 END), 0) AS costo,
+              COALESCE(SUM(CASE WHEN d.costo_unitario > 0 THEN 0 ELSE d.importe END), 0) AS sin_costo
+       FROM venta_detalle d JOIN ventas v ON v.id = d.venta_id
+       WHERE ${filtro} AND v.cancelada = 0`
+    )
+    .get(parametros);
+  const ventas = db
+    .prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(v.total), 0) AS total, COALESCE(MAX(v.total), 0) AS mayor FROM ventas v WHERE ${filtro} AND v.cancelada = 0`)
+    .get(parametros);
+  const masVendidos = db
+    .prepare(
+      `SELECT d.descripcion, SUM(d.cantidad) AS piezas, SUM(d.importe) AS total
+       FROM venta_detalle d JOIN ventas v ON v.id = d.venta_id
+       WHERE ${filtro} AND v.cancelada = 0
+       GROUP BY d.producto_id, d.descripcion ORDER BY piezas DESC, total DESC LIMIT 5`
+    )
+    .all(parametros);
+  const utilidad = renglones.vendido_con_costo - renglones.costo;
+  return {
+    departamentos: departamentos.map((d) => ({ departamento: d.grupo, total: redondear(d.total), piezas: Math.round(d.piezas * 1000) / 1000 })),
+    estadisticas: {
+      vendido: redondear(renglones.vendido),
+      costo: redondear(renglones.costo),
+      utilidad_bruta: redondear(utilidad),
+      margen: renglones.vendido_con_costo > 0 ? Math.round((utilidad / renglones.vendido_con_costo) * 1000) / 10 : 0,
+      vendido_sin_costo: redondear(renglones.sin_costo),
+      ticket_promedio: ventas.n ? redondear(ventas.total / ventas.n) : 0,
+      venta_mayor: redondear(ventas.mayor),
+      piezas: Math.round(renglones.piezas * 1000) / 1000,
+      mas_vendidos: masVendidos.map((m) => ({ ...m, piezas: Math.round(m.piezas * 1000) / 1000, total: redondear(m.total) })),
+    },
+  };
+}
 
 // Todo lo pendiente de corte de una sucursal
 function resumenPendiente(sucursalId) {
@@ -112,6 +170,7 @@ function resumenPendiente(sucursalId) {
     apertura_fecha: apertura ? apertura.fecha : null,
     efectivo_esperado: redondear(efectivoEsperado),
     por_cajero: porCajero.map((c) => ({ ...c, total: redondear(c.total) })),
+    ...estadisticasVentas({ sucursalId }),
   };
 }
 
@@ -148,6 +207,11 @@ router.post('/movimientos', (req, res) => {
   const id = db
     .prepare('INSERT INTO movimientos_caja (sucursal_id, usuario_id, tipo, monto, concepto) VALUES (?, ?, ?, ?, ?)')
     .run(req.usuario.sucursal_id, req.usuario.id, tipo, redondear(monto), concepto).lastInsertRowid;
+  bitacora.registrar({
+    usuario: req.usuario, tipo: tipo === 'salida' ? 'efectivo_salida' : 'efectivo_entrada',
+    descripcion: `$${redondear(monto).toFixed(2)}: ${concepto}`,
+    detalle: { movimiento_id: Number(id), monto: redondear(monto), concepto },
+  });
   res.json({ ok: true, id, resumen: resumenPendiente(req.usuario.sucursal_id) });
 });
 
@@ -179,6 +243,7 @@ function cargarCorte(id) {
     )
     .all(corte.id);
   corte.apertura = db.prepare('SELECT fecha, fondo_caja, tipo_cambio FROM aperturas_caja WHERE corte_id = ? ORDER BY id LIMIT 1').get(corte.id) || null;
+  Object.assign(corte, estadisticasVentas({ corteId: corte.id }));
   return corte;
 }
 
@@ -223,6 +288,19 @@ router.post('/', manejar(async (req, res) => {
     return id;
   })();
 
+  // Al registro de cambios: el jefe ve cada corte y se le avisa si faltó dinero
+  const faltante = diferencia < -0.5;
+  bitacora.registrar({
+    usuario: req.usuario, tipo: 'corte',
+    descripcion: `${resumen.num_ventas} venta(s) por $${redondear(resumen.total_vendido).toFixed(2)}; `
+      + `efectivo esperado $${resumen.efectivo_esperado.toFixed(2)}, contado $${redondear(contado).toFixed(2)}`
+      + `${Math.abs(diferencia) >= 0.005 ? ` (${diferencia < 0 ? 'faltan' : 'sobran'} $${Math.abs(diferencia).toFixed(2)})` : ' (cuadró)'}`,
+    detalle: {
+      corte_id: Number(corteId), num_ventas: resumen.num_ventas, esperado: resumen.efectivo_esperado, contado: redondear(contado), diferencia,
+      num_canceladas: resumen.num_canceladas, total_canceladas: resumen.total_canceladas, salidas_efectivo: resumen.salidas_efectivo,
+    },
+    alerta: faltante,
+  });
   res.json({ ok: true, id: corteId, esperado: resumen.efectivo_esperado, diferencia, corte: cargarCorte(corteId) });
 }));
 
@@ -253,3 +331,4 @@ router.get('/:id', (req, res) => {
 });
 
 module.exports = router;
+module.exports.cargarCorte = cargarCorte;

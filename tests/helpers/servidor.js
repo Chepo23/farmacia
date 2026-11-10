@@ -38,6 +38,7 @@ async function iniciarServidor({ nombre = 'pc', centralUrl = null, dbPath = null
   env.FARMACIA_DB = dbPath || path.join(dir, 'farmacia.db');
   env.CENTRAL_ESPERA_CAIDA_MS = env.CENTRAL_ESPERA_CAIDA_MS || '1500';
   env.SUPABASE_TIMEOUT_MS = env.SUPABASE_TIMEOUT_MS || '3000';
+  env.FARMACIA_SUBIDA_MS = env.FARMACIA_SUBIDA_MS || '400'; // las ventas suben a la central casi al momento
   if (centralUrl) {
     if (/supabase\.co/i.test(centralUrl)) throw new Error('Las pruebas nunca deben usar un Supabase real');
     env.SUPABASE_URL = centralUrl;

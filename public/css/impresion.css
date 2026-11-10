@@ -28,8 +28,6 @@
 }
 .ticket.ancho-58 { width: 48mm; padding: 1mm 1.5mm 5mm; font-size: 10.5px; }
 .ticket * { box-sizing: border-box; }
-.ticket .t-centro { text-align: center; }
-.ticket .t-derecha { text-align: right; }
 .ticket .t-logo { display: block; width: 26mm; margin: 0 auto 1mm; filter: grayscale(1) contrast(1.35); }
 .ticket.ancho-58 .t-logo { width: 20mm; }
 .ticket .t-negocio { text-align: center; font-size: 15px; font-weight: 800; letter-spacing: .4px; text-transform: uppercase; line-height: 1.15; }
@@ -48,7 +46,6 @@
 .ticket .t-fila { display: flex; justify-content: space-between; gap: 2mm; }
 .ticket .t-fila > :last-child { text-align: right; white-space: nowrap; }
 .ticket .t-sep { border: 0; border-top: 1px dashed #000; margin: 2mm 0; }
-.ticket .t-sep-doble { border: 0; border-top: 3px double #000; margin: 2mm 0; }
 .ticket .t-partidas { width: 100%; border-collapse: collapse; }
 .ticket .t-partidas th {
   font-size: 9.5px; text-transform: uppercase; letter-spacing: .4px; text-align: left;
@@ -68,13 +65,16 @@
 .ticket .t-nota { font-size: 10.5px; border: 1px solid #000; padding: 1.2mm 1.5mm; margin-top: 1.5mm; }
 .ticket .t-mensaje { text-align: center; font-weight: 700; font-size: 12px; margin-top: 2mm; }
 .ticket .t-pie { text-align: center; font-size: 9.5px; margin-top: 1mm; }
+.ticket .t-seccion { text-align: center; font-weight: 800; letter-spacing: .5px; margin: 1mm 0 1.2mm; }
+.ticket .t-subseccion { font-weight: 700; margin: 1.5mm 0 .5mm; }
+.ticket .t-aclaracion { font-size: 9.5px; margin: .3mm 0 .8mm; }
 .ticket .t-firma { margin-top: 12mm; border-top: 1px solid #000; padding-top: 1mm; text-align: center; font-size: 10px; }
 .ticket .t-destacado { font-weight: 800; font-size: 13px; }
 .ticket .t-caja { border: 1.5px solid #000; padding: 1.5mm 2mm; margin: 2mm 0; }
 
 /* ---------- Documento tamaño carta ---------- */
 .documento {
-  color: #1d2522;
+  color: #172328;
   background: #fff;
   font-family: 'Inter', 'Segoe UI', 'Arial', sans-serif;
   font-size: 11px;
@@ -84,41 +84,41 @@
 }
 .documento .doc-cabecera {
   display: flex; justify-content: space-between; align-items: flex-start; gap: 20px;
-  padding-bottom: 10px; border-bottom: 3px solid #2e5f45; margin-bottom: 14px;
+  padding-bottom: 10px; border-bottom: 3px solid #084A63; margin-bottom: 14px;
 }
 .documento .doc-marca { display: flex; align-items: center; gap: 12px; }
 .documento .doc-marca img { width: 74px; height: auto; }
-.documento .doc-negocio { font-size: 19px; font-weight: 900; color: #2e5f45; text-transform: uppercase; letter-spacing: .6px; }
-.documento .doc-lema { font-size: 10.5px; color: #55635b; font-style: italic; }
-.documento .doc-sucursal { font-size: 10.5px; color: #3c4943; margin-top: 2px; }
+.documento .doc-negocio { font-size: 19px; font-weight: 900; color: #084A63; text-transform: uppercase; letter-spacing: .6px; }
+.documento .doc-lema { font-size: 10.5px; color: #55656E; font-style: italic; }
+.documento .doc-sucursal { font-size: 10.5px; color: #3A4950; margin-top: 2px; }
 .documento .doc-titulo { text-align: right; }
-.documento .doc-titulo h1 { font-size: 20px; margin: 0; color: #1d2522; letter-spacing: 1px; text-transform: uppercase; }
-.documento .doc-titulo div { font-size: 10.5px; color: #55635b; }
+.documento .doc-titulo h1 { font-size: 20px; margin: 0; color: #172328; letter-spacing: 1px; text-transform: uppercase; }
+.documento .doc-titulo div { font-size: 10.5px; color: #55656E; }
 .documento .doc-bloques { display: grid; grid-template-columns: 1.3fr 1fr; gap: 12px; margin-bottom: 14px; }
-.documento .doc-bloque { border: 1px solid #cfdcd2; border-radius: 6px; padding: 8px 10px; }
+.documento .doc-bloque { border: 1px solid #CDDDE4; border-radius: 6px; padding: 8px 10px; }
 .documento .doc-bloque h3 {
-  margin: 0 0 4px; font-size: 9.5px; text-transform: uppercase; letter-spacing: .7px; color: #2e5f45;
+  margin: 0 0 4px; font-size: 9.5px; text-transform: uppercase; letter-spacing: .7px; color: #084A63;
 }
 .documento .doc-bloque .doc-fila { display: flex; justify-content: space-between; gap: 10px; }
 .documento .doc-resumen { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 14px; }
-.documento .doc-cifra { border: 1px solid #cfdcd2; border-radius: 6px; padding: 8px 10px; text-align: center; }
-.documento .doc-cifra small { display: block; font-size: 9px; text-transform: uppercase; letter-spacing: .6px; color: #55635b; }
+.documento .doc-cifra { border: 1px solid #CDDDE4; border-radius: 6px; padding: 8px 10px; text-align: center; }
+.documento .doc-cifra small { display: block; font-size: 9px; text-transform: uppercase; letter-spacing: .6px; color: #55656E; }
 .documento .doc-cifra b { font-size: 17px; }
-.documento .doc-cifra.principal { background: #2e5f45; border-color: #2e5f45; color: #fff; }
-.documento .doc-cifra.principal small { color: #dcebe0; }
+.documento .doc-cifra.principal { background: #084A63; border-color: #084A63; color: #fff; }
+.documento .doc-cifra.principal small { color: #D6EAF2; }
 .documento table.doc-tabla { width: 100%; border-collapse: collapse; }
 .documento .doc-tabla th {
-  background: #e7f0e9; color: #1d2522; font-size: 9px; text-transform: uppercase; letter-spacing: .5px;
-  text-align: left; padding: 6px 7px; border-bottom: 1.5px solid #2e5f45;
+  background: #E5F1F6; color: #172328; font-size: 9px; text-transform: uppercase; letter-spacing: .5px;
+  text-align: left; padding: 6px 7px; border-bottom: 1.5px solid #084A63;
 }
-.documento .doc-tabla td { padding: 5px 7px; border-bottom: 1px solid #e3ebe5; vertical-align: top; }
+.documento .doc-tabla td { padding: 5px 7px; border-bottom: 1px solid #E1EAEE; vertical-align: top; }
 .documento .doc-tabla .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.documento .doc-tabla tr.doc-abono td { background: #f3f9f4; }
-.documento .doc-tabla .doc-partidas { font-size: 9.5px; color: #55635b; margin-top: 2px; }
-.documento .doc-tabla tfoot td { font-weight: 800; border-top: 1.5px solid #2e5f45; border-bottom: 0; }
-.documento .doc-nota { margin-top: 12px; font-size: 9.5px; color: #55635b; }
+.documento .doc-tabla tr.doc-abono td { background: #F1F8FB; }
+.documento .doc-tabla .doc-partidas { font-size: 9.5px; color: #55656E; margin-top: 2px; }
+.documento .doc-tabla tfoot td { font-weight: 800; border-top: 1.5px solid #084A63; border-bottom: 0; }
+.documento .doc-nota { margin-top: 12px; font-size: 9.5px; color: #55656E; }
 .documento .doc-firmas { display: flex; gap: 48px; margin-top: 46px; }
-.documento .doc-firmas div { flex: 1; border-top: 1px solid #1d2522; padding-top: 4px; text-align: center; font-size: 10px; }
+.documento .doc-firmas div { flex: 1; border-top: 1px solid #172328; padding-top: 4px; text-align: center; font-size: 10px; }
 .documento tr { page-break-inside: avoid; }
 
 /* Documentos de apoyos y pedidos (formato anterior) */

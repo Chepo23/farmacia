@@ -1,10 +1,12 @@
-require('dotenv').config();
+require('dotenv').config({ quiet: true }); // sin los consejos que dotenv escribe en los registros
 
 const path = require('path');
 const express = require('express');
 const { router: authRouter, requiereSesion } = require('./src/auth');
 const inventario = require('./src/inventario');
 const respaldos = require('./src/respaldos');
+const bitacora = require('./src/bitacora');
+const subirVentas = require('./src/subir-ventas');
 
 const app = express();
 app.disable('x-powered-by');
@@ -28,6 +30,12 @@ app.use('/api/admin', requiereSesion, require('./src/routes/admin'));
 app.use('/api/departamentos', requiereSesion, require('./src/routes/departamentos'));
 app.use('/api/apoyos', requiereSesion, require('./src/routes/apoyos'));
 app.use('/api/pedidos', requiereSesion, require('./src/routes/pedidos'));
+app.use('/api/cotizaciones', requiereSesion, require('./src/routes/cotizaciones'));
+app.use('/api/movimientos', requiereSesion, require('./src/routes/movimientos'));
+app.use('/api/bitacora', requiereSesion, require('./src/routes/bitacora'));
+app.use('/api/supervision', requiereSesion, require('./src/routes/supervision'));
+app.use('/api/conteos', requiereSesion, require('./src/routes/conteos'));
+app.use('/api/ventas-central', requiereSesion, require('./src/routes/ventas-central'));
 app.use('/api/celulares', requiereSesion, require('./src/routes/celulares'));
 app.use('/api/respaldos', requiereSesion, require('./src/routes/respaldos'));
 // Solo para el programa de escritorio, desde esta misma computadora
@@ -55,6 +63,8 @@ const servidor = app.listen(PORT, HOST, () => {
   console.log(`Farmacia POS corriendo en http://localhost:${PORT}`);
   inventario.iniciar();
   respaldos.iniciar();
+  bitacora.iniciar();
+  subirVentas.iniciar();
 });
 servidor.on('error', (error) => {
   if (error.code === 'EADDRINUSE') {

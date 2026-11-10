@@ -77,7 +77,12 @@ function construirApp({ salida, api, origenApi, nombre }) {
     'css/movil.css': path.join(PUBLICO, 'css', 'movil.css'),
     'js/escaner.js': path.join(PUBLICO, 'js', 'escaner.js'),
     'js/movil.js': path.join(PUBLICO, 'js', 'movil.js'),
+    'js/movil-conteo.js': path.join(PUBLICO, 'js', 'movil-conteo.js'),
+    'js/movil-jefe.js': path.join(PUBLICO, 'js', 'movil-jefe.js'),
     'img/logo-login.png': path.join(PUBLICO, 'img', 'logo-login.png'),
+    'img/marca.svg': path.join(PUBLICO, 'img', 'marca.svg'),
+    'img/marca-frasco.svg': path.join(PUBLICO, 'img', 'marca-frasco.svg'),
+    'img/swagit.png': path.join(PUBLICO, 'img', 'swagit.png'),
     'img/icono.svg': path.join(PUBLICO, 'img', 'icono.svg'),
     'img/icono-192.png': path.join(PUBLICO, 'img', 'icono-192.png'),
     'img/icono-512.png': path.join(PUBLICO, 'img', 'icono-512.png'),
@@ -115,8 +120,8 @@ function construirApp({ salida, api, origenApi, nombre }) {
     scope: './',
     display: 'standalone',
     orientation: 'portrait',
-    background_color: '#f3f7f0',
-    theme_color: '#2e5f45',
+    background_color: '#F2F6F8',
+    theme_color: '#084A63',
     icons: [
       { src: 'img/icono-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
       { src: 'img/icono-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
@@ -196,10 +201,24 @@ function construirFuncion({ salida }) {
   const manejador = fs.readFileSync(path.join(carpeta, 'manejador.mjs'), 'utf8');
   const entrada = fs.readFileSync(path.join(carpeta, 'index.ts'), 'utf8');
   if (!/^export function crearManejador/m.test(manejador)) throw new Error('manejador.mjs cambió: no se encontró "export function crearManejador"');
+  // Los módulos que manejador.mjs comparte con las computadoras (supervision.mjs, ventas.mjs...)
+  const importaciones = [...manejador.matchAll(/^import \{([^}]+)\} from '\.\/([a-z0-9-]+)\.mjs';\r?\n/gm)];
+  if (!importaciones.length) throw new Error('manejador.mjs cambió: no se encontraron sus import');
   const importaCliente = entrada.match(/^import \{ createClient \} from '[^']+';$/m);
   const importaManejador = /^import \{ crearManejador \} from '\.\/manejador\.mjs';\r?\n/m;
   if (!importaCliente || !importaManejador.test(entrada)) throw new Error('index.ts cambió: no se encontraron sus import');
   const resto = entrada.replace(importaCliente[0], '').replace(importaManejador, '');
+  // En un solo archivo ya no hay módulos: los "export" se quitan y cada módulo compartido va en su propio
+  // bloque (sus utilidades se llaman igual que las de manejador.mjs) que entrega lo que se importaba
+  const sinExport = (codigo) => codigo.replace(/^export (?=(async )?function |const |class )/gm, '');
+  let cuerpo = manejador;
+  const bloques = importaciones.map(([linea, lista, modulo]) => {
+    const codigo = fs.readFileSync(path.join(carpeta, `${modulo}.mjs`), 'utf8');
+    if (/^import /m.test(codigo)) throw new Error(`${modulo}.mjs no debe importar nada`);
+    cuerpo = cuerpo.replace(linea, '');
+    const nombres = lista.split(',').map((n) => n.trim()).filter(Boolean).join(', ');
+    return `// ----- Compartido: ${modulo} -----\nconst { ${nombres} } = (() => {\n${sinExport(codigo)}\nreturn { ${nombres} };\n})();\n`;
+  });
   const archivo = [
     '// @ts-nocheck',
     '// Generado por scripts/construir-movil.js a partir de supabase/functions/movil (no editar aquí).',
@@ -207,7 +226,9 @@ function construirFuncion({ salida }) {
     '// y después apaga "Verify JWT" (Enforce JWT verification) en los ajustes de la función.',
     importaCliente[0],
     '',
-    manejador.replace(/^export function crearManejador/m, 'function crearManejador'),
+    ...bloques,
+    '// ----- La función -----',
+    sinExport(cuerpo),
     resto,
   ].join('\n');
   fs.rmSync(salida, { recursive: true, force: true });

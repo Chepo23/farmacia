@@ -8,6 +8,10 @@
 //
 // Este archivo no depende de Deno ni de Node: recibe el cliente de Supabase ya creado y usa
 // Web Crypto, así se prueba en Node con la central falsa y se publica tal cual en Supabase.
+// Lo del jefe (movimientos, cambios, inventario de las sucursales e inventario del día) vive en
+// supervision.mjs, que también usa el servidor de cada computadora.
+import { crearSupervision, esJefe, describirCambiosProducto } from './supervision.mjs';
+import { crearVentasCentral } from './ventas.mjs';
 
 const COLUMNAS_PRODUCTO =
   'id,codigo_barras,descripcion,departamento,precio_costo,precio_venta,precio_mayoreo,cantidad_mayoreo,usa_inventario,activo';
@@ -110,7 +114,7 @@ function validarProducto(body) {
   };
 }
 
-export function crearManejador({ supabase, origenesPermitidos = ['*'], registrar = console.error } = {}) {
+export function crearManejador({ supabase, origenesPermitidos = ['*'], registrar = console.error, zona = undefined } = {}) {
   const sb = () => supabase;
 
   async function consultar(builder) {
@@ -352,17 +356,24 @@ export function crearManejador({ supabase, origenesPermitidos = ['*'], registrar
     return { existencia: r2(data[0].existencia), minimo: r2(valor) };
   }
 
+  const supervision = crearSupervision({ sb, consultar, ErrorApp, aplicarMovimientos, registrar, zona, ventasHoy: () => ventasCentral.hoyPorSucursal() });
+  const ventasCentral = crearVentasCentral({ sb, consultar, ErrorApp, fechas: supervision });
+  const anotarCambio = (cambio) => supervision.anotarCambio({ origen: 'celular', ...cambio });
+
   // ---------- Sesiones del celular ----------
+  // select('*'): así la función sigue funcionando aunque la base central todavía no tenga la columna "jefe"
   async function perfilDe(usuarioId) {
-    const { data: usuarios } = await consultar(sb().from('usuarios_central').select('id,nombre,usuario,rol,sucursal_id,activo').eq('id', Number(usuarioId)).limit(1));
+    const { data: usuarios } = await consultar(sb().from('usuarios_central').select('*').eq('id', Number(usuarioId)).limit(1));
     const u = usuarios && usuarios[0];
     if (!u || u.activo === false) return null;
     const { data: sucursales } = await consultar(sb().from('sucursales').select('id,nombre,es_central,activa').eq('id', Number(u.sucursal_id)).limit(1));
     const s = sucursales && sucursales[0];
     if (!s || s.activa === false) return null;
+    const rol = u.rol === 'admin' ? 'admin' : 'cajero';
     return {
-      id: Number(u.id), nombre: u.nombre, usuario: u.usuario, rol: u.rol === 'admin' ? 'admin' : 'cajero',
-      sucursal_id: Number(u.sucursal_id), sucursal: s.nombre, es_central: s.es_central ? 1 : 0, modo: 'nube',
+      id: Number(u.id), nombre: u.nombre, usuario: u.usuario, rol,
+      sucursal_id: Number(u.sucursal_id), sucursal: s.nombre, es_central: s.es_central ? 1 : 0,
+      jefe: u.jefe === true && rol === 'admin' && Boolean(s.es_central) ? 1 : 0, modo: 'nube',
     };
   }
 
@@ -597,6 +608,7 @@ export function crearManejador({ supabase, origenesPermitidos = ['*'], registrar
     if (!esAdminCentral(usuario)) throw new ErrorApp('Solo el administrador de la central puede cambiar productos y precios', { status: 403, codigo: 'SOLO_CENTRAL' });
     const datos = validarProducto(cuerpo);
     if (datos.error) throw new ErrorApp(datos.error);
+    const antes = await productoPorId(params[0]);
     try {
       const { data } = await consultar(
         sb().from('productos').update({ ...datos, updated_at: new Date().toISOString() }).eq('id', Number(params[0])).eq('activo', true).select('id')
@@ -606,13 +618,21 @@ export function crearManejador({ supabase, origenesPermitidos = ['*'], registrar
       if (/23505|duplicate/i.test(`${error.codigo} ${error.message}`)) throw new ErrorApp('Ya existe un producto con ese código de barras');
       throw error;
     }
+    if (antes) {
+      const cambios = describirCambiosProducto(antes, datos);
+      if (cambios.lista.length) {
+        await anotarCambio({
+          usuario, tipo: 'producto_cambio', descripcion: `${datos.descripcion}: ${cambios.texto}`,
+          detalle: { producto_id: antes.id, cambios: cambios.lista }, alerta: cambios.precio,
+        });
+      }
+    }
     return { ok: true };
   });
 
+  // Cualquier usuario da de alta un producto nuevo con su existencia en su sucursal (por ejemplo, al
+  // recibir mercancía). Cambiar los precios de uno que ya existe sigue siendo de la central.
   ruta('POST', /^\/api\/productos$/, async ({ usuario, cuerpo }) => {
-    if (!esAdminCentral(usuario)) {
-      throw new ErrorApp('Solo el administrador de la central puede dar de alta productos', { status: 403, codigo: 'SOLO_CENTRAL' });
-    }
     const datos = validarProducto(cuerpo);
     if (datos.error) throw new ErrorApp(datos.error);
     const sucursalId = await sucursalPermitida(usuario, cuerpo.sucursal_id);
@@ -626,6 +646,11 @@ export function crearManejador({ supabase, origenesPermitidos = ['*'], registrar
     }
     const { data } = await consultar(sb().from('productos').insert({ ...datos, activo: true }).select(COLUMNAS_PRODUCTO));
     const producto = normalizarProducto(data[0]);
+    await anotarCambio({
+      usuario, sucursal_id: sucursalId, tipo: 'producto_alta',
+      descripcion: `${producto.descripcion} (${producto.codigo_barras || 'sin código'}) a $${producto.precio_venta.toFixed(2)}${existenciaInicial > 0 ? `, con ${existenciaInicial} pieza(s)` : ''}`,
+      detalle: { producto_id: producto.id, precio_venta: producto.precio_venta, precio_costo: producto.precio_costo, existencia_inicial: existenciaInicial },
+    });
     let aviso = null;
     if (producto.usa_inventario && (existenciaInicial > 0 || minimoInicial > 0)) {
       try {
@@ -640,6 +665,355 @@ export function crearManejador({ supabase, origenesPermitidos = ['*'], registrar
     }
     return { ok: true, id: producto.id, aviso };
   });
+
+  // ---------- Nombres de sucursales y usuarios ----------
+  async function nombresDe({ sucursales = [], usuarios = [] }) {
+    const mapaS = new Map();
+    const mapaU = new Map();
+    const s = idsValidos(sucursales);
+    const u = idsValidos(usuarios);
+    if (s.length) {
+      const { data } = await consultar(sb().from('sucursales').select('id,nombre').in('id', s));
+      for (const f of data || []) mapaS.set(Number(f.id), f.nombre);
+    }
+    if (u.length) {
+      const { data } = await consultar(sb().from('usuarios_central').select('id,nombre').in('id', u));
+      for (const f of data || []) mapaU.set(Number(f.id), f.nombre);
+    }
+    return {
+      sucursal: (id) => mapaS.get(Number(id)) || (id ? `Sucursal ${id}` : ''),
+      usuario: (id) => mapaU.get(Number(id)) || (id ? `Usuario ${id}` : ''),
+    };
+  }
+
+  // ---------- Cotizaciones (mismas reglas que src/cotizaciones.js de la computadora) ----------
+  // Las arma el administrador de la central y las manda a una sucursal (o a un usuario de ella);
+  // la caja de esa sucursal la cobra. El precio cotizado se respeta 7 días.
+  const DIAS_VIGENCIA_COTIZACION = 7;
+  const ESTADOS_COTIZACION = ['enviada', 'vendida', 'cancelada'];
+  const cotizacionVigente = (c) => c.estado === 'enviada' && new Date(c.vigente_hasta).getTime() >= Date.now();
+  const soloAdminCentral = (usuario) => {
+    if (!esAdminCentral(usuario)) throw new ErrorApp('Solo el administrador de la central arma cotizaciones', { status: 403, codigo: 'SOLO_CENTRAL' });
+  };
+
+  async function cotizacionPorId(id) {
+    const { data } = await consultar(sb().from('cotizaciones').select('*').eq('id', Number(id)).limit(1));
+    return data && data[0] ? data[0] : null;
+  }
+
+  async function completarCotizaciones(filas) {
+    const ids = idsValidos(filas.map((c) => c.id));
+    const detalles = [];
+    for (const lote of lotes(ids, 100)) {
+      const { data } = await consultar(sb().from('cotizacion_detalle').select('*').in('cotizacion_id', lote).order('id').limit(5000));
+      detalles.push(...(data || []));
+    }
+    const n = await nombresDe({
+      sucursales: filas.map((c) => c.destino_sucursal_id),
+      usuarios: filas.flatMap((c) => [c.creado_por, c.destino_usuario_id, c.vendida_por]),
+    });
+    return filas.map((c) => {
+      const renglones = detalles.filter((d) => Number(d.cotizacion_id) === Number(c.id)).map((d) => ({
+        id: Number(d.id), producto_id: Number(d.producto_id), codigo_barras: d.codigo_barras || null, descripcion: d.descripcion || '',
+        cantidad: r2(d.cantidad), precio_unitario: r2(d.precio_unitario), precio_lista: r2(d.precio_lista), importe: r2(d.importe),
+      }));
+      return {
+        id: Number(c.id), folio: Number(c.folio), estado: c.estado, cliente: c.cliente || '', nota: c.nota || '', total: r2(c.total),
+        creado: c.creado, vigente_hasta: c.vigente_hasta, vigente: cotizacionVigente(c),
+        creado_por: Number(c.creado_por), creador: n.usuario(c.creado_por),
+        origen_sucursal_id: Number(c.origen_sucursal_id), destino_sucursal_id: Number(c.destino_sucursal_id), destino: n.sucursal(c.destino_sucursal_id),
+        destino_usuario_id: numeroONulo(c.destino_usuario_id), destino_usuario: c.destino_usuario_id ? n.usuario(c.destino_usuario_id) : '',
+        vendida_folio: numeroONulo(c.vendida_folio), vendida_fecha: c.vendida_fecha || null, vendida_por: numeroONulo(c.vendida_por),
+        vendedor: c.vendida_por ? n.usuario(c.vendida_por) : '', cancelada_fecha: c.cancelada_fecha || null,
+        productos: renglones.length, articulos: r2(renglones.reduce((t, d) => t + d.cantidad, 0)), renglones,
+      };
+    });
+  }
+
+  async function cargarCotizacion(id, usuario) {
+    const c = await cotizacionPorId(id);
+    if (!c) throw new ErrorApp('Cotización no encontrada', { status: 404 });
+    if (!esAdminCentral(usuario) && Number(c.destino_sucursal_id) !== Number(usuario.sucursal_id)) {
+      throw new ErrorApp('Esa cotización es de otra sucursal', { status: 403 });
+    }
+    return (await completarCotizaciones([c]))[0];
+  }
+
+  ruta('GET', /^\/api\/cotizaciones\/destinos$/, async ({ usuario }) => {
+    soloAdminCentral(usuario);
+    const { data: usuarios } = await consultar(
+      sb().from('usuarios_central').select('id,nombre,usuario,rol,sucursal_id').eq('activo', true).order('nombre')
+    );
+    return {
+      sucursales: (await sucursalesActivas()).map((s) => ({ id: s.id, nombre: s.nombre, es_central: s.es_central })),
+      usuarios: (usuarios || []).map((u) => ({ id: Number(u.id), nombre: u.nombre, usuario: u.usuario, rol: u.rol, sucursal_id: Number(u.sucursal_id) })),
+    };
+  });
+
+  ruta('GET', /^\/api\/cotizaciones\/pendientes$/, async ({ usuario }) => {
+    const { data } = await consultar(
+      sb().from('cotizaciones').select('id,destino_usuario_id').eq('destino_sucursal_id', Number(usuario.sucursal_id)).eq('estado', 'enviada').limit(500)
+    );
+    const lista = data || [];
+    return { pendientes: lista.length, para_mi: lista.filter((f) => Number(f.destino_usuario_id) === Number(usuario.id)).length };
+  });
+
+  ruta('GET', /^\/api\/cotizaciones$/, async ({ usuario, url }) => {
+    const todas = url.searchParams.get('bandeja') === 'enviadas';
+    if (todas) soloAdminCentral(usuario);
+    const estado = url.searchParams.get('estado') || '';
+    let consulta = sb().from('cotizaciones').select('*');
+    if (!todas) consulta = consulta.eq('destino_sucursal_id', Number(usuario.sucursal_id));
+    if (ESTADOS_COTIZACION.includes(estado)) consulta = consulta.eq('estado', estado);
+    const { data } = await consultar(consulta.order('id', { ascending: false }).limit(100));
+    return completarCotizaciones(data || []);
+  });
+
+  ruta('GET', /^\/api\/cotizaciones\/(\d+)$/, async ({ usuario, params }) => cargarCotizacion(params[0], usuario));
+
+  ruta('POST', /^\/api\/cotizaciones$/, async ({ usuario, cuerpo }) => {
+    soloAdminCentral(usuario);
+    const sucursalDestino = Number(cuerpo.destino_sucursal_id);
+    const usuarioDestino = numeroONulo(cuerpo.destino_usuario_id);
+    if (!(sucursalDestino > 0)) throw new ErrorApp('Elige la sucursal a la que va la cotización');
+    const { data: sucursal } = await consultar(sb().from('sucursales').select('id').eq('id', sucursalDestino).eq('activa', true).limit(1));
+    if (!sucursal || !sucursal.length) throw new ErrorApp('Sucursal de destino no válida');
+    if (usuarioDestino) {
+      const { data: u } = await consultar(sb().from('usuarios_central').select('id,sucursal_id').eq('id', usuarioDestino).eq('activo', true).limit(1));
+      if (!u || !u.length) throw new ErrorApp('El usuario de destino no existe o está dado de baja');
+      if (Number(u[0].sucursal_id) !== sucursalDestino) throw new ErrorApp('Ese usuario es de otra sucursal');
+    }
+    const renglones = Array.isArray(cuerpo.renglones) ? cuerpo.renglones : [];
+    if (!renglones.length) throw new ErrorApp('La cotización no tiene productos');
+    if (renglones.length > 200) throw new ErrorApp('La cotización tiene demasiados productos (máximo 200)');
+    const porProducto = new Map();
+    for (const r of renglones) {
+      const id = Number(r.producto_id);
+      if (!(id > 0)) throw new ErrorApp('Producto no válido en la cotización');
+      const cantidad = Number(r.cantidad);
+      if (!Number.isFinite(cantidad) || !(cantidad > 0)) throw new ErrorApp('Hay una cantidad no válida en la cotización');
+      let precio = null;
+      if (r.precio_unitario !== undefined && r.precio_unitario !== null && r.precio_unitario !== '') {
+        precio = Number(r.precio_unitario);
+        if (!Number.isFinite(precio) || precio < 0) throw new ErrorApp('Hay un precio no válido en la cotización');
+      }
+      const previo = porProducto.get(id);
+      porProducto.set(id, { cantidad: r2((previo?.cantidad || 0) + cantidad), precio: precio ?? previo?.precio ?? null });
+    }
+    const productos = new Map();
+    for (const lote of lotes([...porProducto.keys()], 150)) {
+      const { data } = await consultar(sb().from('productos').select(COLUMNAS_PRODUCTO).in('id', lote).eq('activo', true));
+      for (const p of data || []) productos.set(Number(p.id), normalizarProducto(p));
+    }
+    const faltan = [...porProducto.keys()].filter((id) => !productos.has(id));
+    if (faltan.length) throw new ErrorApp(`Hay productos que ya no están en el catálogo (${faltan.join(', ')})`, { status: 404 });
+    const detalle = [...porProducto].map(([id, r]) => {
+      const p = productos.get(id);
+      const precio = r2(r.precio ?? p.precio_venta);
+      return {
+        producto_id: id, codigo_barras: p.codigo_barras, descripcion: p.descripcion, cantidad: r.cantidad,
+        precio_unitario: precio, precio_lista: p.precio_venta, importe: r2(precio * r.cantidad),
+      };
+    });
+    const ahora = new Date();
+    const base = {
+      creado_por: usuario.id, origen_sucursal_id: usuario.sucursal_id, destino_sucursal_id: sucursalDestino, destino_usuario_id: usuarioDestino,
+      cliente: String(cuerpo.cliente || '').trim().slice(0, 120), nota: String(cuerpo.nota || '').trim().slice(0, 300),
+      estado: 'enviada', total: r2(detalle.reduce((t, d) => t + d.importe, 0)),
+      vigente_hasta: new Date(ahora.getTime() + DIAS_VIGENCIA_COTIZACION * 86400000).toISOString(), creado: ahora.toISOString(),
+    };
+    let fila = null;
+    for (let intento = 0; intento < 6 && !fila; intento += 1) {
+      const { data: ultimo } = await consultar(sb().from('cotizaciones').select('folio').order('folio', { ascending: false }).limit(1));
+      const folio = (ultimo && ultimo[0] ? Number(ultimo[0].folio) : 0) + 1 + intento;
+      try {
+        const { data } = await consultar(sb().from('cotizaciones').insert({ ...base, folio }).select('*'));
+        fila = data[0];
+      } catch (error) {
+        if (error.codigo !== '23505' || intento === 5) throw error;
+      }
+    }
+    try {
+      await consultar(sb().from('cotizacion_detalle').insert(detalle.map((d) => ({ ...d, cotizacion_id: Number(fila.id) }))));
+    } catch (error) {
+      await consultar(sb().from('cotizaciones').delete().eq('id', Number(fila.id))).catch(() => {});
+      throw error;
+    }
+    const cotizacion = await cargarCotizacion(fila.id, usuario);
+    await anotarCambio({
+      usuario, sucursal_id: sucursalDestino, tipo: 'cotizacion_creada',
+      descripcion: `Folio ${cotizacion.folio} para ${cotizacion.destino}${cotizacion.cliente ? ` (${cotizacion.cliente})` : ''}: ${cotizacion.productos} producto(s), $${cotizacion.total.toFixed(2)}`,
+      detalle: { cotizacion_id: cotizacion.id, folio: cotizacion.folio, total: cotizacion.total },
+    });
+    return cotizacion;
+  });
+
+  ruta('POST', /^\/api\/cotizaciones\/(\d+)\/cancelar$/, async ({ usuario, params }) => {
+    soloAdminCentral(usuario);
+    const c = await cotizacionPorId(params[0]);
+    if (!c) throw new ErrorApp('Cotización no encontrada', { status: 404 });
+    if (c.estado === 'cancelada') return cargarCotizacion(c.id, usuario);
+    if (c.estado !== 'enviada') throw new ErrorApp('Esa cotización ya se cobró; no se puede cancelar');
+    const { data } = await consultar(
+      sb().from('cotizaciones').update({ estado: 'cancelada', cancelada_por: usuario.id, cancelada_fecha: new Date().toISOString(), updated_at: new Date().toISOString() })
+        .eq('id', Number(c.id)).eq('estado', 'enviada').select('id')
+    );
+    if (!data || !data.length) throw new ErrorApp('La cotización cambió mientras tanto; actualiza la pantalla');
+    const cancelada = await cargarCotizacion(c.id, usuario);
+    await anotarCambio({
+      usuario, sucursal_id: cancelada.destino_sucursal_id, tipo: 'cotizacion_cancelada',
+      descripcion: `Folio ${cancelada.folio} para ${cancelada.destino}, $${cancelada.total.toFixed(2)}`,
+      detalle: { cotizacion_id: cancelada.id, folio: cancelada.folio },
+    });
+    return cancelada;
+  });
+
+  // ---------- Apoyos: revisar en la sucursal lo que mandó la central (mismas reglas que la computadora) ----------
+  async function apoyoCompleto(id) {
+    const { data } = await consultar(sb().from('apoyos').select('*').eq('id', Number(id)).limit(1));
+    const a = data && data[0];
+    if (!a) return null;
+    const { data: detalle } = await consultar(sb().from('apoyo_detalle').select('*').eq('apoyo_id', Number(a.id)).order('id').limit(2000));
+    const usaInventario = new Map();
+    for (const lote of lotes(idsValidos((detalle || []).map((d) => d.producto_id)), 150)) {
+      const { data: productos } = await consultar(sb().from('productos').select('id,usa_inventario').in('id', lote));
+      for (const p of productos || []) usaInventario.set(Number(p.id), p.usa_inventario === false || p.usa_inventario === 0 ? 0 : 1);
+    }
+    const n = await nombresDe({ sucursales: [a.origen_id, a.destino_id], usuarios: [a.enviado_por, a.recibido_por] });
+    const renglones = (detalle || []).map((d) => ({
+      id: Number(d.id), producto_id: Number(d.producto_id), codigo_barras: d.codigo_barras || null, descripcion: d.descripcion || '',
+      cantidad: r2(d.cantidad), cantidad_recibida: numeroONulo(d.cantidad_recibida),
+      precio_venta: r2(d.precio_venta), usa_inventario: usaInventario.has(Number(d.producto_id)) ? usaInventario.get(Number(d.producto_id)) : 1,
+    }));
+    return {
+      id: Number(a.id), folio: Number(a.folio), estado: a.estado, nota: a.nota || '',
+      origen_id: Number(a.origen_id), destino_id: Number(a.destino_id), origen: n.sucursal(a.origen_id), destino: n.sucursal(a.destino_id),
+      enviado: a.enviado, remitente: a.enviado_por ? n.usuario(a.enviado_por) : '', recibido: a.recibido,
+      receptor: a.recibido_por ? n.usuario(a.recibido_por) : '',
+      renglones, piezas: r2(renglones.reduce((t, r) => t + r.cantidad, 0)),
+      piezas_recibidas: r2(renglones.reduce((t, r) => t + (r.cantidad_recibida ?? 0), 0)),
+    };
+  }
+
+  // Los que llegan a la sucursal del usuario (los borradores todavía no se ven)
+  ruta('GET', /^\/api\/apoyos$/, async ({ usuario, url }) => {
+    const estado = url.searchParams.get('estado') || '';
+    let consulta = sb().from('apoyos').select('*').eq('destino_id', Number(usuario.sucursal_id)).neq('estado', 'borrador');
+    if (['enviado', 'recibido', 'cancelado'].includes(estado)) consulta = consulta.eq('estado', estado);
+    const { data } = await consultar(consulta.order('id', { ascending: false }).limit(50));
+    const apoyos = data || [];
+    const conteo = new Map();
+    for (const lote of lotes(idsValidos(apoyos.map((a) => a.id)), 100)) {
+      const { data: detalle } = await consultar(sb().from('apoyo_detalle').select('apoyo_id,cantidad').in('apoyo_id', lote).limit(10000));
+      for (const d of detalle || []) {
+        const actual = conteo.get(Number(d.apoyo_id)) || { renglones: 0, piezas: 0 };
+        conteo.set(Number(d.apoyo_id), { renglones: actual.renglones + 1, piezas: r2(actual.piezas + Number(d.cantidad)) });
+      }
+    }
+    const n = await nombresDe({ sucursales: apoyos.flatMap((a) => [a.origen_id, a.destino_id]) });
+    return apoyos.map((a) => ({
+      id: Number(a.id), folio: Number(a.folio), estado: a.estado, nota: a.nota || '', enviado: a.enviado, recibido: a.recibido,
+      origen_id: Number(a.origen_id), destino_id: Number(a.destino_id), origen: n.sucursal(a.origen_id), destino: n.sucursal(a.destino_id),
+      renglones: conteo.get(Number(a.id))?.renglones || 0, piezas: conteo.get(Number(a.id))?.piezas || 0,
+    }));
+  });
+
+  ruta('GET', /^\/api\/apoyos\/(\d+)$/, async ({ usuario, params }) => {
+    const apoyo = await apoyoCompleto(params[0]);
+    if (!apoyo) throw new ErrorApp('Apoyo no encontrado', { status: 404 });
+    const propia = Number(usuario.sucursal_id);
+    if (apoyo.origen_id !== propia && !(apoyo.destino_id === propia && apoyo.estado !== 'borrador')) {
+      throw new ErrorApp('Ese apoyo no es de tu farmacia', { status: 403 });
+    }
+    return apoyo;
+  });
+
+  ruta('POST', /^\/api\/apoyos\/(\d+)\/recibir$/, async ({ usuario, params, cuerpo }) => {
+    const apoyo = await apoyoCompleto(params[0]);
+    if (!apoyo) throw new ErrorApp('Apoyo no encontrado', { status: 404 });
+    if (apoyo.destino_id !== Number(usuario.sucursal_id)) throw new ErrorApp('Solo la farmacia que recibe puede confirmar el apoyo', { status: 403 });
+    if (apoyo.estado !== 'enviado') throw new ErrorApp('Este apoyo no está pendiente de recibir');
+    // Lo que no venga en el cuerpo se da por recibido completo
+    const capturado = new Map((Array.isArray(cuerpo.renglones) ? cuerpo.renglones : []).map((r) => [Number(r.id), Number(r.cantidad_recibida)]));
+    const recibidas = [];
+    for (const r of apoyo.renglones) {
+      const cantidad = capturado.has(r.id) ? capturado.get(r.id) : r.cantidad;
+      if (!Number.isFinite(cantidad) || cantidad < 0) throw new ErrorApp(`Cantidad recibida no válida en "${r.descripcion}"`);
+      if (cantidad > r.cantidad + 1e-9) throw new ErrorApp(`No puedes recibir más de lo que se mandó de "${r.descripcion}" (se mandaron ${r.cantidad})`);
+      recibidas.push({ renglon: r, cantidad: r2(cantidad) });
+    }
+    const notaRecepcion = String(cuerpo.nota_recepcion || '').trim().slice(0, 700);
+    const nota = notaRecepcion ? [apoyo.nota, `Recepción: ${notaRecepcion}`].filter(Boolean).join(' · ') : apoyo.nota;
+    const ahora = new Date().toISOString();
+    const { data: tomado } = await consultar(
+      sb().from('apoyos').update({ estado: 'recibido', recibido_por: usuario.id, recibido: ahora, nota, updated_at: ahora })
+        .eq('id', apoyo.id).eq('estado', 'enviado').select('id')
+    );
+    if (!tomado || !tomado.length) throw new ErrorApp('Este apoyo ya fue recibido o cancelado; actualiza la pantalla');
+    try {
+      await aplicarMovimientos(
+        recibidas.filter(({ renglon, cantidad }) => renglon.usa_inventario && cantidad > 0).map(({ renglon, cantidad }) => ({
+          producto_id: renglon.producto_id, sucursal_id: apoyo.destino_id, tipo: 'entrada', cantidad,
+          descripcion: renglon.descripcion, nota: `Apoyo folio ${apoyo.folio} recibido de ${apoyo.origen}`,
+        })),
+        usuario.id
+      );
+    } catch (error) {
+      await consultar(
+        sb().from('apoyos').update({ estado: 'enviado', recibido_por: null, recibido: null, nota: apoyo.nota, updated_at: new Date().toISOString() })
+          .eq('id', apoyo.id).eq('estado', 'recibido')
+      ).catch(() => {});
+      throw error;
+    }
+    for (const { renglon, cantidad } of recibidas) {
+      await consultar(sb().from('apoyo_detalle').update({ cantidad_recibida: cantidad }).eq('id', renglon.id));
+    }
+    const faltantes = recibidas.filter(({ renglon, cantidad }) => cantidad < renglon.cantidad - 1e-9);
+    await anotarCambio({
+      usuario, sucursal_id: apoyo.destino_id, tipo: 'apoyo_recibido',
+      descripcion: `Folio ${apoyo.folio} de ${apoyo.origen}: ${faltantes.length ? `llegó con diferencias en ${faltantes.length} producto(s)` : 'llegó completo'}`
+        + `${notaRecepcion ? ` — ${notaRecepcion}` : ''}`,
+      detalle: {
+        apoyo_id: apoyo.id, folio: apoyo.folio,
+        faltantes: faltantes.map(({ renglon, cantidad }) => ({ producto: renglon.descripcion, enviado: renglon.cantidad, recibido: cantidad })),
+      },
+      alerta: faltantes.length > 0,
+    });
+    return apoyoCompleto(apoyo.id);
+  });
+
+  // ---------- Jefe: movimientos, cambios e inventario de las sucursales ----------
+  const parametros = (url) => Object.fromEntries(url.searchParams.entries());
+  ruta('GET', /^\/api\/movimientos$/, async ({ usuario, url }) => supervision.movimientos(usuario, parametros(url)));
+  ruta('GET', /^\/api\/movimientos\/filtros$/, async ({ usuario }) => supervision.filtros(usuario));
+  ruta('GET', /^\/api\/bitacora$/, async ({ usuario, url }) => supervision.listarCambios(usuario, parametros(url)));
+  ruta('GET', /^\/api\/supervision\/inicio$/, async ({ usuario, url }) => supervision.inicio(usuario, { fresco: url.searchParams.has('fresco') }));
+  ruta('GET', /^\/api\/supervision\/inventario$/, async ({ usuario, url }) => supervision.inventario(usuario, { fresco: url.searchParams.has('fresco') }));
+  ruta('GET', /^\/api\/supervision\/inventario\/lista$/, async ({ usuario, url }) => supervision.listaInventario(usuario, {
+    ...parametros(url), fresco: url.searchParams.has('fresco'),
+  }));
+
+  // ---------- Ventas de todas las farmacias (lo que suben las cajas) ----------
+  ruta('GET', /^\/api\/ventas-central\/reporte$/, async ({ usuario, url }) => ventasCentral.reporte(usuario, parametros(url)));
+  ruta('GET', /^\/api\/ventas-central\/cortes$/, async ({ usuario, url }) => ventasCentral.listarCortes(usuario, parametros(url)));
+  ruta('GET', /^\/api\/ventas-central\/cortes\/(\d+)$/, async ({ usuario, params }) => ventasCentral.cargarCorte(usuario, params[0]));
+  ruta('GET', /^\/api\/ventas-central\/creditos$/, async ({ usuario, url }) => ventasCentral.creditos(usuario, parametros(url)));
+
+  // ---------- Inventario del día ----------
+  ruta('GET', /^\/api\/conteos\/hoy$/, async ({ usuario, url }) => supervision.conteoDeHoy(usuario, parametros(url)));
+  ruta('GET', /^\/api\/conteos\/config$/, async ({ usuario }) => supervision.configuracion(usuario));
+  ruta('PUT', /^\/api\/conteos\/config$/, async ({ usuario, cuerpo }) => supervision.guardarConfiguracion(usuario, cuerpo));
+  ruta('GET', /^\/api\/conteos\/importante\/(\d+)$/, async ({ usuario, params }) => {
+    if (!esJefe(usuario)) throw new ErrorApp('Esto solo lo ve el jefe', { status: 403, codigo: 'SOLO_JEFE' });
+    return { producto_id: Number(params[0]), importante: await supervision.esImportante(params[0]) };
+  });
+  ruta('POST', /^\/api\/conteos\/importante$/, async ({ usuario, cuerpo }) => supervision.marcarImportante(usuario, cuerpo));
+  ruta('GET', /^\/api\/conteos$/, async ({ usuario, url }) => supervision.listarConteos(usuario, parametros(url)));
+  ruta('GET', /^\/api\/conteos\/(\d+)$/, async ({ usuario, params }) => supervision.cargarConteo(usuario, params[0]));
+  ruta('POST', /^\/api\/conteos\/(\d+)\/contar$/, async ({ usuario, params, cuerpo }) => supervision.contar(usuario, params[0], cuerpo));
+  ruta('POST', /^\/api\/conteos\/(\d+)\/motivo$/, async ({ usuario, params, cuerpo }) => supervision.anotarMotivo(usuario, params[0], cuerpo));
+  ruta('POST', /^\/api\/conteos\/(\d+)\/terminar$/, async ({ usuario, params, cuerpo }) => supervision.terminar(usuario, params[0], cuerpo));
+  ruta('POST', /^\/api\/conteos\/(\d+)\/autorizar$/, async ({ usuario, params, cuerpo }) => supervision.autorizar(usuario, params[0], cuerpo));
 
   // ---------- Atender la solicitud ----------
   function cabecerasCors(req) {

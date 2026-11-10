@@ -29,6 +29,7 @@ function usuarioDeSesion(req) {
   return db
     .prepare(
       `SELECT u.id, u.nombre, u.usuario, u.rol, u.sucursal_id, s.nombre AS sucursal, s.es_central,
+              CASE WHEN u.jefe = 1 AND u.rol = 'admin' AND s.es_central = 1 THEN 1 ELSE 0 END AS jefe,
               COALESCE(se.ultimo_uso, se.creada) AS ultimo_uso
        FROM sesiones se
        JOIN usuarios u ON u.id = se.usuario_id
@@ -82,13 +83,13 @@ async function guardarUsuarioLocal(usuario) {
       "UPDATE usuarios SET usuario = usuario || '#' || id, activo = 0 WHERE usuario = ? AND id <> ?"
     ).run(usuario.usuario, usuario.id);
     db.prepare(
-      `INSERT INTO usuarios (id, nombre, usuario, password_hash, rol, sucursal_id, activo)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO usuarios (id, nombre, usuario, password_hash, rol, sucursal_id, activo, jefe)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET nombre = excluded.nombre, usuario = excluded.usuario,
          password_hash = excluded.password_hash, rol = excluded.rol, sucursal_id = excluded.sucursal_id,
-         activo = excluded.activo`
+         activo = excluded.activo, jefe = excluded.jefe`
     ).run(usuario.id, usuario.nombre, usuario.usuario, usuario.password_hash, usuario.rol === 'admin' ? 'admin' : 'cajero',
-      usuario.sucursal_id, usuario.activo === false ? 0 : 1);
+      usuario.sucursal_id, usuario.activo === false ? 0 : 1, usuario.jefe === true || usuario.jefe === 1 ? 1 : 0);
   })();
 }
 
@@ -129,9 +130,10 @@ router.post('/login', async (req, res) => {
     let fila = null;
     let usarLocal = true;
     if (hasSupabase && supabaseAdmin) {
+      // select('*'): así entra aunque la central todavía no tenga columnas nuevas (como "jefe")
       const remoto = await supabaseAdmin
         .from('usuarios_central')
-        .select('id, nombre, usuario, password_hash, rol, sucursal_id, activo')
+        .select('*')
         .eq('usuario', nombreUsuario)
         .maybeSingle();
       if (!remoto.error) {

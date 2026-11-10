@@ -146,12 +146,13 @@ class Servidor {
     return new Error(`No se pudo iniciar el servidor: ${error.message}`);
   }
 
-  async interno(metodo, ruta) {
+  async interno(metodo, ruta, cuerpo) {
     if (!this.url) throw new Error('El servidor no está en marcha');
     const r = await fetch(`${this.url}/api/sistema${ruta}`, {
       method: metodo,
-      headers: { 'x-farmacia-interno': this.token },
-      signal: AbortSignal.timeout(15000),
+      headers: { 'x-farmacia-interno': this.token, ...(cuerpo ? { 'Content-Type': 'application/json' } : {}) },
+      body: cuerpo ? JSON.stringify(cuerpo) : undefined,
+      signal: AbortSignal.timeout(30000),
     });
     const datos = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(datos.error || `Error ${r.status}`);
@@ -162,8 +163,9 @@ class Servidor {
     return this.interno('GET', '/estado');
   }
 
-  respaldar() {
-    return this.interno('POST', '/respaldar');
+  // tipo 'cierre': actualiza el respaldo del día al cerrar el programa
+  respaldar({ tipo = '' } = {}) {
+    return this.interno('POST', '/respaldar', tipo ? { tipo } : undefined);
   }
 
   // Apaga el servidor en orden (la base queda bien cerrada); si no responde, se termina a la fuerza

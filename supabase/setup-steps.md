@@ -8,7 +8,10 @@
 
 ## 2) Configurar cada computadora
 
-Copia `.env.example` como `.env` en la carpeta del sistema y llena:
+Con el **programa de escritorio** (lo normal en las farmacias) la dirección y la llave secreta se
+escriben en su pantalla de **Configuración** (ver [docs/instalacion.md](../docs/instalacion.md)); el
+programa las guarda cifradas. Solo para desarrollo (`npm start`) se usa un `.env`: copia `.env.example`
+como `.env` en la carpeta del sistema y llena:
 
 ```env
 PORT=3000
@@ -51,6 +54,7 @@ sigue [docs/celular.md](../docs/celular.md). La función usa su propia llave sec
 
 - El inicio de sesión valida contra `usuarios_central` y guarda una copia en la computadora.
 - Usuarios, sucursales, productos, existencias, apoyos y pedidos viven en Supabase.
-- Ventas, clientes, crédito, caja y cortes viven en cada computadora (cada farmacia tiene sus propias
-  estadísticas) para poder vender sin internet.
+- Ventas, clientes, crédito, caja y cortes se guardan primero en cada computadora para poder vender
+  sin internet, y se suben solos a la central (tablas `cajas`, `ventas`, `venta_detalle`, `cortes`,
+  `clientes` y `abonos`). Cada farmacia ve solo sus ventas; todas juntas solo las ve el jefe.
 - Una sesión ya iniciada puede seguir vendiendo sin conexión; el inventario se sube solo al volver.

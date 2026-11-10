@@ -3,7 +3,7 @@
 El sistema ya no se abre con `npm start` ni en el navegador: se instala como un programa normal de
 Windows.
 
-- Icono **Farmacia** en el escritorio; abre en su propia ventana, sin barra del navegador.
+- Icono **Farmacia** en el escritorio; abre en **pantalla completa**, sin barra del navegador ni de Windows.
 - Arranca solo al encender la computadora.
 - Imprime directo en la impresora de tickets de esa computadora, sin la ventana de "Imprimir".
 - Guarda un respaldo diario de los datos de esa computadora (ventas, clientes, crédito y cortes).
@@ -14,7 +14,7 @@ Windows.
 
 ## 1. Instalar
 
-1. Busca el instalador **`Farmacia-Instalador-1.0.0.exe`** en la carpeta `dist-escritorio` del sistema.
+1. Busca el instalador **`Farmacia-Instalador-1.0.8.exe`** en la carpeta `dist-escritorio` del sistema.
    Como está en OneDrive, en otra computadora puedes descargarlo desde OneDrive, o pasarlo con una USB.
 2. Ábrelo. La primera vez Windows puede mostrar **"Windows protegió su PC"** (el programa no tiene
    una firma digital de pago): toca **Más información → Ejecutar de todas formas**.
@@ -30,7 +30,11 @@ Al terminar se abre **Configura esta computadora**:
 
    Toca **Probar conexión**: debe decir *Conexión correcta* y los nombres de las sucursales.
    La llave se guarda cifrada con la cuenta de Windows de esa computadora.
-2. **Datos:** si esa computadora ya usaba el sistema:
+2. **Datos:** **solo** si esa computadora ya vendía **de verdad** con este sistema (con `npm start`).
+   Si ahí se usaba Eleventa u otro programa, o solo se hicieron pruebas, **sáltate este paso**: traería
+   ventas, clientes y apoyos de prueba. Si ya se trajeron por error, ve a *Recuperar un respaldo* (sección 4)
+   y elige el archivo `farmacia-antes-de-importar-….db` de la carpeta de datos del programa.
+   Si sí vendía con este sistema:
    - Primero **cierra la ventana negra de `npm start`**.
    - Toca **Traer datos del sistema anterior…** y elige la carpeta del sistema (donde están
      `farmacia.db` y `.env`).
@@ -46,6 +50,8 @@ Al terminar se abre **Configura esta computadora**:
      *Preguntar cada vez* para que salga la ventana de impresión de Windows.
 4. **Opciones:**
    - Deja marcado *Abrir el programa al encender la computadora*.
+   - *Abrir en pantalla completa*: viene marcado. Si en esa computadora prefieres la ventana normal
+     (con la barra de Windows abajo), desmárcalo.
    - En **Carpeta extra para los respaldos** se recomienda una carpeta de OneDrive (por ejemplo
      `OneDrive\Respaldos Farmacia\Sucursal Norte`): así cada día queda una copia en la nube.
    - *Dirección de la app del celular*: la de Cloudflare (ver `docs/celular.md`).
@@ -64,8 +70,10 @@ conexión reinicia el sistema, así que termina primero la venta.
 
 ## 4. Respaldos
 
-- Cada día, al abrir el sistema, se guarda una copia de los datos de esa computadora:
-  - en `%APPDATA%\Farmacia\datos\respaldos` (se conservan 30 días);
+- Se guarda una copia de los datos de esa computadora al abrir el sistema cada día y **al cerrarlo**
+  (como en Eleventa, aparece *Guardando un respaldo de los datos…* y el programa se cierra solo):
+  - en `%APPDATA%\Farmacia\datos\respaldos` (uno por día, se conservan 30 días; el del día queda
+    como estaba al cerrar);
   - y en la carpeta extra, si se eligió una.
 - En **Administración → Respaldos de esta computadora** se ve el último respaldo y hay botones para
   **Respaldar ahora** y **Descargar**.
@@ -80,8 +88,31 @@ conexión reinicia el sistema, así que termina primero la venta.
 - Si el sistema se cierra solo, el programa lo vuelve a abrir.
 - Los registros están en `%APPDATA%\Farmacia\registros` (sirven para soporte técnico).
 - **Ctrl +** / **Ctrl −** cambian el tamaño de la letra; **Ctrl 0** lo regresa a normal.
-- Al cerrar la ventana, si hay movimientos de inventario sin subir a la central (por falta de
-  internet), el programa avisa. Se suben solos la próxima vez que se abra con internet.
+- **Ctrl+Shift+F** cambia entre pantalla completa y ventana
+  (F11 no, porque en la venta es el precio de mayoreo).
+- Si al cerrar hay movimientos de inventario sin subir a la central (por falta de internet), el
+  programa avisa. Se suben solos la próxima vez que se abra con internet.
+
+## Uso diario
+
+> Novedades de la versión 1.0.7: rol **Jefe** (en *Administración → Usuarios*), pestaña **Movimientos**
+> (para administradores y jefes), **registro de cambios** e **inventario del día** con autorización del
+> jefe. Versión 1.0.8: cada computadora sube sola sus ventas, cortes, créditos y abonos a la central y el
+> jefe ve todas las farmacias (Inicio, Reportes, Cortes y Créditos). Antes de instalarlas hay que
+> actualizar la base central y la función del celular. Todo se explica en [jefe.md](jefe.md).
+
+- **Salir** (arriba a la derecha) pregunta qué hacer: **Cerrar el sistema** (guarda el respaldo y
+  cierra el programa) o **Cambiar de usuario**. En el inicio de sesión está **Cerrar el programa**.
+  También se cierra con **Alt+F4**.
+- **Varias ventas a la vez:** en la venta hay pestañas (*Ticket 1*, *Ticket 2*…). Con **Nuevo ticket**
+  (o **Ctrl+N**) se atiende a otro cliente sin cobrar la venta que se estaba haciendo; **Ctrl+Tab**
+  pasa de una a otra. Doble clic en una pestaña para ponerle nombre (por ejemplo, el del cliente).
+  Al cobrar, su pestaña se cierra.
+- **Ventas sin cobrar:** si se cierra el programa con ventas en las pestañas, pregunta si se dejan.
+  Si se dejan, aparecen igual la próxima vez que se abra (también si se fue la luz).
+- **Después del corte** la caja queda cerrada: si llega un cliente se puede armar su venta y dejarla
+  en su pestaña. Para cobrar, el programa pide abrir la caja otra vez (fondo y tipo de cambio); se
+  puede cancelar si solo se quería dejar la venta. También está el botón **Abrir caja**.
 
 ## 6. Versiones nuevas
 

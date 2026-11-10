@@ -24,6 +24,8 @@ const REPO = path.join(__dirname, '..');
 const FUENTE = path.join(REPO, 'escritorio');
 const BASE = path.resolve(process.env.FARMACIA_CONSTRUCCION || path.join(process.env.LOCALAPPDATA || os.tmpdir(), 'farmacia-construccion'));
 const SOLO_CARPETA = process.argv.includes('--carpeta');
+// Archivos que el servidor comparte con la función del celular (lo del jefe): viajan en la misma ruta relativa
+const COMPARTIDOS = ['supabase/functions/movil/supervision.mjs', 'supabase/functions/movil/ventas.mjs'];
 
 function paso(texto) {
   console.log(`\n▶ ${texto}`);
@@ -94,6 +96,10 @@ function prepararServidor() {
   for (const nombre of ['server.js', 'package.json']) fs.copyFileSync(path.join(REPO, nombre), path.join(destino, nombre));
   copiar(path.join(REPO, 'src'), path.join(destino, 'src'));
   copiar(path.join(REPO, 'public'), path.join(destino, 'public'));
+  for (const archivo of COMPARTIDOS) {
+    fs.mkdirSync(path.dirname(path.join(destino, archivo)), { recursive: true });
+    fs.copyFileSync(path.join(REPO, archivo), path.join(destino, archivo));
+  }
   const modulos = path.join(REPO, 'node_modules');
   if (!fs.existsSync(path.join(modulos, 'better-sqlite3', 'build', 'Release', 'better_sqlite3.node'))) {
     throw new Error('Faltan las dependencias del sistema: corre "npm install" en la carpeta del sistema y vuelve a intentar.');
@@ -153,4 +159,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { sirveAlServidor };
+module.exports = { sirveAlServidor, COMPARTIDOS };

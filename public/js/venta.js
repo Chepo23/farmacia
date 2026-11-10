@@ -1,9 +1,28 @@
 // Pantalla de venta (estilo Eleventa)
-const Venta = {
-  carrito: [], // { producto, cantidad }
-  filaSeleccionada: -1,
-  mayoreo: false, // F11: cobrar con precio de mayoreo
-};
+//
+// Varias ventas abiertas a la vez, en pestañas ("tickets"), como en Eleventa: mientras un cliente
+// busca su dinero se puede atender al siguiente. Las ventas sin cobrar se guardan en esta
+// computadora: si se cierra el programa (o se va la luz), siguen ahí al volver a abrirlo.
+const MAX_TICKETS = 10;
+const Tickets = { lista: [], actual: 0 };
+
+function ticketNuevo() {
+  const usados = new Set(Tickets.lista.map((t) => t.numero));
+  let numero = 1;
+  while (usados.has(numero)) numero += 1;
+  return {
+    numero,
+    nombre: '', // opcional, por ejemplo el nombre del cliente
+    carrito: [], // { producto, cantidad }
+    filaSeleccionada: -1,
+    mayoreo: false, // F11: cobrar con precio de mayoreo
+    // Cotización cargada desde "Cotizaciones": { id, folio, cliente, vigente, vigente_hasta, precios: Map(producto -> { precio, cantidad }) }
+    cotizacion: null,
+  };
+}
+
+Tickets.lista.push(ticketNuevo());
+let Venta = Tickets.lista[0]; // la venta de la pestaña que se está viendo
 
 const NOMBRES_FORMA_PAGO = {
   efectivo: 'Efectivo',
@@ -18,24 +37,44 @@ function redondear2(n) {
 }
 
 // Piezas del mismo producto en toda la venta (para el mayoreo por cantidad)
-function piezasDe(producto) {
-  return Venta.carrito.filter((r) => r.producto.id === producto.id).reduce((t, r) => t + r.cantidad, 0);
+function piezasDe(producto, t = Venta) {
+  return t.carrito.filter((r) => r.producto.id === producto.id).reduce((s, r) => s + r.cantidad, 0);
 }
 
 // Mayoreo con F11, o automático al llegar a la cantidad de mayoreo del producto
-function aplicaMayoreo(producto) {
+function aplicaMayoreo(producto, t = Venta) {
   if (producto.comun || producto.precio_mayoreo == null) return false;
-  if (Venta.mayoreo) return true;
-  return Number(producto.cantidad_mayoreo) > 0 && piezasDe(producto) >= Number(producto.cantidad_mayoreo);
+  if (t.mayoreo) return true;
+  return Number(producto.cantidad_mayoreo) > 0 && piezasDe(producto, t) >= Number(producto.cantidad_mayoreo);
 }
 
-function precioUnitario(producto) {
-  return aplicaMayoreo(producto) ? Number(producto.precio_mayoreo) : Number(producto.precio_venta);
+function precioNormal(producto, t = Venta) {
+  return aplicaMayoreo(producto, t) ? Number(producto.precio_mayoreo) : Number(producto.precio_venta);
 }
 
-function totalVenta() {
-  return redondear2(Venta.carrito.reduce((suma, r) => suma + redondear2(precioUnitario(r.producto) * r.cantidad), 0));
+// Con una cotización vigente se respeta su precio (o el de hoy, si es más bajo), siempre que no se
+// lleven más piezas de las cotizadas. El servidor aplica la misma regla al cobrar.
+function precioCotizado(producto, t = Venta) {
+  const c = t.cotizacion;
+  if (!c || !c.vigente || producto.comun) return null;
+  const cotizado = c.precios.get(producto.id);
+  if (!cotizado || piezasDe(producto, t) > cotizado.cantidad + 1e-9) return null;
+  return cotizado.precio;
 }
+
+function precioUnitario(producto, t = Venta) {
+  const normal = precioNormal(producto, t);
+  const cotizado = precioCotizado(producto, t);
+  return cotizado != null ? Math.min(normal, cotizado) : normal;
+}
+
+function totalVenta(t = Venta) {
+  return redondear2(t.carrito.reduce((suma, r) => suma + redondear2(precioUnitario(r.producto, t) * r.cantidad), 0));
+}
+
+const articulosDe = (t) => Math.round(t.carrito.reduce((s, r) => s + r.cantidad, 0) * 1000) / 1000;
+const ticketVacio = (t) => t.carrito.length === 0 && !t.cotizacion;
+const nombreTicket = (t) => t.nombre || `Ticket ${t.numero}`;
 
 // Existencia del producto en la sucursal del usuario
 function existenciaLocal(producto) {
@@ -54,10 +93,13 @@ function pintarVenta() {
     .map((r, i) => {
       const precio = precioUnitario(r.producto);
       const importe = redondear2(precio * r.cantidad);
-      const mayoreo = aplicaMayoreo(r.producto);
+      const cotizado = precioCotizado(r.producto);
+      const mayoreo = cotizado == null && aplicaMayoreo(r.producto);
+      const cotizadoAqui = Venta.cotizacion && Venta.cotizacion.precios.get(r.producto.id);
+      const pasado = Venta.cotizacion && Venta.cotizacion.vigente && cotizadoAqui && cotizado == null;
       return `<tr data-indice="${i}" class="${i === Venta.filaSeleccionada ? 'seleccionado' : ''}">
         <td class="col-cant"><input type="number" class="cantidad" min="0.01" step="any" value="${r.cantidad}" data-indice="${i}" aria-label="Cantidad"></td>
-        <td>${escaparHtml(r.producto.descripcion)}${mayoreo ? ' <span class="chip enviado">Mayoreo</span>' : ''}</td>
+        <td>${escaparHtml(r.producto.descripcion)}${mayoreo ? ' <span class="chip enviado">Mayoreo</span>' : ''}${cotizado != null ? ' <span class="chip ok">Precio cotizado</span>' : ''}${pasado ? ` <span class="chip pendiente" title="Se cotizaron ${cotizadoAqui.cantidad}">Más de lo cotizado: precio normal</span>` : ''}</td>
         <td class="num">${dinero(precio)}</td>
         <td class="num col-importe">${dinero(importe)}</td>
         <td><button class="boton-quitar" data-indice="${i}" title="Quitar renglón"><svg class="icono"><use href="#i-x"/></svg></button></td>
@@ -72,6 +114,230 @@ function pintarVenta() {
   document.getElementById('total-dolares').textContent =
     tipoCambio > 0 ? `≈ ${(total / tipoCambio).toFixed(2)} USD (T.C. $${tipoCambio.toFixed(2)})` : '';
   document.getElementById('indicador-mayoreo').hidden = !Venta.mayoreo;
+  pintarFranjaCotizacion();
+  pintarPestanas();
+  // Después del corte la caja queda cerrada: se pueden armar ventas y cobrarlas al abrirla
+  document.getElementById('franja-caja').hidden = !(App.usuario && !App.apertura);
+  guardarTickets();
+}
+
+// ---------- Pestañas de venta (tickets) ----------
+function pintarPestanas() {
+  const contenedor = document.getElementById('pestanas-venta');
+  contenedor.innerHTML = Tickets.lista.map((t, i) => `
+    <div class="pestana-venta ${i === Tickets.actual ? 'activa' : ''}" role="tab" aria-selected="${i === Tickets.actual}">
+      <button type="button" class="pestana-venta-boton" data-ticket="${i}" title="Doble clic para ponerle nombre (por ejemplo, el del cliente)">
+        <b>${escaparHtml(nombreTicket(t))}</b>
+        <small>${t.carrito.length ? `${articulosDe(t)} art. · ${dinero(totalVenta(t))}` : 'Vacío'}</small>
+      </button>
+      ${Tickets.lista.length > 1 ? `<button type="button" class="pestana-venta-cerrar" data-cerrar="${i}" title="Cerrar este ticket" aria-label="Cerrar ${escaparHtml(nombreTicket(t))}"><svg class="icono"><use href="#i-x"/></svg></button>` : ''}
+    </div>`).join('')
+    + (Tickets.lista.length < MAX_TICKETS
+      ? '<button type="button" class="pestana-nueva" id="ticket-nuevo" title="Atender a otro cliente sin cobrar esta venta"><svg class="icono"><use href="#i-mas"/></svg>Nuevo ticket <small>Ctrl+N</small></button>'
+      : '');
+}
+
+function cambiarTicket(i) {
+  if (!Tickets.lista[i]) return;
+  Tickets.actual = i;
+  Venta = Tickets.lista[i];
+  pintarVenta();
+  entradaCodigo.focus();
+}
+
+function nuevoTicket() {
+  if (Tickets.lista.length >= MAX_TICKETS) {
+    aviso(`Se pueden tener hasta ${MAX_TICKETS} tickets abiertos: cobra o cierra alguno`, 'error');
+    return false;
+  }
+  Tickets.lista.push(ticketNuevo());
+  cambiarTicket(Tickets.lista.length - 1);
+  return true;
+}
+
+// Quita una pestaña (siempre queda al menos una) y muestra la de junto
+function quitarTicket(i) {
+  Tickets.lista.splice(i, 1);
+  if (!Tickets.lista.length) Tickets.lista.push(ticketNuevo());
+  if (i < Tickets.actual) Tickets.actual -= 1;
+  else if (i === Tickets.actual) Tickets.actual = Math.max(0, i - 1);
+  Tickets.actual = Math.min(Tickets.actual, Tickets.lista.length - 1);
+  Venta = Tickets.lista[Tickets.actual];
+  pintarVenta();
+}
+
+// La venta de la pestaña se cobró o se canceló: si hay más tickets se cierra; si no, queda vacío
+function terminarTicketActual() {
+  if (Tickets.lista.length > 1) {
+    quitarTicket(Tickets.actual);
+    return;
+  }
+  Tickets.lista = [];
+  Tickets.lista.push(ticketNuevo());
+  Tickets.actual = 0;
+  Venta = Tickets.lista[0];
+  pintarVenta();
+}
+
+async function cerrarTicket(i) {
+  const t = Tickets.lista[i];
+  if (!t) return;
+  if (!ticketVacio(t)) {
+    const cerrar = await confirmar({
+      titulo: `Cerrar ${nombreTicket(t)}`,
+      mensaje: `Se borra esta venta sin cobrar (${articulosDe(t)} artículo(s), ${dinero(totalVenta(t))}).`,
+      boton: 'Cerrar ticket',
+      peligro: true,
+    });
+    if (!cerrar) return;
+  }
+  quitarTicket(i);
+  entradaCodigo.focus();
+}
+
+async function renombrarTicket(i) {
+  const t = Tickets.lista[i];
+  if (!t) return;
+  const nombre = await pedirTexto({
+    titulo: `Nombre de ${nombreTicket(t)}`,
+    mensaje: 'Para reconocer la venta de cada cliente. Déjalo vacío para quitarlo.',
+    etiqueta: 'Nombre',
+    boton: 'Guardar',
+    obligatorio: false,
+    peligro: false,
+  });
+  if (nombre === null) return;
+  t.nombre = nombre.trim().slice(0, 30);
+  pintarVenta();
+  entradaCodigo.focus();
+}
+
+document.getElementById('pestanas-venta').addEventListener('click', (e) => {
+  const cerrar = e.target.closest('[data-cerrar]');
+  if (cerrar) {
+    cerrarTicket(Number(cerrar.dataset.cerrar));
+    return;
+  }
+  const pestana = e.target.closest('[data-ticket]');
+  // La pestaña que ya se ve no se vuelve a dibujar (así funciona el doble clic para el nombre).
+  // El cursor siempre regresa al código: el lector de barras escribe donde esté el cursor.
+  if (pestana && Number(pestana.dataset.ticket) === Tickets.actual) entradaCodigo.focus();
+  else if (pestana) cambiarTicket(Number(pestana.dataset.ticket));
+  else if (e.target.closest('#ticket-nuevo')) nuevoTicket();
+});
+document.getElementById('pestanas-venta').addEventListener('dblclick', (e) => {
+  const pestana = e.target.closest('[data-ticket]');
+  if (pestana) renombrarTicket(Number(pestana.dataset.ticket));
+});
+
+// ---------- Ventas sin cobrar guardadas en esta computadora ----------
+let ticketsListos = false; // no se guarda nada hasta haber leído lo que ya estaba guardado
+const claveTickets = () => `farmacia.ventas-abiertas.${App.usuario ? App.usuario.sucursal_id : 0}`;
+
+function guardarTickets() {
+  if (!ticketsListos) return;
+  try {
+    localStorage.setItem(claveTickets(), JSON.stringify({
+      actual: Tickets.actual,
+      lista: Tickets.lista.map((t) => ({ ...t, cotizacion: t.cotizacion ? { ...t.cotizacion, precios: [...t.cotizacion.precios] } : null })),
+    }));
+  } catch { /* sin almacenamiento: las ventas abiertas solo duran mientras el programa esté abierto */ }
+}
+
+// Al entrar: recupera las ventas que se dejaron sin cobrar, con los precios y existencias de hoy
+async function restaurarTickets() {
+  let guardado = null;
+  try { guardado = JSON.parse(localStorage.getItem(claveTickets()) || 'null'); } catch { guardado = null; }
+  const recuperados = (guardado && Array.isArray(guardado.lista) ? guardado.lista : [])
+    .filter((t) => t && Array.isArray(t.carrito))
+    .map((t) => ({
+      ...ticketNuevo(),
+      numero: Number(t.numero) || 1,
+      nombre: String(t.nombre || ''),
+      carrito: t.carrito.filter((r) => r && r.producto && Number(r.cantidad) > 0),
+      mayoreo: Boolean(t.mayoreo),
+      cotizacion: t.cotizacion ? { ...t.cotizacion, precios: new Map(t.cotizacion.precios || []) } : null,
+    }))
+    .filter((t) => !ticketVacio(t));
+  const actuales = Tickets.lista.filter((t) => !ticketVacio(t));
+  ticketsListos = true;
+  if (!recuperados.length) {
+    pintarVenta();
+    return;
+  }
+  // Datos de hoy de cada producto (precio y existencia); los que ya no se venden se quitan
+  const ids = [...new Set(recuperados.flatMap((t) => t.carrito.filter((r) => !r.producto.comun).map((r) => Number(r.producto.id))))];
+  const quitados = [];
+  if (ids.length) {
+    try {
+      const frescos = new Map((await api(`/api/productos?ids=${ids.join(',')}`)).map((p) => [p.id, p]));
+      for (const t of recuperados) {
+        t.carrito = t.carrito.filter((r) => {
+          if (r.producto.comun) return true;
+          const fresco = frescos.get(Number(r.producto.id));
+          if (!fresco) quitados.push(r.producto.descripcion);
+          else r.producto = fresco;
+          return Boolean(fresco);
+        });
+      }
+    } catch { /* sin conexión: se usan los datos guardados; el servidor revisa todo al cobrar */ }
+  }
+  for (const t of recuperados) {
+    for (const r of t.carrito) {
+      const n = Number(String(r.producto.id).replace('comun-', ''));
+      if (r.producto.comun && n > contadorComun) contadorComun = n;
+    }
+  }
+  Tickets.lista = [...recuperados, ...actuales].slice(0, MAX_TICKETS);
+  if (!Tickets.lista.length) Tickets.lista.push(ticketNuevo());
+  Tickets.actual = Math.min(Math.max(Number(guardado.actual) || 0, 0), Tickets.lista.length - 1);
+  Venta = Tickets.lista[Tickets.actual];
+  pintarVenta();
+  const pendientes = Tickets.lista.filter((t) => t.carrito.length).length;
+  aviso(`${pendientes === 1 ? 'Hay 1 venta' : `Hay ${pendientes} ventas`} sin cobrar de la vez pasada${quitados.length ? `. Ya no están en el catálogo: ${quitados.join(', ')}` : ''}`, quitados.length ? 'error' : '');
+}
+
+// Para el programa de escritorio: al cerrar pregunta si se dejan las ventas sin cobrar
+window.ventasSinCobrar = () => {
+  const conArticulos = Tickets.lista.filter((t) => t.carrito.length > 0);
+  return {
+    tickets: conArticulos.length,
+    articulos: Math.round(conArticulos.reduce((s, t) => s + articulosDe(t), 0) * 1000) / 1000,
+    total: redondear2(conArticulos.reduce((s, t) => s + totalVenta(t), 0)),
+  };
+};
+window.descartarVentasSinCobrar = () => {
+  Tickets.lista = [];
+  Tickets.lista.push(ticketNuevo());
+  Tickets.actual = 0;
+  Venta = Tickets.lista[0];
+  pintarVenta();
+  return true;
+};
+
+function pintarFranjaCotizacion() {
+  const franja = document.getElementById('franja-cotizacion');
+  const c = Venta.cotizacion;
+  franja.hidden = !c;
+  if (!c) {
+    franja.innerHTML = '';
+    return;
+  }
+  franja.innerHTML = `<span><svg class="icono"><use href="#i-cotizar"/></svg>
+      Cotización folio ${c.folio}${c.cliente ? ` · ${escaparHtml(c.cliente)}` : ''} ·
+      ${c.vigente ? `precios respetados hasta el ${escaparHtml(fechaDiaCorta(c.vigente_hasta))}` : 'ya venció: se cobra con los precios de hoy'}</span>
+    <button class="boton" id="quitar-cotizacion">Quitar cotización</button>`;
+  franja.querySelector('#quitar-cotizacion').addEventListener('click', () => {
+    Venta.cotizacion = null;
+    pintarVenta();
+    aviso('Se quitó la cotización: la venta se cobra con los precios de hoy');
+    entradaCodigo.focus();
+  });
+}
+
+function fechaDiaCorta(iso) {
+  const fecha = new Date(String(iso || '').replace(' ', 'T'));
+  return Number.isNaN(fecha.getTime()) ? '' : fecha.toLocaleDateString('es-MX', { day: 'numeric', month: 'short' });
 }
 
 function agregarProducto(producto, cantidad) {
@@ -229,13 +495,127 @@ document.addEventListener('keydown', (e) => {
   pintarVenta();
 });
 
+// F4: borra la venta de la pestaña (si hay más tickets, la pestaña se cierra)
 function cancelarVenta() {
-  if (Venta.carrito.length === 0) return;
-  Venta.carrito = [];
-  Venta.filaSeleccionada = -1;
-  Venta.mayoreo = false;
-  pintarVenta();
+  if (ticketVacio(Venta)) {
+    if (Tickets.lista.length > 1) quitarTicket(Tickets.actual);
+    entradaCodigo.focus();
+    return;
+  }
+  terminarTicketActual();
   aviso('Venta cancelada');
+  entradaCodigo.focus();
+}
+
+// ---------- Cotizaciones que mandó la central para cobrarse aquí ----------
+async function revisarCotizaciones() {
+  try {
+    const { pendientes, para_mi: paraMi } = await api('/api/cotizaciones/pendientes');
+    const globo = document.getElementById('aviso-cotizaciones');
+    globo.textContent = pendientes;
+    globo.hidden = pendientes === 0;
+    document.getElementById('boton-cotizaciones').title = pendientes
+      ? `${pendientes} cotización(es) por cobrar${paraMi ? ` (${paraMi} para ti)` : ''}`
+      : 'No hay cotizaciones por cobrar';
+  } catch { /* sin conexión: no molestar */ }
+}
+
+async function abrirCotizaciones() {
+  const modal = abrirModal(`
+    <h3>Cotizaciones por cobrar</h3>
+    <p>Las manda la central para que se cobren en esta sucursal. El precio cotizado se respeta hasta la fecha indicada.</p>
+    <div class="resultados-busqueda">
+      <table class="tabla">
+        <thead><tr><th class="num">Folio</th><th>Cliente</th><th>Para</th><th>Enviada</th><th>Precio hasta</th><th class="num">Productos</th><th class="num">Total</th><th></th></tr></thead>
+        <tbody id="cotizaciones-cuerpo"><tr><td colspan="8" class="vacio">Cargando…</td></tr></tbody>
+      </table>
+    </div>
+    <div class="pie"><button class="boton" id="cotizaciones-cerrar">Cerrar (Esc)</button></div>
+  `);
+  modal.classList.add('grande');
+  modal.querySelector('#cotizaciones-cerrar').addEventListener('click', cerrarModal);
+  const cuerpo = modal.querySelector('#cotizaciones-cuerpo');
+  let lista = [];
+  try {
+    lista = await api('/api/cotizaciones?estado=enviada');
+  } catch (err) {
+    cuerpo.innerHTML = `<tr><td colspan="8" class="vacio">${escaparHtml(err.message)}</td></tr>`;
+    return;
+  }
+  // Primero las que son para este usuario
+  lista.sort((a, b) => (b.destino_usuario_id === App.usuario.id) - (a.destino_usuario_id === App.usuario.id) || b.id - a.id);
+  cuerpo.innerHTML = lista.map((c) => `
+    <tr class="${c.destino_usuario_id === App.usuario.id ? 'fila-destacada' : ''}">
+      <td class="num">${c.folio}</td>
+      <td>${escaparHtml(c.cliente || '—')}${c.nota ? `<br><small>${escaparHtml(c.nota)}</small>` : ''}</td>
+      <td>${c.destino_usuario ? escaparHtml(c.destino_usuario) : 'Toda la sucursal'}</td>
+      <td>${escaparHtml(fechaHora(c.creado))}<br><small>${escaparHtml(c.creador)}</small></td>
+      <td>${c.vigente ? escaparHtml(fechaDiaCorta(c.vigente_hasta)) : '<span class="chip pendiente">Vencida</span>'}</td>
+      <td class="num">${c.productos}</td>
+      <td class="num">${dinero(c.total)}</td>
+      <td><button class="boton primario" data-cotizacion="${c.id}">Cargar en la venta</button></td>
+    </tr>`).join('') || '<tr><td colspan="8" class="vacio">No hay cotizaciones por cobrar en esta sucursal.</td></tr>';
+  cuerpo.addEventListener('click', (e) => {
+    const boton = e.target.closest('button[data-cotizacion]');
+    if (boton) cargarCotizacion(Number(boton.dataset.cotizacion), boton);
+  });
+  cuerpo.querySelector('button[data-cotizacion]')?.focus();
+}
+
+async function cargarCotizacion(id, boton) {
+  let c;
+  if (boton) boton.disabled = true;
+  try {
+    c = await api(`/api/cotizaciones/${id}?productos=1`);
+  } catch (err) {
+    aviso(err.message, 'error');
+    if (boton) boton.disabled = false;
+    return;
+  }
+  if (c.estado !== 'enviada') {
+    aviso('Esa cotización ya se cobró o se canceló', 'error');
+    cerrarModal();
+    revisarCotizaciones();
+    return;
+  }
+  // La venta que ya se estaba armando no se pierde: la cotización va en otro ticket
+  if (!ticketVacio(Venta) && !nuevoTicket()) {
+    if (boton) boton.disabled = false;
+    return;
+  }
+  const productos = new Map((c.productos_actuales || []).map((p) => [p.id, p]));
+  const carrito = [];
+  const avisos = [];
+  for (const r of c.renglones) {
+    const producto = productos.get(r.producto_id);
+    if (!producto) {
+      avisos.push(`"${r.descripcion}" ya no está en el catálogo`);
+      continue;
+    }
+    const existencia = existenciaLocal(producto);
+    const cantidad = Math.min(r.cantidad, existencia);
+    if (!(cantidad > 0)) {
+      avisos.push(`No hay existencia de "${r.descripcion}"`);
+      continue;
+    }
+    if (cantidad < r.cantidad) avisos.push(`De "${r.descripcion}" solo hay ${cantidad} (se cotizaron ${r.cantidad})`);
+    carrito.push({ producto, cantidad });
+  }
+  Venta.carrito = carrito;
+  Venta.filaSeleccionada = carrito.length - 1;
+  Venta.mayoreo = false;
+  Venta.cotizacion = {
+    id: c.id,
+    folio: c.folio,
+    cliente: c.cliente,
+    vigente: c.vigente,
+    vigente_hasta: c.vigente_hasta,
+    precios: new Map(c.renglones.map((r) => [r.producto_id, { precio: r.precio_unitario, cantidad: r.cantidad }])),
+  };
+  cerrarModal();
+  pintarVenta();
+  if (avisos.length) aviso(avisos.join(' · '), 'error');
+  else aviso(`Cotización folio ${c.folio} cargada en ${nombreTicket(Venta)}: revisa y cobra (F12)`, 'exito');
   entradaCodigo.focus();
 }
 
@@ -304,13 +684,22 @@ function abrirBusquedaProducto() {
 }
 
 // ---------- Cobro (F12) ----------
+// Formas de pago con ícono (como en Eleventa); la letra también la elige desde el teclado
+const FORMAS_COBRO = [
+  { valor: 'efectivo', nombre: 'Efectivo', tecla: 'E', icono: 'i-pago-efectivo' },
+  { valor: 'tarjeta', nombre: 'Tarjeta', tecla: 'T', icono: 'i-pago-tarjeta' },
+  { valor: 'dolar', nombre: 'Dólares', tecla: 'D', icono: 'i-pago-dolar' },
+  { valor: 'mixto', nombre: 'Mixto', detalle: 'Efectivo + tarjeta', tecla: 'M', icono: 'i-pago-mixto' },
+  { valor: 'credito', nombre: 'Crédito', detalle: 'Fiado', tecla: 'C', icono: 'i-pago-credito' },
+];
+
 async function abrirCobro() {
   if (Venta.carrito.length === 0) {
     aviso('No hay artículos en la venta', 'error');
     return;
   }
   if (!App.apertura) {
-    await pedirApertura();
+    await pedirApertura({ cancelable: true });
     if (!App.apertura) return;
   }
   const total = totalVenta();
@@ -324,16 +713,16 @@ async function abrirCobro() {
     <h3>Cobrar</h3>
     <div class="total-cobro">${dinero(total)}</div>
     ${tipoCambio > 0 ? `<div class="conteo-articulos" style="text-align:center">≈ ${(total / tipoCambio).toFixed(2)} USD (T.C. $${tipoCambio.toFixed(2)})</div>` : ''}
+    <div class="formas-pago" role="radiogroup" aria-label="Forma de pago">
+      ${FORMAS_COBRO.map((f) => `<button type="button" class="forma-pago ${f.valor === 'efectivo' ? 'activa' : ''}" data-forma="${f.valor}"
+          role="radio" aria-checked="${f.valor === 'efectivo'}" title="${f.nombre} (tecla ${f.tecla})">
+          <small class="tecla-forma">${f.tecla}</small>
+          <svg class="icono"><use href="#${f.icono}"/></svg>
+          <b>${f.nombre}</b>${f.detalle ? `<span>${f.detalle}</span>` : ''}
+        </button>`).join('')}
+    </div>
+    <input type="hidden" id="cobro-forma" value="efectivo">
     <div class="fila">
-      <label>Forma de pago
-        <select id="cobro-forma">
-          <option value="efectivo">Efectivo</option>
-          <option value="dolar">Dólares</option>
-          <option value="tarjeta">Tarjeta</option>
-          <option value="mixto">Mixto (efectivo + tarjeta)</option>
-          <option value="credito">Crédito (fiado)</option>
-        </select>
-      </label>
       <label id="etiqueta-pago">Pago recibido ($)
         <input type="number" id="cobro-pago" step="0.01" min="0" value="${total.toFixed(2)}">
       </label>
@@ -358,8 +747,8 @@ async function abrirCobro() {
     <div id="cobro-error" class="mensaje-error" hidden></div>
     <div class="pie">
       <button class="boton" id="cobro-cancelar">Cancelar (Esc)</button>
-      <button class="boton primario" id="cobro-sin-imprimir">Cobrar sin imprimir</button>
-      <button class="boton exito grande" id="cobro-imprimir"><svg class="icono"><use href="#i-imprimir"/></svg>Cobrar e imprimir (Enter)</button>
+      <button class="boton primario" id="cobro-sin-imprimir">Cobrar sin imprimir (F2)</button>
+      <button class="boton exito grande" id="cobro-imprimir"><svg class="icono"><use href="#i-imprimir"/></svg>Cobrar e imprimir (F1 o Enter)</button>
     </div>
   `);
 
@@ -391,8 +780,27 @@ async function abrirCobro() {
   }
   forma.addEventListener('change', () => {
     actualizar();
-    const visible = { efectivo: pago, dolar: pagoUsd, mixto: mixtoEfectivo }[forma.value];
-    if (visible) { visible.focus(); visible.select(); }
+    // Donde se escribe el pago de esa forma; con tarjeta no hay nada que escribir: listo para cobrar
+    const visible = { efectivo: pago, dolar: pagoUsd, mixto: mixtoEfectivo, credito: modal.querySelector('#cobro-cliente') }[forma.value];
+    if (visible) {
+      visible.focus();
+      if (visible.tagName === 'INPUT') visible.select();
+    } else {
+      modal.querySelector('#cobro-imprimir').focus();
+    }
+  });
+  function elegirForma(valor) {
+    forma.value = valor;
+    modal.querySelectorAll('.forma-pago').forEach((b) => {
+      const activa = b.dataset.forma === valor;
+      b.classList.toggle('activa', activa);
+      b.setAttribute('aria-checked', String(activa));
+    });
+    forma.dispatchEvent(new Event('change'));
+  }
+  modal.querySelector('.formas-pago').addEventListener('click', (e) => {
+    const boton = e.target.closest('[data-forma]');
+    if (boton) elegirForma(boton.dataset.forma);
   });
   pago.addEventListener('input', actualizar);
   pagoUsd.addEventListener('input', actualizar);
@@ -423,22 +831,30 @@ async function abrirCobro() {
           cliente_id: forma.value === 'credito' ? Number(modal.querySelector('#cobro-cliente').value) : null,
           mayoreo: Venta.mayoreo,
           nota: modal.querySelector('#cobro-nota').value,
+          cotizacion_id: Venta.cotizacion ? Venta.cotizacion.id : null,
         },
       });
-      Venta.carrito = [];
-      Venta.filaSeleccionada = -1;
-      Venta.mayoreo = false;
-      pintarVenta();
+      terminarTicketActual();
+      if (respuesta.cotizacion) revisarCotizaciones();
       if (imprimir) await imprimirTicket(respuesta.ventaId, false);
       mostrarVentaTerminada(respuesta);
     } catch (err) {
       errorEl.textContent = err.message;
       errorEl.hidden = false;
+      if (err.codigo === 'COTIZACION_USADA') {
+        // Ya se cobró en otra caja o la cancelaron: la venta sigue, pero con los precios de hoy
+        Venta.cotizacion = null;
+        pintarVenta();
+        revisarCotizaciones();
+        errorEl.textContent = `${err.message}. Se quitó de la venta: revisa el total y vuelve a cobrar.`;
+        cerrarModal();
+        aviso(errorEl.textContent, 'error');
+      }
       if (err.codigo === 'SIN_APERTURA') {
         App.apertura = null;
         cerrarModal();
-        await pedirApertura();
-        aviso('Caja abierta. Vuelve a cobrar la venta (F12).');
+        await pedirApertura({ cancelable: true });
+        if (App.apertura) aviso('Caja abierta. Vuelve a cobrar la venta (F12).');
       }
     } finally {
       cobrando = false;
@@ -448,7 +864,18 @@ async function abrirCobro() {
   modal.querySelector('#cobro-sin-imprimir').addEventListener('click', () => confirmar(false));
   modal.querySelector('#cobro-imprimir').addEventListener('click', () => confirmar(true));
   modal.querySelector('#cobro-cancelar').addEventListener('click', cerrarModal);
+  const teclasForma = Object.fromEntries(FORMAS_COBRO.map((f) => [f.tecla.toLowerCase(), f.valor]));
   modal.addEventListener('keydown', (e) => {
+    // E, T, D, M, C eligen la forma de pago (salvo al escribir la nota o elegir el cliente)
+    const escribiendo = e.target.id === 'cobro-nota' || e.target.tagName === 'SELECT';
+    const formaDeTecla = teclasForma[String(e.key).toLowerCase()];
+    if (formaDeTecla && !escribiendo && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      e.preventDefault();
+      elegirForma(formaDeTecla);
+      return;
+    }
+    if (e.key === 'F1') { e.preventDefault(); confirmar(true); return; }
+    if (e.key === 'F2') { e.preventDefault(); confirmar(false); return; }
     if (e.key === 'Enter' && e.target.tagName !== 'BUTTON') {
       e.preventDefault();
       confirmar(true);
@@ -456,9 +883,10 @@ async function abrirCobro() {
   });
 }
 
-function mostrarVentaTerminada({ folio, cambio, inventarioPendiente, avisoSincronizacion }) {
+function mostrarVentaTerminada({ folio, cambio, inventarioPendiente, avisoSincronizacion, cotizacion }) {
   const modal = abrirModal(`
     <h3>Venta realizada — Folio ${folio}</h3>
+    ${cotizacion ? `<div class="franja-aviso info">Se cobró la cotización folio ${cotizacion.folio}${cotizacion.vigente ? ' con sus precios' : ' (vencida: con los precios de hoy)'}.</div>` : ''}
     <div>CAMBIO:</div>
     <div class="cambio-grande">${dinero(cambio)}</div>
     ${inventarioPendiente ? `<div class="franja-aviso info">${escaparHtml(avisoSincronizacion || 'El inventario se actualizará en la central cuando vuelva el internet.')}</div>` : ''}
@@ -668,6 +1096,15 @@ document.getElementById('boton-cancelar-venta').addEventListener('click', cancel
 document.getElementById('boton-reimprimir').addEventListener('click', reimprimirUltimoTicket);
 document.getElementById('boton-ventas-dia').addEventListener('click', abrirVentasDelDia);
 document.getElementById('boton-articulo-comun').addEventListener('click', abrirArticuloComun);
+document.getElementById('boton-cotizaciones').addEventListener('click', abrirCotizaciones);
+
+document.getElementById('boton-abrir-caja').addEventListener('click', () => pedirApertura({ cancelable: true }));
+
+document.addEventListener('app:listo', () => {
+  restaurarTickets();
+  revisarCotizaciones();
+  setInterval(revisarCotizaciones, 60000);
+});
 
 document.addEventListener('keydown', (e) => {
   const ventaActiva = document.getElementById('seccion-venta').classList.contains('activa');
@@ -677,6 +1114,12 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'F11') { e.preventDefault(); alternarMayoreo(); }
   if (e.key === 'F12') { e.preventDefault(); abrirCobro(); }
   if (e.key === 'F4') { e.preventDefault(); cancelarVenta(); }
+  // Tickets: Ctrl+N abre otro; Ctrl+Tab (o Ctrl+Shift+Tab) pasa al siguiente (o al anterior)
+  if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'n') { e.preventDefault(); nuevoTicket(); }
+  if (e.ctrlKey && e.key === 'Tab') {
+    e.preventDefault();
+    cambiarTicket((Tickets.actual + (e.shiftKey ? Tickets.lista.length - 1 : 1)) % Tickets.lista.length);
+  }
   if (e.key === 'Delete' && document.activeElement === entradaCodigo && Venta.filaSeleccionada >= 0) {
     e.preventDefault();
     Venta.carrito.splice(Venta.filaSeleccionada, 1);
@@ -686,3 +1129,5 @@ document.addEventListener('keydown', (e) => {
 });
 
 App.alMostrarSeccion.venta = () => entradaCodigo.focus();
+
+pintarVenta();

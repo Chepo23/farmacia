@@ -25,6 +25,8 @@ let ventana = null; // el sistema
 let ventanaConfig = null; // configuración de esta computadora
 let ultimoError = null; // { mensaje, registro } para la pantalla de error
 let saliendo = false;
+let cerrando = false; // ya se está preguntando o respaldando al cerrar (evita preguntas repetidas)
+let finDeSesion = false; // Windows se está apagando: se cierra sin preguntar
 let caidas = [];
 let anterior = null; // datos del sistema anterior elegidos en la configuración
 
@@ -81,17 +83,19 @@ function crearVentana() {
     show: false,
     title: 'Farmacia — Punto de venta',
     icon: ICONO,
-    backgroundColor: '#f3f7f0',
+    backgroundColor: '#F2F6F8',
     autoHideMenuBar: true,
     webPreferences: opcionesWeb(),
   });
   ventana.once('ready-to-show', () => {
     if (OCULTO) return;
-    ventana.maximize();
+    ventana.maximize(); // al salir de pantalla completa queda maximizada
     ventana.show();
+    if ((configuracion.leer() || configuracion.DEFECTOS).pantallaCompleta !== false) ventana.setFullScreen(true);
   });
   protegerContenido(ventana.webContents);
   ventana.on('close', alCerrarVentana);
+  ventana.on('session-end', () => { finDeSesion = true; });
   ventana.on('closed', () => { ventana = null; });
 }
 
@@ -110,7 +114,7 @@ function abrirConfiguracion({ primeraVez = false } = {}) {
     show: false,
     title: primeraVez ? 'Bienvenido: configura esta computadora' : 'Configuración de esta computadora',
     icon: ICONO,
-    backgroundColor: '#f3f7f0',
+    backgroundColor: '#F2F6F8',
     autoHideMenuBar: true,
     parent: conPadre ? ventana : undefined,
     modal: Boolean(conPadre),
@@ -130,8 +134,11 @@ async function iniciarSistema() {
   if (!ventana || ventana.isDestroyed()) return;
   ultimoError = null;
   await ventana.loadFile(path.join(PAGINAS, 'cargando.html'));
+  const mostradaDesde = Date.now();
   try {
     const { url } = await servidor.iniciar(configuracion.leer());
+    const falta = 1600 - (Date.now() - mostradaDesde);
+    if (falta > 0 && !OCULTO) await new Promise((listo) => setTimeout(listo, falta));
     if (ventana && !ventana.isDestroyed()) await ventana.loadURL(`${url}/`);
   } catch (error) {
     mostrarError(error.message);
@@ -157,26 +164,94 @@ function alCaerServidor(codigo) {
 }
 
 // ---------- Cerrar ----------
+// Al cerrar (X, Alt+F4 o "Salir → Cerrar el sistema"): se pregunta por las ventas sin cobrar y por
+// los movimientos sin subir, se actualiza el respaldo del día y se apaga el servidor.
 async function alCerrarVentana(evento) {
   if (saliendo) return;
   evento.preventDefault();
+  if (cerrando) return;
+  cerrando = true;
+  try {
+    if (!finDeSesion) {
+      if (!await preguntarVentasAbiertas()) return;
+      if (!await preguntarMovimientosPendientes()) return;
+      await respaldarAlCerrar();
+    }
+    await salir();
+  } finally {
+    cerrando = false;
+  }
+}
+
+const pesos = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(Number(n) || 0);
+
+// Las ventas abiertas (pestañas de venta) se guardan en la computadora: aquí se decide si se dejan
+async function preguntarVentasAbiertas() {
+  if (!ventana || ventana.isDestroyed()) return true;
+  let abiertas = null;
+  try {
+    abiertas = await Promise.race([
+      ventana.webContents.executeJavaScript('typeof window.ventasSinCobrar === "function" ? window.ventasSinCobrar() : null', true),
+      new Promise((listo) => setTimeout(() => listo(null), 3000)),
+    ]);
+  } catch { /* la pantalla no es la del sistema */ }
+  if (!abiertas || !(abiertas.tickets > 0)) return true;
+  let respuesta = process.env.FARMACIA_PRUEBA_VENTAS === 'borrar' ? 1 : 0;
+  if (!OCULTO) {
+    const { response } = await dialog.showMessageBox(ventana, {
+      type: 'question',
+      buttons: ['Dejarlas y cerrar', 'Borrarlas y cerrar', 'No cerrar'],
+      defaultId: 0,
+      cancelId: 2,
+      noLink: true,
+      title: 'Ventas sin cobrar',
+      message: abiertas.tickets === 1
+        ? `Hay una venta sin cobrar (${abiertas.articulos} artículo(s), ${pesos(abiertas.total)}).`
+        : `Hay ${abiertas.tickets} ventas sin cobrar (${abiertas.articulos} artículos, ${pesos(abiertas.total)} en total).`,
+      detail: '¿Deseas dejarlas? Si las dejas, aparecerán igual la próxima vez que abras el programa para cobrarlas.',
+    });
+    respuesta = response;
+  }
+  if (respuesta === 2) return false;
+  if (respuesta === 1) {
+    await ventana.webContents.executeJavaScript('window.descartarVentasSinCobrar && window.descartarVentasSinCobrar()', true).catch(() => {});
+  }
+  return true;
+}
+
+async function preguntarMovimientosPendientes() {
   let pendientes = 0;
   try {
     pendientes = Number((await servidor.estado()).sincronizacion.pendientes) || 0;
   } catch { /* el servidor ya no responde */ }
-  if (pendientes > 0 && !OCULTO) {
-    const { response } = await dialog.showMessageBox(ventana, {
-      type: 'warning',
-      buttons: ['Cerrar de todos modos', 'No cerrar'],
-      defaultId: 1,
-      cancelId: 1,
-      title: 'Movimientos sin subir',
-      message: `Hay ${pendientes} movimiento(s) de inventario que todavía no se suben a la central.`,
-      detail: 'Se subirán solos la próxima vez que abras el programa con internet. Si puedes, revisa la conexión y espera un momento antes de cerrar.',
-    });
-    if (response !== 0) return;
+  if (!(pendientes > 0) || OCULTO) return true;
+  const { response } = await dialog.showMessageBox(ventana, {
+    type: 'warning',
+    buttons: ['Cerrar de todos modos', 'No cerrar'],
+    defaultId: 1,
+    cancelId: 1,
+    noLink: true,
+    title: 'Movimientos sin subir',
+    message: `Hay ${pendientes} movimiento(s) de inventario que todavía no se suben a la central.`,
+    detail: 'Se subirán solos la próxima vez que abras el programa con internet. Si puedes, revisa la conexión y espera un momento antes de cerrar.',
+  });
+  return response === 0;
+}
+
+// Como en Eleventa: al salir se guarda un respaldo (el del día queda como terminó el día)
+async function respaldarAlCerrar() {
+  if (!servidor.url) return;
+  const inicio = Date.now();
+  try {
+    if (ventana && !ventana.isDestroyed()) await ventana.loadFile(path.join(PAGINAS, 'cerrando.html'));
+  } catch { /* se respalda igual */ }
+  try {
+    await servidor.respaldar({ tipo: 'cierre' });
+  } catch (error) {
+    servidor.registrar(`No se pudo guardar el respaldo al cerrar: ${error.message}\n`);
   }
-  await salir();
+  const falta = 1200 - (Date.now() - inicio); // que alcance a leerse el aviso
+  if (falta > 0 && !OCULTO) await new Promise((listo) => setTimeout(listo, falta));
 }
 
 async function salir() {
@@ -225,17 +300,25 @@ function protegerContenido(contenido) {
     evento.preventDefault();
     if (/^https?:\/\//i.test(url)) shell.openExternal(url);
   });
-  // Ctrl + / Ctrl - / Ctrl 0: tamaño de la letra; Ctrl+Shift+I: herramientas para soporte técnico
+  // Ctrl + / Ctrl - / Ctrl 0: tamaño de la letra; Ctrl+Shift+I: herramientas para soporte técnico;
+  // Ctrl+Shift+F: pantalla completa o ventana (F11 no, porque en la venta es el precio de mayoreo)
   contenido.on('before-input-event', (evento, entrada) => {
     if (entrada.type !== 'keyDown' || !entrada.control) return;
     const tecla = entrada.key;
-    if (tecla === '+' || tecla === '=') contenido.setZoomLevel(Math.min(contenido.getZoomLevel() + 0.5, 4));
+    if (entrada.shift && tecla.toLowerCase() === 'f') {
+      if (ventana && contenido === ventana.webContents) alternarPantallaCompleta();
+    } else if (tecla === '+' || tecla === '=') contenido.setZoomLevel(Math.min(contenido.getZoomLevel() + 0.5, 4));
     else if (tecla === '-') contenido.setZoomLevel(Math.max(contenido.getZoomLevel() - 0.5, -3));
     else if (tecla === '0') contenido.setZoomLevel(0);
     else if (entrada.shift && tecla.toLowerCase() === 'i') contenido.toggleDevTools();
     else return;
     evento.preventDefault();
   });
+}
+
+function alternarPantallaCompleta() {
+  if (!ventana || ventana.isDestroyed()) return;
+  ventana.setFullScreen(!ventana.isFullScreen());
 }
 
 // ---------- Comunicación con las pantallas ----------
@@ -323,7 +406,7 @@ async function guardarConfiguracion(datosRecibidos) {
 
   let importada = false;
   if (datos.importarBase && anterior && anterior.base) {
-    if (await migracion.sistemaAbierto(anterior.puerto)) {
+    if (await migracion.sistemaAbierto(anterior.puerto, servidor.instancia)) {
       return { ok: false, mensaje: 'El sistema anterior sigue abierto. Ciérralo (la ventana negra de "npm start") y vuelve a guardar.' };
     }
     await servidor.detener(); // libera la base actual antes de reemplazarla
@@ -337,6 +420,9 @@ async function guardarConfiguracion(datosRecibidos) {
 
   configuracion.guardar(conf);
   aplicarInicioConWindows(conf);
+  if (previa && previa.pantallaCompleta !== conf.pantallaCompleta && ventana && !ventana.isDestroyed() && !OCULTO) {
+    ventana.setFullScreen(conf.pantallaCompleta);
+  }
   actualizaciones.configurar(conf.urlActualizaciones);
   const reiniciar = primeraVez || importada || CAMBIAN_SERVIDOR.some((clave) => previa[clave] !== conf[clave]) || !servidor.url;
 
@@ -364,6 +450,11 @@ function registrarIpc() {
   ipcMain.handle('imprimir', (evento, opciones) => {
     if (!desdeElSistema(evento)) throw new Error('No permitido');
     return impresion.imprimir(evento.sender, configuracion.leer() || configuracion.DEFECTOS, opciones || {});
+  });
+  // "Salir → Cerrar el sistema" y "Cerrar el programa" del inicio de sesión: mismo camino que la X
+  ipcMain.handle('ventana:cerrar', (evento) => {
+    if (!desdeElSistema(evento) && !esPaginaPropia(evento)) throw new Error('No permitido');
+    if (ventana && !ventana.isDestroyed()) ventana.close();
   });
   ipcMain.handle('config:abrir', (evento) => {
     if (desdeElSistema(evento) || esPaginaPropia(evento)) abrirConfiguracion();
@@ -413,7 +504,7 @@ function registrarIpc() {
     const ruta = eleccion.filePaths[0];
     anterior = migracion.examinar(tipo === 'archivo' ? { archivo: ruta } : { carpeta: ruta });
     const { llave: _oculta, ...paraPantalla } = anterior;
-    return { ...paraPantalla, abierto: await migracion.sistemaAbierto(anterior.puerto) };
+    return { ...paraPantalla, abierto: await migracion.sistemaAbierto(anterior.puerto, servidor.instancia) };
   }));
   ipcMain.handle('config:elegir-carpeta', soloPropia(async () => {
     const eleccion = await elegirRuta({

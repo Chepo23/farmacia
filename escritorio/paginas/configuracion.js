@@ -26,6 +26,7 @@ function pintarModo() {
 function mostrarError(texto) {
   $('error').textContent = texto || '';
   $('error').hidden = !texto;
+  document.querySelector('.creditos-pie').hidden = Boolean(texto);
 }
 
 function resultado(id, r) {
@@ -72,6 +73,7 @@ async function cargar() {
   $('ancho-otro').hidden = comun;
   $('ancho-otro').value = comun ? '' : c.anchoTicket;
   $('iniciar-windows').checked = c.iniciarConWindows !== false;
+  $('pantalla-completa').checked = c.pantallaCompleta !== false;
   $('carpeta-extra').value = c.carpetaRespaldoExtra || '';
   $('url-movil').value = c.urlMovil || '';
   $('puerto').value = c.puerto || 3000;
@@ -111,7 +113,8 @@ async function examinar(tipo) {
   pintarModo();
   caja.innerHTML = `<div class="tarjeta-anterior">
     ${r.base ? `<label class="check"><input type="checkbox" id="importar-base" checked>
-      Traer la base de datos (${escapar(tamanio(r.base.bytes))}, modificada el ${escapar(fecha(r.base.modificado))})</label>` : '<span>No hay base de datos en esa ubicación (solo la configuración).</span>'}
+      Traer la base de datos (${escapar(tamanio(r.base.bytes))}, modificada el ${escapar(fecha(r.base.modificado))})</label>
+      <small class="nota">Se copian todas sus ventas, clientes, crédito y cortes. Hazlo solo si son datos reales, no de prueba.</small>` : '<span>No hay base de datos en esa ubicación (solo la configuración).</span>'}
     ${r.supabaseUrl ? `<span>Conexión encontrada: <b>${escapar(r.supabaseUrl)}</b></span>` : ''}
     ${r.tieneLlave ? '<label class="check"><input type="checkbox" id="usar-llave-anterior" checked> Usar la llave secreta del sistema anterior</label>' : ''}
     ${r.abierto ? '<div class="aviso">El sistema anterior está abierto: ciérralo (la ventana negra de "npm start") antes de guardar.</div>' : ''}
@@ -131,6 +134,7 @@ function datosFormulario() {
     anchoTicket: anchoElegido(),
     impresoraDocumentos: $('impresora-documentos').value,
     iniciarConWindows: $('iniciar-windows').checked,
+    pantallaCompleta: $('pantalla-completa').checked,
     urlMovil: $('url-movil').value.trim(),
     carpetaRespaldoExtra: $('carpeta-extra').value.trim(),
     urlActualizaciones: $('url-actualizaciones').value.trim(),

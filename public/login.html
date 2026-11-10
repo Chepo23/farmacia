@@ -5,12 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Farmacia POS — Iniciar sesión</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;700;800;900&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;700;800;900&family=Inter:wght@400;500;600;700;800&family=Oswald:wght@500;600&display=swap" rel="stylesheet">
+  <link rel="icon" type="image/png" href="img/favicon-32.png">
   <link rel="stylesheet" href="css/app.css">
 </head>
 <body class="pantalla-login">
   <form id="form-login" class="tarjeta-login">
-    <img src="img/logo-login.png" alt="Farmacia San Francisco" class="logo-login">
+    <div class="logo-login" role="img" aria-label="Farmacia San Francisco">
+      <img src="img/marca.svg" alt="">
+      <div class="logo-login-texto"><b>San Francisco</b><small>Farmacia</small></div>
+    </div>
     <p class="subtitulo">Punto de venta multi-sucursal</p>
     <label>Usuario
       <input type="text" id="usuario" autocomplete="username" autofocus required>
@@ -21,12 +25,23 @@
     <div id="error-login" class="mensaje-error" hidden></div>
     <button type="submit" class="boton primario grande">Entrar</button>
     <button type="button" id="configurar-programa" class="enlace-programa" hidden>Configurar este programa (conexión e impresoras)</button>
+    <button type="button" id="cerrar-programa" class="enlace-programa" hidden>Cerrar el programa</button>
   </form>
+  <footer class="creditos">
+    <img src="img/swagit.png" alt="SwagIT">
+    <span>Desarrollado por <b>SwagIT</b> Technological Solutions</span>
+  </footer>
   <script>
     if (window.farmaciaEscritorio) {
       const enlace = document.getElementById('configurar-programa');
       enlace.hidden = false;
       enlace.addEventListener('click', () => window.farmaciaEscritorio.abrirConfiguracion());
+      // En pantalla completa no se ve la X de la ventana
+      const cerrar = document.getElementById('cerrar-programa');
+      if (window.farmaciaEscritorio.cerrarPrograma) {
+        cerrar.hidden = false;
+        cerrar.addEventListener('click', () => window.farmaciaEscritorio.cerrarPrograma());
+      }
     }
     document.getElementById('form-login').addEventListener('submit', async (e) => {
       e.preventDefault();

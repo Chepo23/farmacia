@@ -29,7 +29,7 @@ async function cargarAdmin() {
       (u) => `<tr>
         <td>${escaparHtml(u.nombre)}</td>
         <td>${escaparHtml(u.usuario)}</td>
-        <td>${u.rol === 'admin' ? 'Administrador' : 'Cajero'}</td>
+        <td>${Number(u.jefe) === 1 ? '<b>Jefe</b>' : u.rol === 'admin' ? 'Administrador' : 'Cajero'}</td>
         <td>${escaparHtml(u.sucursal)}</td>
         <td style="white-space:nowrap">
           <button class="boton chico" data-accion="editar" data-id="${u.id}">Editar</button>
@@ -63,6 +63,8 @@ async function cargarAdmin() {
 
 function formularioUsuario(u = {}) {
   const esNuevo = !u.id;
+  const rol = Number(u.jefe) === 1 ? 'jefe' : u.rol;
+  const central = Admin.sucursales.find((s) => Number(s.es_central) === 1);
   const modal = abrirModal(`
     <h3>${esNuevo ? 'Nuevo usuario' : 'Editar usuario'}</h3>
     <div class="fila">
@@ -75,8 +77,9 @@ function formularioUsuario(u = {}) {
       </label>
       <label>Rol
         <select id="usu-rol">
-          <option value="cajero" ${u.rol === 'cajero' ? 'selected' : ''}>Cajero</option>
-          <option value="admin" ${u.rol === 'admin' ? 'selected' : ''}>Administrador</option>
+          <option value="cajero" ${rol === 'cajero' ? 'selected' : ''}>Cajero</option>
+          <option value="admin" ${rol === 'admin' ? 'selected' : ''}>Administrador</option>
+          <option value="jefe" ${rol === 'jefe' ? 'selected' : ''}>Jefe</option>
         </select>
       </label>
       <label>Sucursal
@@ -85,12 +88,26 @@ function formularioUsuario(u = {}) {
         </select>
       </label>
     </div>
+    <p id="usu-ayuda-jefe" class="texto-suave" hidden>El jefe es de la central y, además de todo lo del administrador, ve los movimientos,
+      el registro de cambios y el inventario de todas las sucursales, y autoriza las diferencias del inventario del día.
+      Solo otro jefe puede cambiar o dar de baja su cuenta.</p>
     <div id="usu-error" class="mensaje-error" hidden></div>
     <div class="pie">
       <button class="boton" id="usu-cancelar">Cancelar</button>
       <button class="boton exito" id="usu-guardar">Guardar</button>
     </div>
   `);
+  // El jefe siempre es de la central
+  const selectorRol = modal.querySelector('#usu-rol');
+  const selectorSucursal = modal.querySelector('#usu-sucursal');
+  const ajustarJefe = () => {
+    const jefe = selectorRol.value === 'jefe';
+    if (jefe && central) selectorSucursal.value = String(central.id);
+    selectorSucursal.disabled = jefe;
+    modal.querySelector('#usu-ayuda-jefe').hidden = !jefe;
+  };
+  selectorRol.addEventListener('change', ajustarJefe);
+  ajustarJefe();
   modal.querySelector('#usu-cancelar').addEventListener('click', cerrarModal);
   modal.querySelector('#usu-guardar').addEventListener('click', async () => {
     const errorEl = modal.querySelector('#usu-error');
@@ -314,7 +331,8 @@ function pintarPrograma() {
   document.getElementById('admin-programa').innerHTML = `
     <div class="dato-secundario"><span>Versión</span><b>${escaparHtml(programa.version || '')}</b></div>
     <div class="dato-secundario"><span>Impresora de tickets</span><b>${escaparHtml(i.impresoraTicket || 'Preguntar al imprimir')} · ${escaparHtml(String(i.anchoTicket || 80))} mm</b></div>
-    <div class="dato-secundario"><span>Impresora de documentos</span><b>${escaparHtml(i.impresoraDocumentos || 'Preguntar al imprimir')}</b></div>`;
+    <div class="dato-secundario"><span>Impresora de documentos</span><b>${escaparHtml(i.impresoraDocumentos || 'Preguntar al imprimir')}</b></div>
+    <div class="dato-secundario"><span>Desarrollado por</span><b class="creditos-dato"><img src="img/swagit.png" alt="">SwagIT Technological Solutions</b></div>`;
 }
 
 document.getElementById('boton-programa-config').addEventListener('click', () => window.farmaciaEscritorio?.abrirConfiguracion());
@@ -351,6 +369,8 @@ async function cargarSincronizacion() {
       <div class="dato-secundario"><span>Movimientos por subir</span><b>${e.pendientes}</b></div>
       <div class="dato-secundario"><span>Movimientos con error</span><b class="${e.errores ? 'texto-rojo' : ''}">${e.errores}</b></div>
       <div class="dato-secundario"><span>Última sincronización</span><b>${e.ultima_sincronizacion ? escaparHtml(new Date(e.ultima_sincronizacion).toLocaleString('es-MX')) : '—'}</b></div>
+      ${e.ventas ? `<div class="dato-secundario"><span>Ventas, cortes y abonos por subir</span><b>${Object.values(e.ventas.pendientes).reduce((t, n) => t + n, 0)}</b></div>
+      ${e.ventas.caja ? `<div class="dato-secundario"><span>Esta computadora es la</span><b>Caja ${e.ventas.caja.numero}</b></div>` : ''}` : ''}
       ${e.ultimo_error ? `<div class="mensaje-error">${escaparHtml(e.ultimo_error)}</div>` : ''}`;
     errores.innerHTML = e.detalle_errores.length ? `
       <div class="lista-errores-sync">

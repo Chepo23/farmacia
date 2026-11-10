@@ -5,7 +5,9 @@ const db = require('../db');
 const { requiereAdmin } = require('../auth');
 const catalogo = require('../catalogo');
 const inventario = require('../inventario');
+const bitacora = require('../bitacora');
 const { ErrorApp, manejar } = require('../central');
+const { describirCambiosProducto } = require('../../supabase/functions/movil/supervision.mjs');
 
 const router = express.Router();
 
@@ -34,6 +36,13 @@ function limiteDe(valor, porDefecto, maximo) {
 }
 
 async function listar(req, limitePorDefecto) {
+  // ?ids=1,2,3: esos productos con sus datos de hoy (las ventas que quedaron abiertas se actualizan así)
+  if (req.query.ids !== undefined) {
+    const ids = String(req.query.ids).split(',').map(Number).filter((id) => Number.isInteger(id) && id > 0).slice(0, 500);
+    const mapa = await catalogo.porIds(ids);
+    const { productos: conStock, fuente } = await inventario.conExistencias([...mapa.values()], { sucursalId: req.usuario.sucursal_id });
+    return { conStock, fuente };
+  }
   const { productos } = await catalogo.buscar({
     q: req.query.q || '',
     limite: limiteDe(req.query.limite, limitePorDefecto, 1000),
@@ -61,12 +70,6 @@ router.get('/buscar', manejar(async (req, res) => {
 router.get('/', manejar(async (req, res) => {
   const { conStock, fuente } = await listar(req, 300);
   res.set('X-Fuente-Inventario', fuente);
-  res.json(conStock);
-}));
-
-// Consulta global (mismo formato que el listado; se conserva por compatibilidad)
-router.get('/inventario-global', manejar(async (req, res) => {
-  const { conStock } = await listar(req, 300);
   res.json(conStock);
 }));
 
@@ -165,13 +168,9 @@ router.post('/inventario/lote', manejar(async (req, res) => {
   res.json({ ok: true, aplicados: movimientos.length, sin_diferencia: sinDiferencia, omitidos, existencias: resultados });
 }));
 
+// Cualquier usuario da de alta un producto nuevo (por ejemplo, al recibir mercancía con el celular)
+// con su existencia en su sucursal. Cambiar los precios de uno que ya existe sigue siendo de la central.
 router.post('/', manejar(async (req, res) => {
-  if (!esAdminCentral(req.usuario)) {
-    return res.status(403).json({
-      error: 'Solo el administrador de la central puede dar de alta productos (ahí se fijan los precios para todas las sucursales). Mientras tanto puedes venderlo como artículo común (Ins).',
-      codigo: 'SOLO_CENTRAL',
-    });
-  }
   const datos = catalogo.validar(req.body || {});
   if (datos.error) return res.status(400).json({ error: datos.error });
   const sucursalId = sucursalPermitida(req, req.body?.sucursal_id);
@@ -187,6 +186,12 @@ router.post('/', manejar(async (req, res) => {
   }
 
   const producto = await catalogo.crear(datos);
+  bitacora.registrar({
+    usuario: req.usuario, sucursal_id: sucursalId, tipo: 'producto_alta',
+    descripcion: `${producto.descripcion} (${producto.codigo_barras || 'sin código'}) a $${Number(producto.precio_venta).toFixed(2)}`
+      + `${existenciaInicial > 0 ? `, con ${existenciaInicial} pieza(s)` : ''}`,
+    detalle: { producto_id: producto.id, precio_venta: producto.precio_venta, precio_costo: producto.precio_costo, existencia_inicial: existenciaInicial },
+  });
   let aviso = null;
   if (producto.usa_inventario && (existenciaInicial > 0 || minimoInicial > 0)) {
     try {
@@ -212,8 +217,8 @@ router.post('/', manejar(async (req, res) => {
 router.put('/:id', manejar(async (req, res) => {
   const datos = catalogo.validar(req.body || {});
   if (datos.error) return res.status(400).json({ error: datos.error });
+  const actual = await catalogo.porId(req.params.id);
   if (!esAdminCentral(req.usuario)) {
-    const actual = await catalogo.porId(req.params.id);
     if (!actual) return res.status(404).json({ error: 'Producto no encontrado' });
     if (CAMPOS_PRECIO.some((campo) => !mismoValor(actual[campo], datos[campo]))) {
       return res.status(403).json({
@@ -223,11 +228,28 @@ router.put('/:id', manejar(async (req, res) => {
     }
   }
   await catalogo.actualizar(req.params.id, datos);
+  if (actual) {
+    const cambios = describirCambiosProducto(actual, datos);
+    if (cambios.lista.length) {
+      bitacora.registrar({
+        usuario: req.usuario, tipo: 'producto_cambio', descripcion: `${datos.descripcion}: ${cambios.texto}`,
+        detalle: { producto_id: Number(actual.id), cambios: cambios.lista }, alerta: cambios.precio,
+      });
+    }
+  }
   res.json({ ok: true });
 }));
 
 router.delete('/:id', requiereAdmin, manejar(async (req, res) => {
+  const actual = await catalogo.porId(req.params.id);
   await catalogo.darDeBaja(req.params.id);
+  if (actual) {
+    bitacora.registrar({
+      usuario: req.usuario, tipo: 'producto_baja',
+      descripcion: `${actual.descripcion} (${actual.codigo_barras || 'sin código'})`,
+      detalle: { producto_id: Number(actual.id) },
+    });
+  }
   res.json({ ok: true, eliminado: 'baja_logica' });
 }));
 
@@ -276,115 +298,5 @@ router.get('/:id/kardex', manejar(async (req, res) => {
   const { productos } = await inventario.conExistencias([producto], { sucursalId: req.usuario.sucursal_id });
   res.json({ producto: productos[0], ...resultado });
 }));
-
-// ---------- Mini apoyo: traspaso puntual de un producto entre dos sucursales ----------
-router.post('/mini-apoyo', manejar(async (req, res) => {
-  const origenId = Number(req.usuario.sucursal_id);
-  const destinoId = Number(req.body?.destino_id || 0);
-  const productoId = Number(req.body?.producto_id || 0);
-  const cantidad = Number(req.body?.cantidad || 0);
-  const tipo = String(req.body?.tipo || 'reconciliacion').trim();
-  const nota = String(req.body?.nota || '').trim();
-
-  if (!productoId || !destinoId || !(cantidad > 0)) {
-    return res.status(400).json({ error: 'Falta producto, destino o cantidad válida' });
-  }
-  if (destinoId === origenId) return res.status(400).json({ error: 'El destino debe ser otra sucursal' });
-  if (!['reconciliacion', 'apoyo', 'redistribucion', 'faltante'].includes(tipo)) {
-    return res.status(400).json({ error: 'Tipo de apoyo no válido' });
-  }
-  const producto = await catalogo.porId(productoId);
-  if (!producto) return res.status(404).json({ error: 'Producto no encontrado' });
-  const destino = db.prepare('SELECT * FROM sucursales WHERE id = ? AND activa = 1').get(destinoId);
-  if (!destino) return res.status(404).json({ error: 'Sucursal destino no válida' });
-
-  const registro = db
-    .prepare(
-      `INSERT INTO mini_apoyos (origen_sucursal_id, destino_sucursal_id, producto_id, cantidad, tipo, nota, creado_por)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
-    )
-    .run(origenId, destinoId, productoId, cantidad, tipo, nota, req.usuario.id);
-  res.json({ ok: true, id: registro.lastInsertRowid, tipo, producto: producto.descripcion, cantidad });
-}));
-
-router.get('/mini-apoyos', (req, res) => {
-  const filas = db
-    .prepare(
-      `SELECT m.id, m.producto_id, p.descripcion, p.codigo_barras, m.cantidad, m.tipo, m.estado, m.nota,
-              m.origen_sucursal_id, o.nombre AS origen, m.destino_sucursal_id, d.nombre AS destino,
-              m.creado, m.actualizado
-       FROM mini_apoyos m
-       JOIN productos p ON p.id = m.producto_id
-       JOIN sucursales o ON o.id = m.origen_sucursal_id
-       JOIN sucursales d ON d.id = m.destino_sucursal_id
-       WHERE (m.origen_sucursal_id = ? OR m.destino_sucursal_id = ?)
-       ORDER BY m.id DESC LIMIT 200`
-    )
-    .all(req.usuario.sucursal_id, req.usuario.sucursal_id);
-  res.json(filas);
-});
-
-function cargarMiniApoyo(id) {
-  return db
-    .prepare(
-      `SELECT m.*, p.descripcion, p.codigo_barras, o.nombre AS origen, d.nombre AS destino, u.nombre AS creador
-       FROM mini_apoyos m
-       JOIN productos p ON p.id = m.producto_id
-       JOIN sucursales o ON o.id = m.origen_sucursal_id
-       JOIN sucursales d ON d.id = m.destino_sucursal_id
-       LEFT JOIN usuarios u ON u.id = m.creado_por
-       WHERE m.id = ?`
-    )
-    .get(id);
-}
-
-router.get('/mini-apoyos/:id', (req, res) => {
-  const mini = cargarMiniApoyo(req.params.id);
-  if (!mini) return res.status(404).json({ error: 'Mini apoyo no encontrado' });
-  const suc = Number(req.usuario.sucursal_id);
-  if (mini.origen_sucursal_id !== suc && mini.destino_sucursal_id !== suc && !req.usuario.es_central) {
-    return res.status(403).json({ error: 'No tienes acceso a ese mini apoyo' });
-  }
-  res.json(mini);
-});
-
-router.post('/mini-apoyos/:id/aceptar', manejar(async (req, res) => {
-  if (!req.usuario.es_central) {
-    return res.status(403).json({ error: 'Solo la farmacia central puede aceptar mini apoyos' });
-  }
-  const mini = cargarMiniApoyo(req.params.id);
-  if (!mini) return res.status(404).json({ error: 'Mini apoyo no encontrado' });
-  if (mini.estado !== 'pendiente') return res.status(400).json({ error: 'Este mini apoyo ya fue procesado' });
-  const cantidad = Number(req.body?.cantidad ?? mini.cantidad);
-  if (!(cantidad > 0)) return res.status(400).json({ error: 'Cantidad no válida' });
-
-  // Se marca primero para que dos clics no muevan el inventario dos veces
-  const tomado = db
-    .prepare("UPDATE mini_apoyos SET estado = 'aceptado', actualizado = datetime('now', 'localtime') WHERE id = ? AND estado = 'pendiente'")
-    .run(mini.id).changes;
-  if (!tomado) return res.status(400).json({ error: 'Este mini apoyo ya fue procesado' });
-  const nota = `Mini apoyo #${mini.id} de ${mini.origen} a ${mini.destino}`;
-  try {
-    await inventario.aplicar([
-      { producto_id: mini.producto_id, sucursal_id: mini.origen_sucursal_id, tipo: 'salida', cantidad, nota },
-      { producto_id: mini.producto_id, sucursal_id: mini.destino_sucursal_id, tipo: 'entrada', cantidad, nota },
-    ], { usuarioId: req.usuario.id });
-  } catch (error) {
-    db.prepare("UPDATE mini_apoyos SET estado = 'pendiente' WHERE id = ?").run(mini.id);
-    throw error;
-  }
-  res.json({ ok: true, id: mini.id, estado: 'aceptado', cantidad });
-}));
-
-router.post('/mini-apoyos/:id/rechazar', (req, res) => {
-  if (!req.usuario.es_central) {
-    return res.status(403).json({ error: 'Solo la farmacia central puede rechazar mini apoyos' });
-  }
-  const cambios = db
-    .prepare("UPDATE mini_apoyos SET estado = 'rechazado', actualizado = datetime('now', 'localtime') WHERE id = ? AND estado = 'pendiente'")
-    .run(req.params.id).changes;
-  if (!cambios) return res.status(400).json({ error: 'El mini apoyo no existe o ya fue procesado' });
-  res.json({ ok: true, id: Number(req.params.id), estado: 'rechazado' });
-});
 
 module.exports = router;

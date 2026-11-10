@@ -1,5 +1,8 @@
-// Inventario desde el celular: consultar precio y existencias, recibir mercancía y contar
-// (toma de inventario). Usa los mismos permisos y el mismo inventario que la computadora.
+// Inventario desde el celular: consultar precio, existencias y últimos movimientos; recibir
+// mercancía, contar (el inventario del día y conteos libres) y revisar los apoyos que llegan. El
+// administrador de la central consulta y arma cotizaciones que manda a una sucursal para que ahí se
+// cobren; el jefe además tiene Inicio, Movimientos y Más (movil-jefe.js). El inventario del día
+// está en movil-conteo.js. Usa los mismos permisos y el mismo inventario que la computadora.
 //
 // Funciona de dos maneras:
 // - Servida por la computadora de la farmacia (/movil.html): usa la sesión de la computadora.
@@ -21,6 +24,11 @@ const M = {
   buscando: new Map(), // código -> consulta en curso
   recepcion: { renglones: [], noEncontrados: [] },
   conteo: { renglones: [], noEncontrados: [] },
+  cotizacion: { renglones: [], cliente: '', nota: '', sucursal: '', usuario: '' },
+  destinos: null, // sucursales y usuarios a los que se manda una cotización
+  enviadas: [], // cotizaciones que ya se mandaron
+  apoyos: null, // apoyos por recibir en la sucursal
+  revision: null, // apoyo que se está revisando: { apoyo, contado: { renglonId: piezas }, extras, noEncontrados }
 };
 
 const $ = (id) => document.getElementById(id);
@@ -50,6 +58,23 @@ function fechaCorta(texto) {
   return fecha.toLocaleString('es-MX', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 const esAdminCentral = () => M.usuario && M.usuario.rol === 'admin' && Number(M.usuario.es_central) === 1;
+const esJefe = () => esAdminCentral() && Number(M.usuario.jefe) === 1;
+// Pestañas de abajo. El jefe: Inicio, Consultar, Movimientos, Cotizar y Más (recibir y contar van en Más).
+// El administrador de la central consulta y cotiza; las sucursales, todo lo de inventario.
+// Los administradores también ven los movimientos de su sucursal.
+function vistasEnBarra() {
+  if (esJefe()) return ['inicio', 'consultar', 'movimientos', 'cotizar', 'mas'];
+  const base = esAdminCentral() ? ['consultar', 'cotizar'] : ['consultar', 'recibir', 'contar', 'apoyos'];
+  return M.usuario && M.usuario.rol === 'admin' ? [...base, 'movimientos'] : base;
+}
+const vistasPermitidas = () => (esJefe() ? [...vistasEnBarra(), 'recibir', 'contar'] : vistasEnBarra());
+const VISTAS = ['inicio', 'consultar', 'movimientos', 'cotizar', 'recibir', 'contar', 'apoyos', 'mas'];
+
+// Solo el día: "21 oct"
+function fechaDia(texto) {
+  const fecha = new Date(String(texto || '').replace(' ', 'T'));
+  return Number.isNaN(fecha.getTime()) ? '' : fecha.toLocaleDateString('es-MX', { day: 'numeric', month: 'short' });
+}
 const nombreSucursal = (id = M.sucursalId) => (M.sucursales.find((s) => s.id === Number(id)) || {}).nombre || '';
 
 let temporizadorAviso = null;
@@ -129,6 +154,12 @@ function cargarBorradores() {
   $('con-nota').value = M.conteo.nota || '';
   pintarRecepcion();
   pintarConteo();
+  if (esAdminCentral()) {
+    M.cotizacion = leerCotizacion();
+    $('cot-cliente').value = M.cotizacion.cliente || '';
+    $('cot-nota').value = M.cotizacion.nota || '';
+    pintarCotizacion();
+  }
 }
 
 // ---------- Capas: hoja inferior y botón "atrás" del celular ----------
@@ -260,6 +291,12 @@ async function productoPorId(id) {
 async function capturar(texto) {
   const valor = String(texto || '').trim();
   if (!valor) return;
+  if (M.vista === 'apoyos' && M.revision) {
+    const renglon = renglonApoyoPorCodigo(valor);
+    if (renglon) return contarRenglonApoyo(renglon, 1);
+  }
+  if (M.vista === 'contar' && diaAbierto()) return capturarEnDia(valor);
+  if (M.vista === 'movimientos') return filtrarMovimientosPorProducto(valor);
   try {
     const pareceCodigo = !/\s/.test(valor) && /\d{3,}/.test(valor);
     if (pareceCodigo) {
@@ -310,16 +347,25 @@ async function usarProducto(producto) {
     await agregarConteo(producto, 1);
     return;
   }
+  if (M.vista === 'cotizar') {
+    agregarCotizacion(producto, 1);
+    return;
+  }
+  if (M.vista === 'apoyos') {
+    if (M.revision) contarApoyo(producto, 1);
+    else aviso('Primero abre el apoyo que llegó', 'error');
+    return;
+  }
   mostrarProducto(producto);
 }
 
 function noEncontrado(codigo, { pareceCodigo = true } = {}) {
   if (M.vista === 'consultar' || !pareceCodigo) {
-    const puedeAlta = esAdminCentral() && pareceCodigo;
+    // Cualquier usuario puede dar de alta un producto nuevo (con sus piezas en su sucursal)
+    const puedeAlta = pareceCodigo;
     const hoja = abrirHoja(`
       <h3>No se encontró</h3>
-      <p>${pareceCodigo ? `El código <b>${escaparHtml(codigo)}</b> no está en el catálogo.` : `No hay productos que coincidan con "<b>${escaparHtml(codigo)}</b>".`}
-         ${pareceCodigo && !puedeAlta ? 'Pide a la farmacia central que lo dé de alta.' : ''}</p>
+      <p>${pareceCodigo ? `El código <b>${escaparHtml(codigo)}</b> no está en el catálogo. Si es un producto nuevo, dalo de alta.` : `No hay productos que coincidan con "<b>${escaparHtml(codigo)}</b>".`}</p>
       <div class="m-botones">
         <button class="m-boton secundario" data-r="no">Cerrar</button>
         ${puedeAlta ? '<button class="m-boton principal" data-r="alta">Dar de alta</button>' : ''}
@@ -333,6 +379,13 @@ function noEncontrado(codigo, { pareceCodigo = true } = {}) {
 }
 
 function registrarNoEncontrado(codigo) {
+  if (M.vista === 'cotizar') return; // en la cotización solo se avisa
+  if (M.vista === 'apoyos') {
+    if (!M.revision) return;
+    if (!M.revision.noEncontrados.includes(codigo)) M.revision.noEncontrados.push(codigo);
+    pintarRevision();
+    return;
+  }
   const lista = M.vista === 'contar' ? M.conteo : M.recepcion;
   if (!lista.noEncontrados.includes(codigo)) lista.noEncontrados.push(codigo);
   if (M.vista === 'contar') pintarConteo();
@@ -345,16 +398,15 @@ function pintarNoEncontrados(contenedor, lista) {
     return;
   }
   contenedor.innerHTML = `<div class="m-no-encontrados">
-    <b>No están en el catálogo:</b> ${lista.noEncontrados.map((c) => esAdminCentral()
-      ? `<button class="m-accion" data-alta="${escaparHtml(c)}">Dar de alta ${escaparHtml(c)}</button>`
-      : `<code>${escaparHtml(c)}</code>`).join(' ')}
-    ${esAdminCentral() ? '' : '<br>Pide a la farmacia central que los dé de alta y vuelve a escanearlos.'}
+    <b>No están en el catálogo:</b> ${lista.noEncontrados.map((c) => `<button class="m-accion" data-alta="${escaparHtml(c)}">Dar de alta ${escaparHtml(c)}</button>`).join(' ')}
     <br><button class="m-accion" data-limpiar-no-encontrados>Quitar de la lista</button>
   </div>`;
 }
 
-// Alta rápida de un producto que llegó y no está en el catálogo (solo la central)
+// Alta rápida de un producto que no está en el catálogo (cualquier usuario). Al consultar se
+// escriben las piezas que hay; al recibir o contar, las piezas se suman con la lista.
 function altaProducto(codigo) {
+  const conPiezas = M.vista === 'consultar';
   const hoja = abrirHoja(`
     <h3>Nuevo producto</h3>
     <label>Código de barras <input id="alta-codigo" type="text" value="${escaparHtml(codigo)}" readonly></label>
@@ -363,6 +415,8 @@ function altaProducto(codigo) {
       <label>Costo <input id="alta-costo" type="number" inputmode="decimal" step="0.01" min="0"></label>
       <label>Precio de venta <input id="alta-venta" type="number" inputmode="decimal" step="0.01" min="0"></label>
     </div>
+    ${conPiezas ? `<label>Piezas que hay en ${escaparHtml(nombreSucursal())} <input id="alta-piezas" type="number" inputmode="decimal" step="any" min="0" placeholder="0"></label>` : ''}
+    <p class="m-nota-hoja">El precio vale para todas las sucursales; después solo la central lo puede cambiar.${conPiezas ? '' : ' Las piezas se suman con la lista que estás haciendo.'}</p>
     <div id="hoja-error" class="m-error" hidden></div>
     <div class="m-botones">
       <button class="m-boton secundario" data-r="no">Cancelar</button>
@@ -382,7 +436,7 @@ function altaProducto(codigo) {
           precio_venta: hoja.querySelector('#alta-venta').value,
           usa_inventario: true,
           sucursal_id: M.sucursalId,
-          existencia_inicial: 0,
+          existencia_inicial: conPiezas ? hoja.querySelector('#alta-piezas').value || 0 : 0,
         },
       });
       cerrarHoja();
@@ -439,17 +493,55 @@ function mostrarProducto(p) {
           <span>${escaparHtml(e.sucursal)}${e.minimo > 0 ? `<small>mín. ${cantidadTexto(e.minimo)}</small>` : ''}</span>
           <b>${cantidadTexto(e.existencia)}</b>
         </div>`).join('')}</div>` : '<div class="m-explicacion">Este producto no controla inventario.</div>'}
+      ${p.usa_inventario ? '<div id="consulta-movimientos" class="m-movimientos"><div class="m-cargando">Cargando los últimos movimientos…</div></div>' : ''}
       <div class="m-acciones">
-        ${p.usa_inventario ? `
-          <button class="m-accion principal" data-accion="entrada">Entrada</button>
-          <button class="m-accion" data-accion="salida">Merma / salida</button>
-          <button class="m-accion" data-accion="ajuste">Ajustar existencia</button>
-          <button class="m-accion" data-accion="minimo">Mínimo</button>` : ''}
-        <button class="m-accion" data-accion="historial"><svg class="icono"><use href="#i-historial"/></svg>Historial</button>
-        ${esAdminCentral() ? '<button class="m-accion" data-accion="precio"><svg class="icono"><use href="#i-precio"/></svg>Cambiar precio</button>' : ''}
+        ${esAdminCentral() ? `
+          <button class="m-accion principal ancha" data-accion="cotizar"><svg class="icono"><use href="#i-cotizar"/></svg>Agregar a cotización</button>
+          <button class="m-accion" data-accion="historial"><svg class="icono"><use href="#i-historial"/></svg>Historial</button>
+          <button class="m-accion" data-accion="precio"><svg class="icono"><use href="#i-precio"/></svg>Cambiar precio</button>
+          ${esJefe() && p.usa_inventario ? `<button class="m-accion ancha" data-accion="importante" id="consulta-importante" disabled>
+            <svg class="icono"><use href="#i-estrella"/></svg><span>Importante para el inventario del día…</span></button>` : ''}` : `
+          ${p.usa_inventario ? `
+            <button class="m-accion principal" data-accion="entrada">Entrada</button>
+            <button class="m-accion" data-accion="salida">Merma / salida</button>
+            <button class="m-accion" data-accion="ajuste">Ajustar existencia</button>
+            <button class="m-accion" data-accion="minimo">Mínimo</button>` : ''}
+          <button class="m-accion ${p.usa_inventario ? 'ancha' : ''}" data-accion="historial"><svg class="icono"><use href="#i-historial"/></svg>Historial completo</button>`}
       </div>
     </div>`;
   window.scrollTo({ top: 0, behavior: 'smooth' });
+  if (p.usa_inventario) pintarMovimientos(p);
+  if (esJefe() && p.usa_inventario) pintarImportante(p);
+}
+
+const NOMBRES_MOVIMIENTO = { entrada: 'Entrada', salida: 'Salida', venta: 'Venta', ajuste: 'Ajuste' };
+
+function filaMovimiento(m, { conSucursal = false } = {}) {
+  const cantidad = m.delta == null ? `= ${cantidadTexto(m.cantidad)}` : `${m.delta > 0 ? '+' : '−'}${cantidadTexto(Math.abs(m.delta))}`;
+  return `<li>
+    <span>${escaparHtml(NOMBRES_MOVIMIENTO[m.tipo] || m.tipo)}${m.pendiente ? ' (por subir)' : ''}${conSucursal && m.sucursal ? ` · ${escaparHtml(m.sucursal)}` : ''}</span>
+    <span class="${m.delta == null ? '' : m.delta > 0 ? 'mas' : 'menos'}">${cantidad}${m.existencia_resultante != null ? ` → ${cantidadTexto(m.existencia_resultante)}` : ''}</span>
+    <small>${escaparHtml(fechaCorta(m.fecha))} · ${escaparHtml(m.usuario || '')}${m.nota ? ` · ${escaparHtml(m.nota)}` : ''}</small>
+  </li>`;
+}
+
+// Últimos movimientos del producto consultado: los de la sucursal, o los de todas para el jefe
+async function pintarMovimientos(p) {
+  const todas = esAdminCentral();
+  try {
+    const r = await api(`/api/productos/${p.id}/kardex?limite=5${todas ? '' : `&sucursal_id=${M.sucursalId}`}`);
+    const caja = $('consulta-movimientos');
+    if (!caja || !M.producto || M.producto.id !== p.id) return; // ya se consultó otro producto
+    caja.innerHTML = `<div class="m-movimientos-titulo">Últimos movimientos<small>${todas ? 'Todas las sucursales' : escaparHtml(nombreSucursal())}</small></div>
+      ${r.movimientos.length
+        ? `<ul class="m-historial">${r.movimientos.map((m) => filaMovimiento(m, { conSucursal: todas })).join('')}</ul>`
+        : '<div class="m-sin-datos">Todavía no tiene movimientos.</div>'}`;
+  } catch (error) {
+    const caja = $('consulta-movimientos');
+    if (caja && M.producto && M.producto.id === p.id) {
+      caja.innerHTML = `<div class="m-sin-datos">No se pudieron cargar los movimientos: ${escaparHtml(error.message)}</div>`;
+    }
+  }
 }
 
 async function moverInventario(tipo) {
@@ -495,25 +587,26 @@ async function cambiarMinimo() {
   }
 }
 
-async function verHistorial() {
+// El jefe puede elegir la sucursal (o todas); los demás ven la suya
+async function verHistorial(sucursal = esAdminCentral() ? '' : M.sucursalId) {
   const p = M.producto;
   try {
-    const r = await api(`/api/productos/${p.id}/kardex?sucursal_id=${M.sucursalId}&limite=40`);
+    const r = await api(`/api/productos/${p.id}/kardex?limite=40${sucursal ? `&sucursal_id=${sucursal}` : ''}`);
     const hoja = abrirHoja(`
       <h3>Historial — ${escaparHtml(p.descripcion)}</h3>
-      <p>${escaparHtml(nombreSucursal())}</p>
+      ${esAdminCentral()
+        ? `<select id="historial-sucursal" aria-label="Sucursal"><option value="">Todas las sucursales</option>
+            ${M.sucursales.map((x) => `<option value="${x.id}" ${Number(sucursal) === x.id ? 'selected' : ''}>${escaparHtml(x.nombre)}</option>`).join('')}</select>`
+        : `<p>${escaparHtml(nombreSucursal())}</p>`}
       <ul class="m-historial">
-        ${r.movimientos.map((m) => {
-          const cantidad = m.delta == null ? `= ${cantidadTexto(m.cantidad)}` : `${m.delta > 0 ? '+' : '−'}${cantidadTexto(Math.abs(m.delta))}`;
-          return `<li>
-            <span>${escaparHtml({ entrada: 'Entrada', salida: 'Salida', venta: 'Venta', ajuste: 'Ajuste' }[m.tipo] || m.tipo)}${m.pendiente ? ' (por subir)' : ''}</span>
-            <span class="${m.delta == null ? '' : m.delta > 0 ? 'mas' : 'menos'}">${cantidad}${m.existencia_resultante != null ? ` → ${cantidadTexto(m.existencia_resultante)}` : ''}</span>
-            <small>${escaparHtml(fechaCorta(m.fecha))} · ${escaparHtml(m.usuario || '')}${m.nota ? ` · ${escaparHtml(m.nota)}` : ''}</small>
-          </li>`;
-        }).join('') || '<li>Sin movimientos</li>'}
+        ${r.movimientos.map((m) => filaMovimiento(m, { conSucursal: !sucursal })).join('') || '<li>Sin movimientos</li>'}
       </ul>
       <button class="m-boton secundario" data-r="no">Cerrar</button>`);
     hoja.querySelector('[data-r="no"]').addEventListener('click', () => cerrarHoja());
+    hoja.querySelector('#historial-sucursal')?.addEventListener('change', (e) => {
+      cerrarHoja();
+      verHistorial(e.target.value);
+    });
   } catch (error) {
     aviso(error.message, 'error');
   }
@@ -574,6 +667,8 @@ $('consulta-resultado').addEventListener('click', (e) => {
   if (accion === 'minimo') cambiarMinimo();
   if (accion === 'historial') verHistorial();
   if (accion === 'precio') cambiarPrecio();
+  if (accion === 'cotizar') agregarACotizacionDesdeConsulta();
+  if (accion === 'importante') cambiarImportante(boton);
 });
 
 $('consulta-recientes').addEventListener('click', async (e) => {
@@ -839,14 +934,611 @@ for (const id of ['rec-no-encontrados', 'con-no-encontrados']) {
   });
 }
 
+// ---------- Cotizar (solo el administrador de la central) ----------
+const cotizacionVacia = () => ({ renglones: [], cliente: '', nota: '', sucursal: M.cotizacion?.sucursal || '', usuario: '' });
+const claveCotizacion = () => `farmacia.movil.${M.usuario.id}.cotizacion`;
+const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+function leerCotizacion() {
+  try {
+    const texto = localStorage.getItem(claveCotizacion());
+    return texto ? { ...cotizacionVacia(), ...JSON.parse(texto) } : cotizacionVacia();
+  } catch {
+    return cotizacionVacia();
+  }
+}
+
+function guardarCotizacion() {
+  try { localStorage.setItem(claveCotizacion(), JSON.stringify(M.cotizacion)); } catch { /* sin almacenamiento */ }
+}
+
+function totalCotizacion() {
+  return r2(M.cotizacion.renglones.reduce((t, r) => t + r2(r.precio * r.cantidad), 0));
+}
+
+function agregarCotizacion(producto, cantidad) {
+  let renglon = M.cotizacion.renglones.find((r) => r.producto_id === producto.id);
+  if (renglon) {
+    renglon.cantidad = redondear(renglon.cantidad + cantidad);
+    M.cotizacion.renglones = [renglon, ...M.cotizacion.renglones.filter((r) => r !== renglon)];
+  } else {
+    const precio = r2(producto.precio_venta);
+    renglon = { producto_id: producto.id, descripcion: producto.descripcion, codigo_barras: producto.codigo_barras, cantidad: redondear(cantidad), precio, precio_lista: precio };
+    M.cotizacion.renglones.unshift(renglon);
+  }
+  pintarCotizacion(producto.id);
+  if (Escaner.abierto()) {
+    Escaner.informar(`${escaparHtml(producto.descripcion)}<br><b>${cantidadTexto(renglon.cantidad)}</b> × ${dinero(renglon.precio)}`, {
+      boton: { texto: '+1', alPulsar: () => { Escaner.sonar('ok'); agregarCotizacion(producto, 1); } },
+    });
+  }
+  return renglon;
+}
+
+async function agregarACotizacionDesdeConsulta() {
+  const p = M.producto;
+  const r = await pedirCantidad({ titulo: p.descripcion, mensaje: `Precio de lista ${dinero(p.precio_venta)}. ¿Cuántas piezas se cotizan?`, boton: 'Agregar' });
+  if (!r) return;
+  agregarCotizacion(p, r.cantidad);
+  aviso(`Agregado a la cotización (${M.cotizacion.renglones.length} producto(s), ${dinero(totalCotizacion())})`, 'exito');
+}
+
+function pintarCotizacion(nuevo = null) {
+  const lista = M.cotizacion.renglones;
+  $('cot-lista').innerHTML = lista.map((r) => `
+    <li class="m-renglon ${r.producto_id === nuevo ? 'nuevo' : ''}" data-id="${r.producto_id}">
+      <div><div class="m-renglon-nombre">${escaparHtml(r.descripcion)}</div>
+        <div class="m-renglon-dato">${escaparHtml(r.codigo_barras || 'Sin código')} · precio de lista ${dinero(r.precio_lista)}</div></div>
+      <button class="m-quitar" data-accion="quitar" aria-label="Quitar"><svg class="icono"><use href="#i-x"/></svg></button>
+      <div class="m-paso">
+        <button data-accion="menos" aria-label="Una menos"><svg class="icono"><use href="#i-menos"/></svg></button>
+        <input type="number" inputmode="decimal" min="0" step="any" value="${cantidadTexto(r.cantidad)}" data-accion="cantidad" aria-label="Cantidad">
+        <button data-accion="mas" aria-label="Una más"><svg class="icono"><use href="#i-mas"/></svg></button>
+      </div>
+      <label class="m-precio-renglon">Precio c/u
+        <input type="number" inputmode="decimal" min="0" step="0.01" value="${r2(r.precio).toFixed(2)}" data-accion="precio"
+               class="${Math.abs(r.precio - r.precio_lista) > 0.004 ? 'cambiado' : ''}" aria-label="Precio unitario">
+        <span class="m-importe">${dinero(r2(r.precio * r.cantidad))}</span>
+      </label>
+    </li>`).join('') || '<li class="m-vacio">Todavía no hay productos. Toca <b>Escanear</b> o escribe el nombre del producto.</li>';
+  $('cot-productos').textContent = lista.length;
+  $('cot-total').textContent = dinero(totalCotizacion());
+  $('cot-enviar').disabled = lista.length === 0;
+  $('nav-cotizar').hidden = lista.length === 0;
+  $('nav-cotizar').textContent = lista.length;
+  guardarCotizacion();
+}
+
+$('cot-lista').addEventListener('click', (e) => {
+  if (e.target.closest('button[data-accion]')) cambiarRenglon(M.cotizacion, 'cantidad', e, pintarCotizacion);
+});
+$('cot-lista').addEventListener('change', (e) => {
+  if (e.target.matches('input[data-accion="cantidad"]')) cambiarRenglon(M.cotizacion, 'cantidad', e, pintarCotizacion);
+  if (e.target.matches('input[data-accion="precio"]')) {
+    const renglon = M.cotizacion.renglones.find((r) => r.producto_id === Number(e.target.closest('li[data-id]').dataset.id));
+    const valor = Number(String(e.target.value).replace(',', '.'));
+    if (renglon && Number.isFinite(valor) && valor >= 0) renglon.precio = r2(valor);
+    else aviso('Escribe un precio válido', 'error');
+    pintarCotizacion();
+  }
+});
+for (const campo of ['cliente', 'nota']) {
+  $(`cot-${campo}`).addEventListener('input', (e) => {
+    M.cotizacion[campo] = e.target.value;
+    guardarCotizacion();
+  });
+}
+
+async function cargarDestinos() {
+  try {
+    M.destinos = await api('/api/cotizaciones/destinos');
+    pintarDestinos();
+  } catch (error) {
+    aviso(error.message, 'error');
+  }
+}
+
+function pintarDestinos() {
+  const d = M.destinos;
+  if (!d) return;
+  const guardada = Number(M.cotizacion.sucursal);
+  const elegida = d.sucursales.some((x) => x.id === guardada) ? guardada : (d.sucursales.find((x) => !x.es_central) || d.sucursales[0] || {}).id;
+  $('cot-sucursal').innerHTML = d.sucursales.map((x) => `<option value="${x.id}" ${x.id === elegida ? 'selected' : ''}>${escaparHtml(x.nombre)}</option>`).join('');
+  M.cotizacion.sucursal = Number($('cot-sucursal').value) || '';
+  pintarUsuariosDestino();
+}
+
+function pintarUsuariosDestino() {
+  const sucursal = Number($('cot-sucursal').value);
+  const usuarios = (M.destinos?.usuarios || []).filter((u) => u.sucursal_id === sucursal);
+  const elegido = Number(M.cotizacion.usuario);
+  $('cot-usuario').innerHTML = '<option value="">Cualquiera de la sucursal</option>'
+    + usuarios.map((u) => `<option value="${u.id}" ${u.id === elegido ? 'selected' : ''}>${escaparHtml(u.nombre)}${u.rol === 'admin' ? ' (administrador)' : ''}</option>`).join('');
+  M.cotizacion.usuario = $('cot-usuario').value;
+  guardarCotizacion();
+}
+
+$('cot-sucursal').addEventListener('change', () => {
+  M.cotizacion.sucursal = Number($('cot-sucursal').value);
+  M.cotizacion.usuario = '';
+  pintarUsuariosDestino();
+});
+$('cot-usuario').addEventListener('change', () => {
+  M.cotizacion.usuario = $('cot-usuario').value;
+  guardarCotizacion();
+});
+
+$('cot-enviar').addEventListener('click', async () => {
+  const lista = M.cotizacion.renglones;
+  if (!lista.length) return;
+  const sucursal = Number($('cot-sucursal').value);
+  if (!sucursal) {
+    aviso('Elige la sucursal a la que va la cotización', 'error');
+    return;
+  }
+  const usuario = $('cot-usuario').value;
+  const destino = $('cot-sucursal').selectedOptions[0]?.textContent || '';
+  const para = usuario ? $('cot-usuario').selectedOptions[0].textContent : 'cualquier usuario de la sucursal';
+  const confirmado = await confirmarHoja({
+    titulo: 'Enviar cotización',
+    mensaje: `Se manda a <b>${escaparHtml(destino)}</b> (para ${escaparHtml(para)}) una cotización de <b>${lista.length} producto(s)</b>
+      por <b>${dinero(totalCotizacion())}</b>. Le aparecerá en la caja para cobrarla; el precio se respeta 7 días.`,
+    boton: 'Enviar',
+  });
+  if (!confirmado) return;
+  const boton = $('cot-enviar');
+  boton.disabled = true;
+  try {
+    const c = await api('/api/cotizaciones', {
+      method: 'POST',
+      body: {
+        destino_sucursal_id: sucursal,
+        destino_usuario_id: usuario ? Number(usuario) : null,
+        cliente: $('cot-cliente').value,
+        nota: $('cot-nota').value,
+        renglones: lista.map((r) => ({ producto_id: r.producto_id, cantidad: r.cantidad, precio_unitario: r.precio })),
+      },
+    });
+    M.cotizacion = { ...cotizacionVacia(), sucursal, usuario };
+    $('cot-cliente').value = '';
+    $('cot-nota').value = '';
+    pintarCotizacion();
+    aviso(`Cotización folio ${c.folio} enviada a ${c.destino}`, 'exito');
+    cargarEnviadas();
+  } catch (error) {
+    aviso(error.message, 'error');
+  } finally {
+    boton.disabled = M.cotizacion.renglones.length === 0;
+  }
+});
+
+$('cot-vaciar').addEventListener('click', async () => {
+  if (!M.cotizacion.renglones.length) return;
+  const confirmado = await confirmarHoja({ titulo: 'Vaciar cotización', mensaje: 'Se borran los productos de la cotización que estás armando.', boton: 'Vaciar', peligro: true });
+  if (!confirmado) return;
+  M.cotizacion = { ...cotizacionVacia(), sucursal: M.cotizacion.sucursal, usuario: M.cotizacion.usuario };
+  $('cot-cliente').value = '';
+  $('cot-nota').value = '';
+  pintarCotizacion();
+});
+
+function estadoCotizacion(c) {
+  if (c.estado === 'vendida') return { clase: 'vendida', texto: c.vendida_folio ? `Cobrada · venta ${c.vendida_folio}` : 'Cobrada' };
+  if (c.estado === 'cancelada') return { clase: 'cancelada', texto: 'Cancelada' };
+  if (!c.vigente) return { clase: 'vencida', texto: 'Vencida' };
+  return { clase: 'enviada', texto: 'Por cobrar' };
+}
+
+async function cargarEnviadas() {
+  try {
+    M.enviadas = await api('/api/cotizaciones?bandeja=enviadas');
+    pintarEnviadas();
+  } catch (error) {
+    $('cot-enviadas').innerHTML = `<li class="m-vacio">${escaparHtml(error.message)}</li>`;
+  }
+}
+
+function pintarEnviadas() {
+  $('cot-enviadas').innerHTML = M.enviadas.slice(0, 30).map((c) => {
+    const estado = estadoCotizacion(c);
+    return `<li><button class="m-cotizacion" data-cot="${c.id}">
+      <div class="m-cotizacion-fila"><b>Folio ${c.folio}${c.cliente ? ` · ${escaparHtml(c.cliente)}` : ''}</b><span class="m-chip ${estado.clase}">${estado.texto}</span></div>
+      <div class="m-cotizacion-fila"><small>${escaparHtml(c.destino)}${c.destino_usuario ? ` · ${escaparHtml(c.destino_usuario)}` : ''} · ${c.productos} producto(s)</small><b>${dinero(c.total)}</b></div>
+      <small>${escaparHtml(fechaCorta(c.creado))}${c.vigente ? ` · precio hasta el ${escaparHtml(fechaDia(c.vigente_hasta))}` : ''}</small>
+    </button></li>`;
+  }).join('') || '<li class="m-vacio">Todavía no has enviado cotizaciones.</li>';
+}
+
+$('cot-enviadas').addEventListener('click', (e) => {
+  const boton = e.target.closest('button[data-cot]');
+  if (boton) verCotizacion(Number(boton.dataset.cot));
+});
+
+async function verCotizacion(id) {
+  let c;
+  try {
+    c = await api(`/api/cotizaciones/${id}`);
+  } catch (error) {
+    aviso(error.message, 'error');
+    return;
+  }
+  const estado = estadoCotizacion(c);
+  const hoja = abrirHoja(`
+    <h3>Cotización folio ${c.folio} <span class="m-chip ${estado.clase}">${estado.texto}</span></h3>
+    <p>${c.cliente ? `Cliente: <b>${escaparHtml(c.cliente)}</b><br>` : ''}Para ${escaparHtml(c.destino)}${c.destino_usuario ? ` · ${escaparHtml(c.destino_usuario)}` : ''}<br>
+      Enviada el ${escaparHtml(fechaCorta(c.creado))}${c.estado === 'enviada' ? ` · precio respetado hasta el ${escaparHtml(fechaDia(c.vigente_hasta))}` : ''}
+      ${c.estado === 'vendida' ? `<br>Cobrada el ${escaparHtml(fechaCorta(c.vendida_fecha))}${c.vendedor ? ` por ${escaparHtml(c.vendedor)}` : ''}${c.vendida_folio ? ` (venta folio ${c.vendida_folio})` : ''}` : ''}
+      ${c.nota ? `<br>Nota: ${escaparHtml(c.nota)}` : ''}</p>
+    <ul class="m-tabla-hoja">
+      ${c.renglones.map((r) => `<li><span>${cantidadTexto(r.cantidad)} × ${escaparHtml(r.descripcion)}</span><b>${dinero(r.importe)}</b>
+        <small>${dinero(r.precio_unitario)} c/u${Math.abs(r.precio_unitario - r.precio_lista) > 0.004 ? ` (lista ${dinero(r.precio_lista)})` : ''}</small></li>`).join('')}
+      <li class="total"><span>Total</span><span>${dinero(c.total)}</span></li>
+    </ul>
+    <div class="m-botones">
+      <button class="m-boton secundario" data-r="copiar">Copiar a una nueva</button>
+      ${c.estado === 'enviada' ? '<button class="m-boton peligro" data-r="cancelar">Cancelar</button>' : ''}
+    </div>
+    <button class="m-boton secundario" data-r="no">Cerrar</button>`);
+  hoja.querySelector('[data-r="no"]').addEventListener('click', () => cerrarHoja());
+  hoja.querySelector('[data-r="copiar"]').addEventListener('click', async () => {
+    cerrarHoja();
+    if (M.cotizacion.renglones.length) {
+      const reemplazar = await confirmarHoja({ titulo: 'Copiar cotización', mensaje: 'Se reemplazan los productos de la cotización que estás armando.', boton: 'Reemplazar' });
+      if (!reemplazar) return;
+    }
+    M.cotizacion.renglones = c.renglones.map((r) => ({
+      producto_id: r.producto_id, descripcion: r.descripcion, codigo_barras: r.codigo_barras,
+      cantidad: r.cantidad, precio: r.precio_unitario, precio_lista: r.precio_lista,
+    }));
+    M.cotizacion.cliente = c.cliente;
+    $('cot-cliente').value = c.cliente;
+    pintarCotizacion();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    aviso('Revisa los precios de hoy antes de enviarla');
+  });
+  hoja.querySelector('[data-r="cancelar"]')?.addEventListener('click', async () => {
+    cerrarHoja();
+    const confirmado = await confirmarHoja({
+      titulo: `Cancelar la cotización folio ${c.folio}`,
+      mensaje: 'La sucursal ya no la podrá cobrar.',
+      boton: 'Cancelar cotización',
+      peligro: true,
+    });
+    if (!confirmado) return;
+    try {
+      await api(`/api/cotizaciones/${c.id}/cancelar`, { method: 'POST' });
+      aviso(`Cotización folio ${c.folio} cancelada`, 'exito');
+      cargarEnviadas();
+    } catch (error) {
+      aviso(error.message, 'error');
+    }
+  });
+}
+
+// ---------- Apoyos: revisar con palomitas lo que mandó la central ----------
+const claveRevision = (id) => `farmacia.movil.${M.usuario.id}.apoyo.${id}`;
+
+function leerRevision(id) {
+  try { return JSON.parse(localStorage.getItem(claveRevision(id)) || 'null'); } catch { return null; }
+}
+
+function guardarRevision() {
+  const rev = M.revision;
+  if (!rev) return;
+  try {
+    localStorage.setItem(claveRevision(rev.apoyo.id), JSON.stringify({ contado: rev.contado, extras: rev.extras, noEncontrados: rev.noEncontrados }));
+  } catch { /* sin almacenamiento */ }
+}
+
+function borrarRevision(id) {
+  try { localStorage.removeItem(claveRevision(id)); } catch { /* sin almacenamiento */ }
+}
+
+async function cargarApoyos({ silencioso = false } = {}) {
+  try {
+    const lista = await api('/api/apoyos?estado=enviado');
+    M.apoyos = lista.filter((a) => a.estado === 'enviado' && Number(a.destino_id) === Number(M.usuario.sucursal_id));
+    pintarApoyos();
+  } catch (error) {
+    if (!silencioso) aviso(error.message, 'error');
+    if (!M.apoyos) $('apo-lista').innerHTML = `<li class="m-vacio">${escaparHtml(error.message)}</li>`;
+  }
+}
+
+function pintarApoyos() {
+  const lista = M.apoyos || [];
+  $('apo-lista').innerHTML = lista.map((a) => {
+    const guardado = leerRevision(a.id);
+    const enCurso = guardado && Object.values(guardado.contado || {}).some((n) => n > 0);
+    return `<li><button class="m-apoyo" data-apoyo="${a.id}">
+      <span><b>Apoyo folio ${a.folio}</b>
+        <small>De ${escaparHtml(a.origen)}${a.enviado ? ` · ${escaparHtml(fechaCorta(a.enviado))}` : ''}</small>
+        <small>${a.renglones} producto(s) · ${cantidadTexto(a.piezas)} pieza(s)${enCurso ? ' · <span class="m-en-curso">revisión a medias</span>' : ''}</small></span>
+      <span class="m-accion principal">Revisar</span>
+    </button></li>`;
+  }).join('') || '<li class="m-vacio">No hay apoyos por recibir. Cuando la central mande uno, aparecerá aquí.</li>';
+  $('nav-apoyos').hidden = lista.length === 0;
+  $('nav-apoyos').textContent = lista.length;
+}
+
+$('apo-lista').addEventListener('click', (e) => {
+  const boton = e.target.closest('button[data-apoyo]');
+  if (boton) abrirApoyo(Number(boton.dataset.apoyo));
+});
+$('apo-actualizar').addEventListener('click', () => cargarApoyos());
+
+async function abrirApoyo(id) {
+  let apoyo;
+  try {
+    apoyo = await api(`/api/apoyos/${id}`);
+  } catch (error) {
+    aviso(error.message, 'error');
+    return;
+  }
+  if (apoyo.estado !== 'enviado') {
+    aviso('Este apoyo ya no está pendiente de recibir', 'error');
+    borrarRevision(id);
+    cargarApoyos({ silencioso: true });
+    return;
+  }
+  const guardado = leerRevision(id) || {};
+  const ids = new Set(apoyo.renglones.map((r) => String(r.id)));
+  const contado = Object.fromEntries(Object.entries(guardado.contado || {}).filter(([clave]) => ids.has(clave)));
+  M.revision = { apoyo, contado, extras: guardado.extras || [], noEncontrados: guardado.noEncontrados || [] };
+  mostrarRevision(true);
+  pintarRevision();
+  window.scrollTo({ top: 0 });
+}
+
+function mostrarRevision(abierta) {
+  if (!abierta) M.revision = null;
+  $('apo-inicio').hidden = abierta;
+  $('apo-revision').hidden = !abierta;
+  ajustarCaptura();
+  if (!abierta) pintarApoyos();
+}
+
+$('apo-volver').addEventListener('click', () => mostrarRevision(false));
+
+function renglonApoyoPorCodigo(codigo) {
+  return M.revision ? M.revision.apoyo.renglones.find((r) => r.codigo_barras && r.codigo_barras === codigo) || null : null;
+}
+
+function contarRenglonApoyo(renglon, cantidad) {
+  const rev = M.revision;
+  const contado = redondear((rev.contado[renglon.id] || 0) + cantidad);
+  rev.contado[renglon.id] = contado;
+  pintarRevision(renglon.id);
+  if (Escaner.abierto()) {
+    const sobra = contado > renglon.cantidad + 1e-9;
+    const completo = Math.abs(contado - renglon.cantidad) < 1e-9;
+    Escaner.informar(`${escaparHtml(renglon.descripcion)}<br><b>${cantidadTexto(contado)} de ${cantidadTexto(renglon.cantidad)}</b>${completo ? ' ✓ completo' : ''}${sobra ? ' — llegaron de más' : ''}`, {
+      error: sobra,
+      boton: { texto: '+1', alPulsar: () => { Escaner.sonar('ok'); contarRenglonApoyo(renglon, 1); } },
+    });
+  }
+  return renglon;
+}
+
+// Un producto escaneado: si viene en el apoyo se palomea; si no, queda como "no venía"
+function contarApoyo(producto, cantidad = 1) {
+  const rev = M.revision;
+  if (!rev) return null;
+  const renglon = rev.apoyo.renglones.find((r) => r.producto_id === producto.id);
+  if (renglon) return contarRenglonApoyo(renglon, cantidad);
+  let extra = rev.extras.find((x) => x.producto_id === producto.id);
+  if (!extra) {
+    extra = { producto_id: producto.id, descripcion: producto.descripcion, codigo_barras: producto.codigo_barras, cantidad: 0 };
+    rev.extras.unshift(extra);
+  }
+  extra.cantidad = redondear(extra.cantidad + cantidad);
+  pintarRevision();
+  const texto = `"${producto.descripcion}" no venía en este apoyo (${cantidadTexto(extra.cantidad)})`;
+  if (Escaner.abierto()) Escaner.informar(escaparHtml(texto), { error: true });
+  else aviso(texto, 'error');
+  return null;
+}
+
+function estadoRenglon(renglon, contado) {
+  if (Math.abs(contado - renglon.cantidad) < 1e-9) return { clase: 'completo', texto: 'Completo' };
+  if (contado > renglon.cantidad) return { clase: 'sobra', texto: `Sobran ${cantidadTexto(contado - renglon.cantidad)}` };
+  return { clase: contado > 0 ? 'parcial' : '', texto: `Faltan ${cantidadTexto(renglon.cantidad - contado)}` };
+}
+
+function pintarRevision(nuevo = null) {
+  const rev = M.revision;
+  if (!rev) return;
+  const { apoyo } = rev;
+  $('apo-titulo').textContent = `Apoyo folio ${apoyo.folio}`;
+  $('apo-subtitulo').textContent = `De ${apoyo.origen}${apoyo.enviado ? ` · ${fechaCorta(apoyo.enviado)}` : ''}`;
+  let completos = 0;
+  let llegaron = 0;
+  $('apo-renglones').innerHTML = apoyo.renglones.map((r) => {
+    const contado = rev.contado[r.id] || 0;
+    const estado = estadoRenglon(r, contado);
+    if (estado.clase === 'completo') completos += 1;
+    llegaron += Math.min(contado, r.cantidad);
+    return `<li class="m-renglon revision ${estado.clase} ${r.id === nuevo ? 'nuevo' : ''}" data-renglon="${r.id}">
+      <span class="m-palomita"><svg class="icono"><use href="#i-check"/></svg></span>
+      <div><div class="m-renglon-nombre">${escaparHtml(r.descripcion)}</div>
+        <div class="m-renglon-dato">Llegaron <b>${cantidadTexto(contado)}</b> de ${cantidadTexto(r.cantidad)} · ${escaparHtml(r.codigo_barras || 'Sin código')}</div></div>
+      <div class="m-paso">
+        <button data-accion="menos" aria-label="Una menos"><svg class="icono"><use href="#i-menos"/></svg></button>
+        <input type="number" inputmode="decimal" min="0" step="any" value="${cantidadTexto(contado)}" data-accion="cantidad" aria-label="Piezas que llegaron">
+        <button data-accion="mas" aria-label="Una más"><svg class="icono"><use href="#i-mas"/></svg></button>
+        <span class="m-estado-renglon">${estado.texto}</span>
+      </div>
+    </li>`;
+  }).join('');
+  const total = redondear(apoyo.renglones.reduce((t, r) => t + r.cantidad, 0));
+  $('apo-completos').textContent = completos;
+  $('apo-renglones-total').textContent = apoyo.renglones.length;
+  $('apo-piezas').textContent = cantidadTexto(llegaron);
+  $('apo-piezas-total').textContent = cantidadTexto(total);
+  $('apo-barra').style.width = `${total > 0 ? Math.min(100, (llegaron / total) * 100) : 0}%`;
+  const extras = rev.extras.filter((x) => x.cantidad > 0);
+  $('apo-extras').innerHTML = extras.length || rev.noEncontrados.length ? `<div class="m-no-encontrados">
+    ${extras.length ? `<b>No venían en el apoyo:</b> ${extras.map((x) => `${escaparHtml(x.descripcion)} (${cantidadTexto(x.cantidad)})
+      <button class="m-accion" data-quitar-extra="${x.producto_id}">Quitar</button>`).join(' ')}<br>` : ''}
+    ${rev.noEncontrados.length ? `<b>No están en el catálogo:</b> ${rev.noEncontrados.map((c) => `<code>${escaparHtml(c)}</code>`).join(' ')}
+      <button class="m-accion" data-quitar-codigos>Quitar</button>` : ''}
+  </div>` : '';
+  guardarRevision();
+}
+
+$('apo-renglones').addEventListener('click', (e) => {
+  const boton = e.target.closest('button[data-accion]');
+  if (!boton || !M.revision) return;
+  const id = Number(boton.closest('li[data-renglon]').dataset.renglon);
+  const actual = M.revision.contado[id] || 0;
+  M.revision.contado[id] = boton.dataset.accion === 'mas' ? redondear(actual + 1) : Math.max(0, redondear(actual - 1));
+  pintarRevision();
+});
+$('apo-renglones').addEventListener('change', (e) => {
+  if (!e.target.matches('input[data-accion="cantidad"]') || !M.revision) return;
+  const id = Number(e.target.closest('li[data-renglon]').dataset.renglon);
+  const valor = Number(String(e.target.value).replace(',', '.'));
+  if (Number.isFinite(valor) && valor >= 0) M.revision.contado[id] = redondear(valor);
+  pintarRevision();
+});
+$('apo-extras').addEventListener('click', (e) => {
+  if (!M.revision) return;
+  const extra = e.target.closest('[data-quitar-extra]');
+  if (extra) M.revision.extras = M.revision.extras.filter((x) => x.producto_id !== Number(extra.dataset.quitarExtra));
+  if (e.target.closest('[data-quitar-codigos]')) M.revision.noEncontrados = [];
+  pintarRevision();
+});
+
+$('apo-reiniciar').addEventListener('click', async () => {
+  if (!M.revision) return;
+  const confirmado = await confirmarHoja({ titulo: 'Empezar de nuevo', mensaje: 'Se borra lo que llevas escaneado de este apoyo.', boton: 'Empezar de nuevo', peligro: true });
+  if (!confirmado) return;
+  M.revision.contado = {};
+  M.revision.extras = [];
+  M.revision.noEncontrados = [];
+  pintarRevision();
+});
+
+// Al terminar: o llegó completo, o se muestran las diferencias antes de recibir
+function diferenciasRevision() {
+  const rev = M.revision;
+  const faltan = [];
+  const sobran = [];
+  for (const r of rev.apoyo.renglones) {
+    const contado = rev.contado[r.id] || 0;
+    if (contado < r.cantidad - 1e-9) faltan.push({ descripcion: r.descripcion, cantidad: redondear(r.cantidad - contado) });
+    else if (contado > r.cantidad + 1e-9) sobran.push({ descripcion: r.descripcion, cantidad: redondear(contado - r.cantidad) });
+  }
+  const extras = rev.extras.filter((x) => x.cantidad > 0);
+  const piezas = redondear(rev.apoyo.renglones.reduce((t, r) => t + Math.min(rev.contado[r.id] || 0, r.cantidad), 0));
+  return { faltan, sobran, extras, codigos: rev.noEncontrados, piezas, hay: Boolean(faltan.length || sobran.length || extras.length || rev.noEncontrados.length) };
+}
+
+const listaTexto = (lista) => lista.map((x) => `${cantidadTexto(x.cantidad)} ${x.descripcion}`).join(', ');
+
+$('apo-terminar').addEventListener('click', () => {
+  const rev = M.revision;
+  if (!rev) return;
+  const d = diferenciasRevision();
+  if (!d.hay) {
+    const hoja = abrirHoja(`
+      <div class="m-completo">
+        <span class="m-palomita"><svg class="icono"><use href="#i-check"/></svg></span>
+        <h3>Apoyo completo</h3>
+        <p>Llegó todo lo que mandó ${escaparHtml(rev.apoyo.origen)}: <b>${cantidadTexto(d.piezas)} pieza(s)</b> de <b>${rev.apoyo.renglones.length} producto(s)</b>.
+          Al recibirlo se suman al inventario de <b>${escaparHtml(nombreSucursal())}</b> y el apoyo queda cerrado.</p>
+      </div>
+      <div class="m-botones">
+        <button class="m-boton secundario" data-r="no">Seguir revisando</button>
+        <button class="m-boton principal" data-r="si">Recibir apoyo</button>
+      </div>`);
+    hoja.querySelector('[data-r="no"]').addEventListener('click', () => cerrarHoja());
+    hoja.querySelector('[data-r="si"]').addEventListener('click', (e) => recibirApoyo(e.currentTarget, ''));
+    return;
+  }
+  const bloque = (titulo, lista) => (lista.length ? `<div><h4>${titulo}</h4><ul class="m-tabla-hoja">${lista.map((x) => `<li><span>${escaparHtml(x.descripcion)}</span><b>${cantidadTexto(x.cantidad)}</b></li>`).join('')}</ul></div>` : '');
+  const hoja = abrirHoja(`
+    <h3>El apoyo tiene diferencias</h3>
+    <div class="m-diferencias">
+      ${bloque('Faltan (llegaron menos)', d.faltan)}
+      ${bloque('Sobran (llegaron de más)', d.sobran)}
+      ${bloque('No venían en el apoyo', d.extras)}
+      ${d.codigos.length ? `<div><h4>Códigos que no están en el catálogo</h4><p>${d.codigos.map((c) => `<code>${escaparHtml(c)}</code>`).join(' ')}</p></div>` : ''}
+    </div>
+    <p>Si lo recibes así, entra al inventario solo lo que sí llegó y venía en el apoyo (<b>${cantidadTexto(d.piezas)} pieza(s)</b>).
+      Lo que sobra o no venía no se suma. Las diferencias quedan anotadas en el apoyo para que la central las revise.</p>
+    <input id="apo-nota" type="text" maxlength="200" placeholder="Comentario (opcional)" aria-label="Comentario">
+    <div class="m-botones">
+      <button class="m-boton secundario" data-r="no">Seguir revisando</button>
+      <button class="m-boton peligro" data-r="si">Recibir con diferencias</button>
+    </div>`);
+  hoja.querySelector('[data-r="no"]').addEventListener('click', () => cerrarHoja());
+  hoja.querySelector('[data-r="si"]').addEventListener('click', (e) => {
+    const partes = [
+      d.faltan.length ? `faltaron ${listaTexto(d.faltan)}` : '',
+      d.sobran.length ? `sobraron ${listaTexto(d.sobran)}` : '',
+      d.extras.length ? `no venían en el apoyo ${listaTexto(d.extras)}` : '',
+      d.codigos.length ? `códigos fuera del catálogo ${d.codigos.join(', ')}` : '',
+      hoja.querySelector('#apo-nota').value.trim(),
+    ].filter(Boolean);
+    recibirApoyo(e.currentTarget, `Revisado con el celular: ${partes.join('; ')}`);
+  });
+});
+
+async function recibirApoyo(boton, diferencias) {
+  const rev = M.revision;
+  if (!rev) return;
+  boton.disabled = true;
+  boton.textContent = 'Recibiendo…';
+  try {
+    await api(`/api/apoyos/${rev.apoyo.id}/recibir`, {
+      method: 'POST',
+      body: {
+        renglones: rev.apoyo.renglones.map((r) => ({ id: r.id, cantidad_recibida: Math.min(rev.contado[r.id] || 0, r.cantidad) })),
+        nota_recepcion: diferencias,
+      },
+    });
+    cerrarHoja();
+    borrarRevision(rev.apoyo.id);
+    M.porCodigo.clear();
+    aviso(diferencias ? `Apoyo folio ${rev.apoyo.folio} recibido con diferencias (quedaron anotadas)` : `Apoyo folio ${rev.apoyo.folio} recibido completo`, 'exito');
+    mostrarRevision(false);
+    cargarApoyos({ silencioso: true });
+  } catch (error) {
+    cerrarHoja();
+    aviso(error.message, 'error');
+    if (/ya fue recibido|no está pendiente|cancelado/i.test(error.message)) {
+      borrarRevision(rev.apoyo.id);
+      mostrarRevision(false);
+      cargarApoyos({ silencioso: true });
+    }
+  }
+}
+
 // ---------- Cámara ----------
 const TITULOS_CAMARA = {
   consultar: 'Apunta al código del producto',
+  movimientos: 'Escanea el producto para ver sus movimientos',
   recibir: 'Escanea lo que llegó',
   contar: 'Escanea cada pieza del estante',
+  cotizar: 'Escanea los productos de la cotización',
+  apoyos: 'Escanea cada pieza del apoyo',
 };
 
 async function manejarEscaneo(codigo) {
+  if (M.vista === 'apoyos') {
+    if (!M.revision) return false;
+    const renglon = renglonApoyoPorCodigo(codigo);
+    if (renglon) {
+      contarRenglonApoyo(renglon, 1);
+      return true;
+    }
+  }
+  if (M.vista === 'contar' && diaAbierto()) return escaneoEnDia(codigo);
+  if (M.vista === 'movimientos') {
+    filtrarMovimientosPorProducto(codigo);
+    return false;
+  }
   let producto;
   try {
     producto = await productoPorCodigo(codigo, { fresco: M.vista === 'consultar' });
@@ -875,6 +1567,8 @@ async function manejarEscaneo(codigo) {
     return true;
   }
   if (M.vista === 'recibir') agregarRecepcion(producto, 1);
+  else if (M.vista === 'cotizar') agregarCotizacion(producto, 1);
+  else if (M.vista === 'apoyos') contarApoyo(producto, 1);
   else await agregarConteo(producto, 1);
   return true;
 }
@@ -898,9 +1592,14 @@ async function abrirCamara(opciones, { alFallar } = {}) {
 }
 
 function escanear() {
+  if (M.vista === 'apoyos' && !M.revision) {
+    aviso('Primero abre el apoyo que llegó', 'error');
+    return null;
+  }
+  const enDia = M.vista === 'contar' && diaAbierto();
   return abrirCamara({
-    titulo: TITULOS_CAMARA[M.vista],
-    continuo: M.vista !== 'consultar',
+    titulo: enDia ? 'Escanea el producto que vas a contar' : TITULOS_CAMARA[M.vista],
+    continuo: M.vista !== 'consultar' && M.vista !== 'movimientos',
     alLeer: manejarEscaneo,
     alTeclear: () => $('entrada-codigo').focus(),
   }, {
@@ -922,11 +1621,36 @@ $('form-codigo').addEventListener('submit', (e) => {
 
 // ---------- Navegación, encabezado y menú ----------
 function mostrarVista(vista) {
-  M.vista = ['consultar', 'recibir', 'contar'].includes(vista) ? vista : 'consultar';
-  for (const nombre of ['consultar', 'recibir', 'contar']) $(`vista-${nombre}`).hidden = nombre !== M.vista;
-  document.querySelectorAll('.m-nav button').forEach((b) => b.classList.toggle('activa', b.dataset.vista === M.vista));
-  $('texto-escanear').textContent = { consultar: 'Escanear', recibir: 'Escanear lo que llegó', contar: 'Escanear para contar' }[M.vista];
+  const permitidas = vistasPermitidas();
+  const enBarra = vistasEnBarra();
+  M.vista = permitidas.includes(vista) ? vista : enBarra[0];
+  for (const nombre of VISTAS) $(`vista-${nombre}`).hidden = nombre !== M.vista;
+  // Recibir y contar del jefe viven en "Más"
+  const activa = enBarra.includes(M.vista) ? M.vista : 'mas';
+  document.querySelectorAll('.m-nav button').forEach((b) => {
+    b.hidden = !enBarra.includes(b.dataset.vista);
+    b.classList.toggle('activa', b.dataset.vista === activa);
+  });
+  $('texto-escanear').textContent = {
+    inicio: 'Escanear', consultar: 'Escanear', recibir: 'Escanear lo que llegó', contar: 'Escanear para contar',
+    cotizar: 'Escanear para cotizar', apoyos: 'Escanear lo que llegó', movimientos: 'Escanear un producto', mas: 'Escanear',
+  }[M.vista];
+  ajustarCaptura();
+  if (M.vista === 'cotizar') {
+    if (!M.destinos) cargarDestinos();
+    cargarEnviadas();
+  }
+  if (M.vista === 'apoyos' && !M.revision) cargarApoyos({ silencioso: Boolean(M.apoyos) });
+  if (M.vista === 'contar') cargarDia({ silencioso: true });
+  if (M.vista === 'inicio') cargarInicio();
+  if (M.vista === 'movimientos') abrirMovimientos();
+  if (M.vista === 'mas') mostrarMenuMas();
   try { localStorage.setItem(`farmacia.movil.${M.usuario.id}.vista`, M.vista); } catch { /* sin almacenamiento */ }
+}
+
+// En la lista de apoyos no se escanea: primero se abre el apoyo. En Inicio y Más tampoco.
+function ajustarCaptura() {
+  document.querySelector('.m-captura').hidden = (M.vista === 'apoyos' && !M.revision) || M.vista === 'inicio' || M.vista === 'mas';
 }
 
 document.querySelectorAll('.m-nav button').forEach((b) => b.addEventListener('click', () => mostrarVista(b.dataset.vista)));
@@ -947,6 +1671,7 @@ $('m-sucursal').addEventListener('change', (e) => {
   try { localStorage.setItem(`farmacia.movil.${M.usuario.id}.sucursal`, M.sucursalId); } catch { /* sin almacenamiento */ }
   cargarBorradores();
   if (M.producto) mostrarProducto(M.producto);
+  if (M.vista === 'contar') cargarDia();
   aviso(`Trabajando con ${nombreSucursal()}`);
 });
 
@@ -955,12 +1680,13 @@ $('m-menu').addEventListener('click', () => {
   const puedeInstalar = NUBE && !esInstalada() && (avisoInstalar || esIos());
   const hoja = abrirHoja(`
     <h3>${escaparHtml(M.usuario.nombre)}</h3>
-    <p>${escaparHtml(M.usuario.sucursal)} · ${M.usuario.rol === 'admin' ? 'Administrador' : 'Cajero'}</p>
+    <p>${escaparHtml(M.usuario.sucursal)} · ${esJefe() ? 'Jefe' : M.usuario.rol === 'admin' ? 'Administrador' : 'Cajero'}</p>
     ${Escaner.disponible() ? '' : '<p class="m-error">La cámara necesita que el sistema se abra con https://. Mientras tanto puedes escribir el código o usar un lector Bluetooth.</p>'}
     ${puedeInstalar ? '<button class="m-boton principal" data-r="instalar">Instalar la app</button>' : ''}
     ${NUBE ? '' : '<a class="m-boton secundario" style="display:flex;align-items:center;justify-content:center;text-decoration:none" href="/?escritorio=1">Ir a la versión de computadora</a>'}
     <button class="m-boton peligro" data-r="salir">${NUBE ? 'Desvincular este celular' : 'Cerrar sesión'}</button>
-    <button class="m-boton secundario" data-r="no">Cerrar</button>`);
+    <button class="m-boton secundario" data-r="no">Cerrar</button>
+    <div class="m-creditos"><img src="img/swagit.png" alt=""><span>Desarrollado por <b>SwagIT</b> Technological Solutions</span></div>`);
   hoja.querySelector('[data-r="no"]').addEventListener('click', () => cerrarHoja());
   hoja.querySelector('[data-r="instalar"]')?.addEventListener('click', () => instalarApp());
   hoja.querySelector('[data-r="salir"]').addEventListener('click', async () => {
@@ -1046,18 +1772,28 @@ async function iniciar() {
   pintarEncabezado();
   cargarBorradores();
   pintarRecientes();
-  let vista = 'consultar';
-  try { vista = localStorage.getItem(`farmacia.movil.${M.usuario.id}.vista`) || 'consultar'; } catch { vista = 'consultar'; }
+  let vista = vistasEnBarra()[0];
+  try { vista = localStorage.getItem(`farmacia.movil.${M.usuario.id}.vista`) || vista; } catch { /* sin almacenamiento */ }
   mostrarVista(vista);
   if (!Escaner.disponible()) {
     $('consulta-resultado').insertAdjacentHTML('afterbegin',
       '<div class="m-no-encontrados">Para usar la cámara abre el sistema con su dirección segura (https://). Mientras tanto escribe el código o usa un lector de código de barras Bluetooth.</div>');
+  }
+  if (esAdminCentral()) {
+    $('consulta-ayuda').textContent = 'También ves los últimos movimientos, cambias el precio y lo agregas a una cotización.';
+    if (esJefe() && M.vista !== 'inicio') revisarPorAutorizar();
+  } else if (M.vista !== 'apoyos') {
+    cargarApoyos({ silencioso: true }); // para el aviso de la pestaña
   }
   pintarAvisoInstalar();
   if (!revisionesIniciadas) {
     revisionesIniciadas = true;
     revisarSincronizacion();
     setInterval(revisarSincronizacion, 30000);
+    // Aviso de apoyos que van llegando
+    if (!esAdminCentral()) setInterval(() => { if (!M.revision) cargarApoyos({ silencioso: true }); }, 120000);
+    // Aviso de los inventarios del día que falta autorizar
+    if (esJefe()) setInterval(revisarPorAutorizar, 300000);
   }
 }
 

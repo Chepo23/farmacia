@@ -8,7 +8,7 @@
 </head>
 <body>
   <header class="cabecera">
-    <img src="../recursos/logo.png" alt="">
+    <span class="insignia"><img src="../recursos/marca-frasco.svg" alt=""></span>
     <div>
       <h1 id="titulo">Configura esta computadora</h1>
       <p id="subtitulo">Programa Farmacia</p>
@@ -39,7 +39,8 @@
 
     <section class="bloque" id="bloque-datos">
       <h2>2. Datos de esta computadora</h2>
-      <p id="texto-datos">Si esta computadora ya usaba el sistema (con <code>npm start</code>), trae sus ventas, clientes, crédito y cortes.</p>
+      <p id="texto-datos">Solo si esta computadora ya vendía <b>de verdad</b> con este sistema (con <code>npm start</code>): trae sus ventas, clientes, crédito y cortes.</p>
+      <div class="aviso">Si en esta computadora se usaba otro programa (como Eleventa) o solo se hicieron pruebas, <b>no traigas datos</b>: se copiarían ventas, clientes y apoyos de prueba. Escribe la dirección y la llave en el paso 1.</div>
       <div class="fila-botones">
         <button type="button" id="anterior-carpeta" class="secundario">Traer datos del sistema anterior…</button>
         <button type="button" id="anterior-archivo" class="secundario">Elegir solo el archivo farmacia.db…</button>
@@ -73,6 +74,8 @@
     <section class="bloque" id="bloque-opciones">
       <h2>4. Opciones</h2>
       <label class="check"><input type="checkbox" id="iniciar-windows" checked> Abrir el programa al encender la computadora</label>
+      <label class="check"><input type="checkbox" id="pantalla-completa" checked> Abrir en pantalla completa (sin la barra de Windows)</label>
+      <p class="nota">Con <b>Ctrl+Shift+F</b> se cambia entre pantalla completa y ventana.</p>
       <label>Carpeta extra para los respaldos (opcional: por ejemplo una carpeta de OneDrive o una USB)
         <span class="con-boton">
           <input id="carpeta-extra" type="text" readonly placeholder="Sin carpeta extra">
@@ -94,6 +97,7 @@
   </main>
 
   <footer class="pie">
+    <span class="creditos-pie"><img src="../recursos/swagit.png" alt="">Desarrollado por <b>SwagIT</b> Technological Solutions</span>
     <div id="error" class="error" hidden></div>
     <button type="button" id="cancelar" class="secundario">Cancelar</button>
     <button type="button" id="guardar">Guardar y abrir el sistema</button>

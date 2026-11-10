@@ -1,6 +1,7 @@
 const express = require('express');
 const db = require('../db');
 const inventario = require('../inventario');
+const supervision = require('../supervision');
 const { modoCentral, manejar } = require('../central');
 
 const router = express.Router();
@@ -24,7 +25,17 @@ function rango(req) {
   return { desde, hasta, sucursalId: sucursalDelReporte(req) };
 }
 
-router.get('/ventas', (req, res) => {
+router.get('/ventas', manejar(async (req, res) => {
+  // El jefe ve las ventas de todas las farmacias (las que suben sus cajas a la central)
+  let sinCentral = false;
+  if (supervision.esJefe(req.usuario) && modoCentral()) {
+    try {
+      return res.json(await supervision.ventasCentral.reporte(req.usuario, req.query));
+    } catch (error) {
+      if (!error.sinConexion && error.codigo !== 'FALTA_ACTUALIZAR_CENTRAL') throw error;
+      sinCentral = true;
+    }
+  }
   const { desde, hasta, sucursalId } = rango(req);
   const filtroSucursal = sucursalId ? 'AND v.sucursal_id = @sucursalId' : '';
   const params = { desde, hasta, sucursalId };
@@ -140,8 +151,9 @@ router.get('/ventas', (req, res) => {
     mas_vendidos: dinero(masVendidos),
     // En modo central cada farmacia guarda sus ventas en su propia computadora
     ventas_solo_de_esta_computadora: modoCentral(),
+    sin_conexion_central: sinCentral,
   });
-});
+}));
 
 router.get('/inventario', manejar(async (req, res) => {
   const sucursalId = sucursalDelReporte(req);
