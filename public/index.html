@@ -45,6 +45,7 @@
     <symbol id="i-pago-mixto" viewBox="0 0 24 24"><rect x="1.5" y="3.5" width="13" height="8.5" rx="1.5"/><circle cx="8" cy="7.75" r="1.7"/><rect x="9.5" y="12" width="13" height="8.5" rx="1.5"/><line x1="9.5" y1="15" x2="22.5" y2="15"/></symbol>
     <symbol id="i-pago-credito" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M17 11h5M19.5 8.5v5"/></symbol>
     <symbol id="i-movimientos" viewBox="0 0 24 24"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></symbol>
+    <symbol id="i-inyeccion" viewBox="0 0 24 24"><path d="m18 2 4 4"/><path d="m17 7 3-3"/><path d="M19 9 8.7 19.3a2.4 2.4 0 0 1-3.4 0l-.6-.6a2.4 2.4 0 0 1 0-3.4L15 5"/><path d="m9 11 4 4"/><path d="m5 19-3 3"/><path d="m14 4 6 6"/></symbol>
     <symbol id="i-cotizar" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></symbol>
   </svg>
 
@@ -82,6 +83,8 @@
         <div class="ayuda-teclas">
           <span><b>F3</b> Buscar producto</span>
           <span><b>Ins</b> Artículo común</span>
+          <span><b>F10</b> Cóctel</span>
+          <span><b>Doble clic</b> en el precio: cambiarlo</span>
           <span><b>F11</b> Precio mayoreo</span>
           <span><b>Supr</b> Quitar renglón</span>
           <span><b>F12</b> Cobrar</span>
@@ -112,6 +115,7 @@
         <button id="boton-cobrar" class="boton exito grande"><svg class="icono"><use href="#i-cobrar"/></svg>COBRAR (F12)</button>
         <button id="boton-buscar" class="boton primario"><svg class="icono"><use href="#i-buscar"/></svg>Buscar producto (F3)</button>
         <button id="boton-articulo-comun" class="boton primario"><svg class="icono"><use href="#i-mas"/></svg>Artículo común (Ins)</button>
+        <button id="boton-coctel" class="boton primario" title="Cobrar ampolletas, jeringa y aguja al precio del cóctel"><svg class="icono"><use href="#i-inyeccion"/></svg>Cóctel (F10)</button>
         <button id="boton-cotizaciones" class="boton boton-cotizaciones"><svg class="icono"><use href="#i-cotizar"/></svg>Cotizaciones<span id="aviso-cotizaciones" class="globo-aviso" hidden></span></button>
         <button id="boton-cancelar-venta" class="boton peligro-suave"><svg class="icono"><use href="#i-x"/></svg>Cancelar venta (F4)</button>
         <hr>
@@ -127,7 +131,9 @@
       <h2>Productos e inventario</h2>
       <div class="acciones">
         <input type="text" id="buscar-productos" class="entrada" aria-label="Buscar productos" placeholder="Buscar por nombre o código…">
+        <select id="filtro-departamento" class="entrada" aria-label="Departamento"><option value="">Todos los departamentos</option></select>
         <button id="boton-bajo-minimo" class="boton advertencia"><svg class="icono"><use href="#i-alerta"/></svg>Bajo mínimo</button>
+        <button id="boton-baja-seleccion" class="boton peligro" type="button" hidden><svg class="icono"><use href="#i-basura"/></svg>Dar de baja seleccionados (<span id="cuenta-seleccion">0</span>)</button>
         <button id="boton-nuevo-producto" class="boton primario solo-admin" hidden><svg class="icono"><use href="#i-mas"/></svg>Nuevo producto</button>
       </div>
     </div>
@@ -225,7 +231,7 @@
           <div class="contenedor-tabla">
             <table class="tabla">
               <thead><tr><th>Departamento</th><th class="num">Piezas</th><th class="num">Total</th></tr></thead>
-              <tbody id="cuerpo-departamentos"></tbody>
+              <tbody id="cuerpo-departamentos-corte"></tbody>
             </table>
           </div>
         </div>
@@ -362,6 +368,18 @@
             </table>
           </div>
         </div>
+        <div class="tarjeta">
+          <h3>Apoyos en camino</h3>
+          <div class="contenedor-tabla apoyos-tabla">
+            <table class="tabla">
+              <thead><tr>
+                <th class="num">Folio</th><th>De</th><th>Para</th>
+                <th class="num">Prods.</th><th class="num">Piezas</th><th class="num">Costo</th><th>Enviado</th><th></th>
+              </tr></thead>
+              <tbody id="cuerpo-en-camino"></tbody>
+            </table>
+          </div>
+        </div>
       </div>
 
       <div id="vista-historial" hidden>
@@ -391,7 +409,8 @@
       <div class="acciones vista-sup-toggle">
         <button class="boton solo-jefe" data-vista-sup="resumen" type="button" hidden>Resumen</button>
         <button class="boton" data-vista-sup="movimientos" type="button">Movimientos</button>
-        <button class="boton" data-vista-sup="conteos" type="button">Inventario del día</button>
+        <button class="boton" data-vista-sup="conteos" type="button">Inventarios</button>
+        <button class="boton solo-jefe" data-vista-sup="semana" type="button" hidden>Revisión semanal</button>
         <button class="boton solo-jefe" data-vista-sup="cortes" type="button" hidden>Cortes</button>
         <button class="boton solo-jefe" data-vista-sup="creditos" type="button" hidden>Créditos</button>
         <button class="boton solo-jefe" data-vista-sup="cambios" type="button" hidden>Registro de cambios</button>
@@ -421,6 +440,7 @@
           <option value="salida">Salidas</option><option value="ajuste">Ajustes</option><option value="apoyo">Apoyos</option>
           <option value="conteo">Conteos</option><option value="cancelacion">Ventas canceladas</option>
           <option value="recepcion">Recepción de mercancía</option><option value="alta">Altas de producto</option>
+          <option value="prestamo">Préstamos a otras farmacias</option>
         </select>
         <select id="sup-mov-usuario" class="entrada" aria-label="Persona"></select>
         <input type="search" id="sup-mov-producto" class="entrada" placeholder="Producto (nombre o código)" maxlength="80">
@@ -437,18 +457,18 @@
       <div class="acciones sup-mas"><button id="sup-mov-mas" class="boton" type="button" hidden>Cargar más</button></div>
     </div>
 
-    <!-- Inventario del día: avance, exactitud y diferencias por autorizar -->
+    <!-- Inventarios (mañana, tarde y completos): avance, exactitud, diferencias por autorizar y la lista de cada farmacia -->
     <div id="sup-conteos" class="vista-sup" hidden>
       <div class="zona-sup-conteos">
         <div class="tarjeta">
-          <h3>Inventarios del día <button class="boton chico" id="sup-conteos-actualizar" type="button">Actualizar</button></h3>
-          <div class="contenedor-tabla"><table class="tabla"><thead><tr><th>Día</th><th>Sucursal</th><th>Estado</th><th class="num">Contados</th><th class="num">Cuadró</th><th class="num">Faltan</th><th class="num">Sobran</th><th class="num">Por autorizar</th></tr></thead>
+          <h3>Inventarios <button class="boton chico" id="sup-conteos-actualizar" type="button">Actualizar</button></h3>
+          <div class="contenedor-tabla"><table class="tabla"><thead><tr><th>Día</th><th>Sucursal</th><th>Inventario</th><th>Estado</th><th class="num">Contados</th><th class="num">Cuadró</th><th class="num">Faltan</th><th class="num">Sobran</th><th class="num">Por autorizar</th></tr></thead>
             <tbody id="sup-conteos-cuerpo"></tbody></table></div>
           <div class="solo-jefe sup-config-caja" hidden>
-            <h4>Productos por día</h4>
-            <p class="texto-suave">Cuántos productos cuenta cada sucursal en el inventario del día (el cambio se nota en la lista de mañana).
-              Para que un producto se cuente seguido, márcalo como <b>importante</b> desde el celular.</p>
-            <div id="sup-config" class="sup-config"></div>
+            <h4>Lista del inventario</h4>
+            <p class="texto-suave">Cada día la farmacia cuenta su lista <b>dos veces</b> (turno de la mañana y de la tarde) con el celular,
+              sin ver lo que dice el sistema. Los cambios se ven desde el siguiente turno.</p>
+            <div id="sup-lista" class="sup-lista"></div>
           </div>
         </div>
         <div class="tarjeta" id="sup-conteo-detalle">
@@ -456,6 +476,20 @@
           <p class="texto-suave">Elige un inventario de la lista para ver lo que se contó.</p>
         </div>
       </div>
+    </div>
+
+    <!-- Revisión semanal del inventario (solo el jefe): como la hoja de Excel de antes -->
+    <div id="sup-semana" class="vista-sup" hidden>
+      <div class="acciones sup-filtros">
+        <select id="sup-sem-sucursal" class="entrada" aria-label="Sucursal"></select>
+        <button id="sup-sem-anterior" class="boton" type="button">← Semana anterior</button>
+        <b id="sup-sem-rango" class="sup-sem-rango"></b>
+        <button id="sup-sem-siguiente" class="boton" type="button">Semana siguiente →</button>
+        <button id="sup-sem-hoy" class="boton" type="button">Esta semana</button>
+        <button id="sup-sem-descargar" class="boton" type="button"><svg class="icono"><use href="#i-archivo"/></svg>Descargar (Excel)</button>
+        <button id="sup-sem-revisar" class="boton exito" type="button"><svg class="icono"><use href="#i-check"/></svg>Marcar la semana como revisada</button>
+      </div>
+      <div id="sup-sem-contenido"><p class="texto-suave">Cargando…</p></div>
     </div>
 
     <!-- Cortes de caja de todas las farmacias (solo el jefe): consultar y reimprimir -->
@@ -484,6 +518,7 @@
         <table class="tabla"><thead><tr><th>Cliente</th><th>Sucursal</th><th>Teléfono</th><th class="num">Debe</th><th class="num">Límite</th><th>Última compra</th><th>Último abono</th></tr></thead>
           <tbody id="sup-cre-cuerpo"></tbody></table>
       </div>
+      <div id="sup-cre-prestamos"></div>
     </div>
 
     <!-- Registro de cambios (solo el jefe) -->
@@ -496,7 +531,7 @@
         <select id="sup-cam-grupo" class="entrada" aria-label="Qué cambios">
           <option value="">Todos los cambios</option><option value="alertas">Solo alertas</option><option value="productos">Productos y precios</option>
           <option value="caja">Caja: cancelaciones, cortes y efectivo</option><option value="usuarios">Usuarios y sucursales</option>
-          <option value="apoyos">Apoyos</option><option value="cotizaciones">Cotizaciones</option><option value="conteos">Inventario del día</option>
+          <option value="apoyos">Apoyos</option><option value="cotizaciones">Cotizaciones</option><option value="conteos">Inventarios</option>
         </select>
         <button id="sup-cam-buscar" class="boton primario" type="button">Buscar</button>
       </div>
@@ -575,6 +610,7 @@
         <div id="admin-respaldos"><small>Cargando…</small></div>
         <div class="acciones">
           <button type="button" id="boton-respaldar" class="boton primario"><svg class="icono"><use href="#i-archivo"/></svg>Respaldar ahora</button>
+          <button type="button" id="boton-copiar-central" class="boton" hidden><svg class="icono"><use href="#i-nube"/></svg>Copiar la central ahora</button>
         </div>
       </div>
       <div class="tarjeta" id="tarjeta-programa" hidden>

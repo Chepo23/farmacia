@@ -13,12 +13,12 @@ const Sup = {
 
 const SUP_CLASES = {
   venta: 'Venta', entrada: 'Entrada', salida: 'Salida', ajuste: 'Ajuste', apoyo: 'Apoyo', conteo: 'Conteo',
-  cancelacion: 'Venta cancelada', recepcion: 'Recepción', alta: 'Alta de producto',
+  cancelacion: 'Venta cancelada', recepcion: 'Recepción', alta: 'Alta de producto', prestamo: 'Préstamo',
 };
 const SUP_LISTAS = {
   bajo_minimo: 'Bajo mínimo', agotados: 'Agotados', negativos: 'Existencia negativa', sin_movimiento: 'Sin movimiento (60 días)', valor: 'De más valor',
 };
-const SUP_ESTADOS_CONTEO = { abierto: ['Contando', 'enviado'], por_autorizar: ['Por autorizar', 'faltante'], cerrado: ['Revisado', 'recibido'], cancelado: ['Cancelado', 'cancelado'] };
+const SUP_ESTADOS_CONTEO = { abierto: ['Contando', 'enviado'], por_autorizar: ['Falta ajustar', 'faltante'], cerrado: ['Terminado', 'recibido'], cancelado: ['Cancelado', 'cancelado'] };
 
 const supEsJefe = () => Number(App.usuario?.jefe) === 1;
 const supNumero = (n) => String(Math.round((Number(n) || 0) * 1000) / 1000);
@@ -37,13 +37,14 @@ function supFecha(texto) {
 const supDiaCorto = (dia) => new Date(`${dia}T12:00:00`).toLocaleDateString('es-MX', { weekday: 'short', day: 'numeric', month: 'short' });
 
 function mostrarVistaSup(vista) {
-  const permitidas = supEsJefe() ? ['resumen', 'movimientos', 'conteos', 'cortes', 'creditos', 'cambios'] : ['movimientos', 'conteos'];
+  const permitidas = supEsJefe() ? ['resumen', 'movimientos', 'conteos', 'semana', 'cortes', 'creditos', 'cambios'] : ['movimientos', 'conteos'];
   Sup.vista = permitidas.includes(vista) ? vista : permitidas[0];
   document.querySelectorAll('.vista-sup').forEach((v) => { v.hidden = v.id !== `sup-${Sup.vista}`; });
   document.querySelectorAll('[data-vista-sup]').forEach((b) => b.classList.toggle('primario', b.dataset.vistaSup === Sup.vista));
   if (Sup.vista === 'resumen') cargarResumenSup();
   if (Sup.vista === 'movimientos') cargarMovimientosSup();
   if (Sup.vista === 'conteos') cargarConteosSup();
+  if (Sup.vista === 'semana') cargarSemanaSup();
   if (Sup.vista === 'cambios') cargarCambiosSup();
   if (Sup.vista === 'cortes') cargarCortesSup();
   if (Sup.vista === 'creditos') cargarCreditosSup();
@@ -84,10 +85,19 @@ function supChip(s, lista, cantidad, extra = '') {
   return `<button class="sup-chip ${clase}" type="button" data-lista="${lista}" data-sucursal="${s.sucursal_id}">${SUP_LISTAS[lista]} <b>${cantidad}</b>${extra}</button>`;
 }
 
-function supConteoHoy(c) {
-  if (!c) return '<span class="texto-suave">Inventario del día: todavía no lo empiezan</span>';
-  if (c.estado === 'abierto') return `Inventario del día: <b>${c.contados} de ${c.productos}</b> contados`;
-  return `Inventario del día terminado: <b>${c.exactitud ?? 0}%</b> cuadró${c.por_autorizar ? ` · <b class="texto-peligro">${c.por_autorizar} por autorizar</b>` : ''}`;
+function supTurno(c, nombre) {
+  if (!c) return `${nombre}: <span class="texto-suave">por empezar</span>`;
+  if (c.estado === 'abierto') return `${nombre}: <b>${c.contados} de ${c.productos}</b> contados`;
+  if (c.estado === 'cancelado') return `${nombre}: cancelado`;
+  return `${nombre}: <b>${c.exactitud ?? 0}%</b> cuadró${c.por_autorizar ? ` · <b class="texto-peligro">${c.por_autorizar} por autorizar</b>` : ''}`;
+}
+
+// Los dos turnos de hoy (y el inventario completo, si hay uno abierto)
+function supInventarioHoy(s) {
+  const i = s.inventario_hoy;
+  if (!i) return supTurno(s.conteo_hoy, 'Inventario');
+  if (!i.en_lista && !i.manana && !i.tarde) return '<span class="texto-suave">Inventario: sin lista (ármala en Inventarios → Lista del inventario)</span>';
+  return `${supTurno(i.manana, 'Mañana')} · ${supTurno(i.tarde, 'Tarde')}${i.completo ? ` · Completo: <b>${i.completo.contados} de ${i.completo.productos}</b>` : ''}`;
 }
 
 function supVentasHoy(v) {
@@ -129,8 +139,8 @@ async function cargarResumenSup({ fresco = false } = {}) {
   pintarAvisoSup(r.por_autorizar.length);
   document.getElementById('sup-resumen-fecha').textContent = `Inventario leído de la central: ${fechaHora(r.inventario_leido)}`;
   document.getElementById('sup-por-autorizar').innerHTML = r.por_autorizar.length ? `<div class="franja-aviso sup-autorizar">
-    <b>${r.por_autorizar.length === 1 ? 'Un inventario del día por autorizar' : `${r.por_autorizar.length} inventarios del día por autorizar`}:</b>
-    ${r.por_autorizar.map((c) => `<button class="boton chico" type="button" data-conteo="${c.id}">${escaparHtml(c.sucursal)} · ${escaparHtml(supDiaCorto(c.fecha))}
+    <b>${r.por_autorizar.length === 1 ? 'Un inventario por autorizar' : `${r.por_autorizar.length} inventarios por autorizar`}:</b>
+    ${r.por_autorizar.map((c) => `<button class="boton chico" type="button" data-conteo="${c.id}">${escaparHtml(c.sucursal)} · ${escaparHtml(c.titulo || 'Inventario')} · ${escaparHtml(supDiaCorto(c.fecha))}
       (${c.por_autorizar} diferencia(s), faltan ${dinero(c.faltante)}, sobran ${dinero(c.sobrante)})</button>`).join(' ')}
   </div>` : '';
   caja.innerHTML = r.sucursales.map((s) => `
@@ -143,7 +153,7 @@ async function cargarResumenSup({ fresco = false } = {}) {
         <span><small>Piezas</small><b>${supNumero(s.piezas)}</b></span>
         <span><small>A precio de venta</small><b>${dinero(s.valor_venta)}</b></span>
       </div>
-      <div>${supConteoHoy(s.conteo_hoy)}</div>
+      <div>${supInventarioHoy(s)}</div>
       <div class="sup-chips">
         ${supChip(s, 'bajo_minimo', s.bajo_minimo)}
         ${supChip(s, 'agotados', s.agotados)}
@@ -244,36 +254,184 @@ async function cargarMovimientosSup({ mas = false } = {}) {
   document.getElementById('sup-mov-mas').hidden = !r.hay_mas;
 }
 
-// ---------- Inventario del día ----------
+// ---------- Inventarios (turnos de mañana y tarde, completos) ----------
 async function cargarConteosSup() {
   const cuerpo = document.getElementById('sup-conteos-cuerpo');
-  cuerpo.innerHTML = '<tr><td colspan="8">Cargando…</td></tr>';
+  cuerpo.innerHTML = '<tr><td colspan="9">Cargando…</td></tr>';
   try {
     const conteos = await api('/api/conteos?limite=40');
     if (supEsJefe()) pintarAvisoSup(conteos.filter((c) => c.estado === 'por_autorizar').length);
     cuerpo.innerHTML = conteos.map((c) => {
       const [texto, clase] = SUP_ESTADOS_CONTEO[c.estado] || [c.estado, ''];
       return `<tr class="fila-clic ${Sup.conteo && Sup.conteo.id === c.id ? 'fila-destacada' : ''}" data-conteo="${c.id}">
-        <td style="white-space:nowrap">${escaparHtml(supDiaCorto(c.fecha))}</td><td>${escaparHtml(c.sucursal)}</td><td><span class="chip ${clase}">${texto}</span></td>
+        <td style="white-space:nowrap">${escaparHtml(supDiaCorto(c.fecha))}</td><td>${escaparHtml(c.sucursal)}</td><td>${escaparHtml(c.titulo || 'Inventario')}</td><td><span class="chip ${clase}">${texto}</span></td>
         <td class="num">${c.contados} de ${c.productos}</td><td class="num">${c.contados ? `${c.exactitud}%` : '—'}</td>
         <td class="num">${c.faltante ? dinero(c.faltante) : '—'}</td><td class="num">${c.sobrante ? dinero(c.sobrante) : '—'}</td>
         <td class="num">${c.por_autorizar ? `<b class="texto-peligro">${c.por_autorizar}</b>` : '—'}</td></tr>`;
-    }).join('') || '<tr><td colspan="8">Todavía no hay inventarios del día: se arman solos cuando una sucursal abre <b>Contar</b> en el celular.</td></tr>';
+    }).join('') || '<tr><td colspan="9">Todavía no hay inventarios: se arman solos cuando una sucursal con lista abre <b>Contar</b> en el celular.</td></tr>';
   } catch (error) {
-    cuerpo.innerHTML = `<tr><td colspan="8">${escaparHtml(error.message)}</td></tr>`;
+    cuerpo.innerHTML = `<tr><td colspan="9">${escaparHtml(error.message)}</td></tr>`;
   }
-  if (supEsJefe()) pintarConfigSup();
+  if (supEsJefe()) cargarListaSup();
 }
 
-async function pintarConfigSup() {
-  const caja = document.getElementById('sup-config');
+// ---------- Lista del inventario de cada farmacia (la arma el jefe) ----------
+async function cargarListaSup(sucursalId = null) {
+  const caja = document.getElementById('sup-lista');
+  if (!caja) return;
   try {
-    const config = await api('/api/conteos/config');
-    caja.innerHTML = config.map((c) => `<label>${escaparHtml(c.sucursal)}
-      <input type="number" class="entrada sup-cuota" min="5" max="500" step="1" value="${c.productos_por_dia}" data-cuota="${c.sucursal_id}" aria-label="Productos por día">
-      <button class="boton chico" type="button" data-guardar-cuota="${c.sucursal_id}">Guardar</button></label>`).join('');
+    const id = sucursalId || (Sup.lista && Sup.lista.sucursal_id) || '';
+    const [lista, departamentos] = await Promise.all([
+      api(`/api/conteos/lista${id ? `?sucursal_id=${id}` : ''}`),
+      Sup.departamentos ? Promise.resolve(Sup.departamentos) : api('/api/departamentos').catch(() => []),
+    ]);
+    Sup.lista = lista;
+    Sup.departamentos = departamentos;
+    pintarListaSup();
   } catch (error) {
     caja.innerHTML = `<div class="mensaje-error">${escaparHtml(error.message)}</div>`;
+  }
+}
+
+function pintarListaSup() {
+  const l = Sup.lista;
+  const caja = document.getElementById('sup-lista');
+  const deptos = (Sup.departamentos || []).map((d) => `<option value="${escaparHtml(d.nombre)}">${escaparHtml(d.nombre)}</option>`).join('');
+  const otras = l.sucursales.filter((s) => s.id !== l.sucursal_id);
+  const c = l.completo;
+  caja.innerHTML = `
+    <div class="sup-lista-fila">
+      <label>Farmacia <select class="entrada" id="sup-lista-sucursal">${l.sucursales.map((s) => `<option value="${s.id}" ${s.id === l.sucursal_id ? 'selected' : ''}>${escaparHtml(s.nombre)}</option>`).join('')}</select></label>
+      <label>La tarde empieza a las <input class="entrada" type="time" id="sup-lista-hora" value="${escaparHtml(l.hora_tarde)}"></label>
+      <button class="boton chico" type="button" data-lista-sup="hora">Guardar hora</button>
+    </div>
+    <p class="texto-suave"><b>${l.total}</b> producto(s) en la lista${l.total ? ` · unos ${l.minutos_por_turno} minutos por turno` : ''}.</p>
+    <div class="sup-lista-fila">
+      <input class="entrada" id="sup-lista-buscar" type="search" placeholder="Busca un producto por nombre o código para agregarlo" autocomplete="off">
+      <button class="boton chico" type="button" data-lista-sup="buscar">Buscar</button>
+    </div>
+    <div id="sup-lista-resultados"></div>
+    <div class="sup-lista-fila">
+      <select class="entrada" id="sup-lista-depto"><option value="">Un departamento completo…</option>${deptos}</select>
+      <button class="boton chico" type="button" data-lista-sup="depto">Agregar departamento</button>
+      ${otras.length ? `<select class="entrada" id="sup-lista-copiar">${otras.map((s) => `<option value="${s.id}">La lista de ${escaparHtml(s.nombre)}</option>`).join('')}</select>
+      <button class="boton chico" type="button" data-lista-sup="copiar">Copiar</button>` : ''}
+    </div>
+    <div class="contenedor-tabla sup-lista-tabla"><table class="tabla">
+      <thead><tr><th>Producto</th><th>Código</th><th>Departamento</th><th></th></tr></thead>
+      <tbody>${l.productos.map((p) => `<tr><td>${escaparHtml(p.descripcion)}</td><td>${escaparHtml(p.codigo_barras || '')}</td><td>${escaparHtml(p.departamento || '')}</td>
+        <td><button class="boton chico" type="button" data-lista-quitar-sup="${p.producto_id}">Quitar</button></td></tr>`).join('')
+        || '<tr><td colspan="4">Todavía no hay productos. Búscalos arriba, agrega un departamento o márcalos al consultarlos en el celular.</td></tr>'}</tbody>
+    </table></div>
+    ${l.total ? '<button class="boton chico peligro-suave" type="button" data-lista-sup="vaciar">Quitar todos</button>' : ''}
+    <h4>Inventario completo</h4>
+    ${c ? `<p>Hay uno abierto: <b>${escaparHtml(c.titulo)}</b>, ${c.contados} de ${c.productos} contados. La farmacia lo cuenta en el celular (Contar).</p>
+      <button class="boton chico" type="button" data-lista-sup="cancelar-completo" data-conteo-id="${c.id}">Cancelar el inventario completo</button>`
+    : `<p class="texto-suave">Para contar todos los productos (o un departamento) una sola vez. Se cuenta en el celular igual que la lista y queda abierto hasta que se termine.</p>
+      <div class="sup-lista-fila"><select class="entrada" id="sup-lista-completo"><option value="">Todos los productos</option>${deptos}</select>
+        <button class="boton chico primario" type="button" data-lista-sup="completo">Empezar inventario completo</button></div>`}`;
+}
+
+async function buscarListaSup() {
+  const texto = document.getElementById('sup-lista-buscar').value.trim();
+  const caja = document.getElementById('sup-lista-resultados');
+  if (!texto) {
+    caja.innerHTML = '';
+    return;
+  }
+  caja.innerHTML = '<p class="texto-suave">Buscando…</p>';
+  try {
+    const enLista = new Set(Sup.lista.productos.map((p) => p.producto_id));
+    const encontrados = (await api(`/api/productos/buscar?q=${encodeURIComponent(texto)}`)).filter((p) => p.usa_inventario !== false).slice(0, 20);
+    caja.innerHTML = encontrados.length ? `<div class="contenedor-tabla"><table class="tabla"><tbody>${encontrados.map((p) => `<tr>
+      <td>${escaparHtml(p.descripcion)}</td><td>${escaparHtml(p.codigo_barras || '')}</td><td>${escaparHtml(p.departamento || '')}</td>
+      <td>${enLista.has(p.id) ? '<span class="texto-suave">Ya está</span>' : `<button class="boton chico exito" type="button" data-lista-agregar-sup="${p.id}">Agregar</button>`}</td></tr>`).join('')}</tbody></table></div>`
+      : '<p class="texto-suave">No se encontró ningún producto que use inventario.</p>';
+  } catch (error) {
+    caja.innerHTML = `<div class="mensaje-error">${escaparHtml(error.message)}</div>`;
+  }
+}
+
+async function accionListaSup(boton) {
+  const l = Sup.lista;
+  const sucursal = l.sucursal_id;
+  const accion = boton.dataset.listaSup;
+  const agregados = (r) => aviso(`Se agregaron ${r.agregados} producto(s)${r.ya_estaban ? ` (${r.ya_estaban} ya estaban)` : ''}`, 'exito');
+  try {
+    if (boton.dataset.listaAgregarSup) {
+      Sup.lista = await api('/api/conteos/lista', { method: 'POST', body: { sucursal_id: sucursal, producto_ids: [Number(boton.dataset.listaAgregarSup)] } });
+      const buscado = document.getElementById('sup-lista-buscar').value;
+      pintarListaSup();
+      document.getElementById('sup-lista-buscar').value = buscado;
+      buscarListaSup();
+      aviso('Agregado a la lista', 'exito');
+      return;
+    }
+    if (boton.dataset.listaQuitarSup) {
+      Sup.lista = await api('/api/conteos/lista/quitar', { method: 'POST', body: { sucursal_id: sucursal, producto_ids: [Number(boton.dataset.listaQuitarSup)] } });
+      pintarListaSup();
+      aviso('Se quitó de la lista', 'exito');
+      return;
+    }
+    if (accion === 'buscar') {
+      buscarListaSup();
+      return;
+    }
+    if (accion === 'hora') {
+      const hora = document.getElementById('sup-lista-hora').value;
+      await api('/api/conteos/config', { method: 'PUT', body: { sucursal_id: sucursal, hora_tarde: hora } });
+      aviso(`Listo: en ${l.sucursal} la tarde empieza a las ${hora}`, 'exito');
+      cargarListaSup(sucursal);
+      return;
+    }
+    if (accion === 'depto') {
+      const depto = document.getElementById('sup-lista-depto').value;
+      if (!depto) {
+        aviso('Elige un departamento', 'error');
+        return;
+      }
+      Sup.lista = await api('/api/conteos/lista', { method: 'POST', body: { sucursal_id: sucursal, departamento: depto } });
+      agregados(Sup.lista);
+      pintarListaSup();
+      return;
+    }
+    if (accion === 'copiar') {
+      Sup.lista = await api('/api/conteos/lista', { method: 'POST', body: { sucursal_id: sucursal, copiar_de: Number(document.getElementById('sup-lista-copiar').value) } });
+      agregados(Sup.lista);
+      pintarListaSup();
+      return;
+    }
+    if (accion === 'vaciar') {
+      const seguro = await confirmar({ titulo: 'Quitar todos', mensaje: `Se queda vacía la lista de ${l.sucursal}: no se contará nada en los turnos hasta que agregues productos.`, boton: 'Quitar todos', peligro: true });
+      if (!seguro) return;
+      Sup.lista = await api('/api/conteos/lista/quitar', { method: 'POST', body: { sucursal_id: sucursal, todo: true } });
+      pintarListaSup();
+      return;
+    }
+    if (accion === 'completo') {
+      const depto = document.getElementById('sup-lista-completo').value;
+      const seguro = await confirmar({
+        titulo: 'Empezar inventario completo',
+        mensaje: `${l.sucursal} contará ${depto ? `todo el departamento ${depto}` : 'todos los productos que usan inventario'} en el celular (Contar), a ciegas como la lista. Las diferencias las autoriza un jefe.`,
+        boton: 'Empezar',
+      });
+      if (!seguro) return;
+      const c = await api('/api/conteos/completo', { method: 'POST', body: { sucursal_id: sucursal, departamento: depto } });
+      aviso(`Listo: ${c.productos} productos por contar`, 'exito');
+      cargarListaSup(sucursal);
+      cargarConteosSup();
+      return;
+    }
+    if (accion === 'cancelar-completo') {
+      const seguro = await confirmar({ titulo: 'Cancelar el inventario completo', mensaje: 'Lo que ya se contó no ajusta el inventario.', boton: 'Cancelarlo', peligro: true });
+      if (!seguro) return;
+      await api(`/api/conteos/${Number(boton.dataset.conteoId)}/cancelar`, { method: 'POST', body: {} });
+      aviso('Inventario completo cancelado', 'exito');
+      cargarListaSup(sucursal);
+      cargarConteosSup();
+    }
+  } catch (error) {
+    aviso(error.message, 'error');
   }
 }
 
@@ -300,9 +458,9 @@ function pintarConteoSup() {
   const estadoTexto = (r) => ({
     cuadra: 'Cuadró', no_contado: 'No se contó', por_contar: 'Por contar', recontar: 'Falta recontar', falta_motivo: 'Falta el motivo',
   })[r.estado] || '';
-  const decisionTexto = (r) => ({ aprobado: 'Ajuste aprobado', rechazado: 'No se ajustó' })[r.decision] || '';
+  const decisionTexto = (r) => ({ aprobado: r.decisor ? 'Ajuste aprobado' : 'Se ajustó al terminar', rechazado: 'No se ajustó' })[r.decision] || '';
   caja.innerHTML = `
-    <h3>${escaparHtml(c.sucursal)} · ${escaparHtml(supDiaCorto(c.fecha))} <span class="chip ${(SUP_ESTADOS_CONTEO[c.estado] || [])[1] || ''}">${(SUP_ESTADOS_CONTEO[c.estado] || [c.estado])[0]}</span></h3>
+    <h3>${escaparHtml(c.sucursal)} · ${escaparHtml(c.titulo || 'Inventario')} · ${escaparHtml(supDiaCorto(c.fecha))} <span class="chip ${(SUP_ESTADOS_CONTEO[c.estado] || [])[1] || ''}">${(SUP_ESTADOS_CONTEO[c.estado] || [c.estado])[0]}</span></h3>
     <div class="sup-datos">
       <span><small>Contados</small><b>${c.contados} de ${c.productos}</b></span>
       <span><small>Cuadró</small><b>${c.exactitud ?? 0}%</b></span>
@@ -310,7 +468,8 @@ function pintarConteoSup() {
       <span><small>Sobran</small><b>${dinero(c.sobrante)}</b></span>
     </div>
     ${c.terminador ? `<p class="texto-suave">Terminó ${escaparHtml(c.terminador)}${c.cerrador ? ` · revisó ${escaparHtml(c.cerrador)}` : ''}${c.nota ? ` · ${escaparHtml(c.nota)}` : ''}</p>` : ''}
-    ${puedeAutorizar ? '<p class="texto-suave">Al <b>aprobar</b> el inventario se ajusta por la diferencia (se respetan las ventas hechas después de contar). Al <b>rechazar</b> no se toca y el producto se vuelve a contar otro día. Nadie autoriza lo que él mismo contó.</p>' : ''}
+    ${puedeAutorizar ? '<p class="texto-suave">Al <b>aprobar</b> el inventario se ajusta por la diferencia (se respetan las ventas hechas después de contar). Al <b>rechazar</b> no se toca. Nadie autoriza lo que él mismo contó.</p>' : ''}
+    ${completo && c.turno === 'completo' && c.estado === 'abierto' ? `<button class="boton chico" type="button" data-lista-sup="cancelar-completo" data-conteo-id="${c.id}">Cancelar el inventario completo</button>` : ''}
     <div class="contenedor-tabla"><table class="tabla">
       <thead><tr>${puedeAutorizar ? '<th></th>' : ''}<th>Producto</th>${completo ? '<th class="num">Sistema</th>' : ''}<th class="num">Contado</th>${completo ? '<th class="num">Diferencia</th><th class="num">Valor</th>' : ''}<th>Motivo</th><th>Contó</th><th>Estado</th></tr></thead>
       <tbody>${[...diferencias, ...resto].map((r) => {
@@ -358,6 +517,174 @@ async function autorizarConteoSup(decision) {
     pintarConteoSup();
     aviso(decision === 'aprobar' ? 'Ajuste aplicado al inventario' : 'Diferencias rechazadas', 'exito');
     cargarConteosSup();
+  } catch (error) {
+    aviso(error.message, 'error');
+  }
+}
+
+// ---------- Revisión semanal del inventario (como la hoja de Excel de antes) ----------
+// Los productos de la lista en renglones y cada turno de la semana en columnas, con lo que se contó.
+const SUP_TURNO = { manana: 'Mañana', tarde: 'Tarde', completo: 'Completo', dia: 'Del día' };
+const supSumarDias = (dia, n) => {
+  const [a, m, d] = dia.split('-').map(Number);
+  return new Date(Date.UTC(a, m - 1, d + n)).toISOString().slice(0, 10);
+};
+const supHoraDe = (iso) => (iso ? new Date(iso).toLocaleTimeString('es-MX', { hour: 'numeric', minute: '2-digit' }) : '');
+const supCon = (n) => `${n > 0 ? '+' : '−'}${supNumero(Math.abs(n))}`;
+
+// Las columnas: los dos turnos de cada día (hasta hoy) y los inventarios completos
+function columnasSemana(h) {
+  const columnas = [];
+  for (let i = 0; i < 7; i += 1) {
+    const dia = supSumarDias(h.desde, i);
+    for (const turno of ['manana', 'tarde']) {
+      const t = h.turnos.find((x) => x.fecha === dia && x.turno === turno);
+      if (!t || t.estado === 'por_venir') continue;
+      columnas.push({ dia, turno, estado: t.estado, conteo: h.conteos.find((c) => c.fecha === dia && c.turno === turno) || null });
+    }
+    for (const c of h.conteos.filter((x) => x.fecha === dia && !['manana', 'tarde'].includes(x.turno))) {
+      columnas.push({ dia, turno: c.turno, estado: 'hecho', conteo: c });
+    }
+  }
+  return columnas;
+}
+
+function celdaSemanaSup(x, col) {
+  if (col.estado !== 'hecho' || !col.conteo) return '<td class="sem-celda vacia"></td>';
+  if (!x) return '<td class="sem-celda vacia" title="No estaba en la lista ese día"></td>';
+  if (x.estado === 'no_contado') return '<td class="sem-celda no-contado" title="No se contó">—</td>';
+  const titulo = [
+    `Sistema ${supNumero(x.sistema)}`, `contado ${supNumero(x.contado)}`,
+    x.primer_conteo != null && x.primer_conteo !== x.contado ? `(la primera vez contó ${supNumero(x.primer_conteo)})` : '',
+    x.motivo ? `motivo: ${x.motivo}` : '', x.contador ? `contó ${x.contador} ${x.hora}` : '',
+  ].filter(Boolean).join(' · ');
+  if (x.estado === 'cuadra') return `<td class="sem-celda cuadra" title="${escaparHtml(titulo)}">${supNumero(x.contado)}</td>`;
+  return `<td class="sem-celda ${x.estado === 'faltan' ? 'falta' : 'sobra'}" title="${escaparHtml(titulo)}">${supNumero(x.contado)}<small>${supCon(x.diferencia)}</small></td>`;
+}
+
+async function cargarSemanaSup({ desde = Sup.semanaDesde || '' } = {}) {
+  const caja = document.getElementById('sup-sem-contenido');
+  const selector = document.getElementById('sup-sem-sucursal');
+  caja.innerHTML = '<p class="texto-suave">Cargando…</p>';
+  try {
+    Sup.semana = await api(`/api/conteos/semana?sucursal_id=${selector.value || ''}${desde ? `&desde=${desde}` : ''}`);
+  } catch (error) {
+    caja.innerHTML = `<div class="mensaje-error">${escaparHtml(error.message)}</div>`;
+    return;
+  }
+  const h = Sup.semana;
+  Sup.semanaDesde = h.desde;
+  selector.innerHTML = h.sucursales.map((s) => `<option value="${s.id}" ${s.id === h.sucursal_id ? 'selected' : ''}>${escaparHtml(s.nombre)}</option>`).join('');
+  pintarSemanaSup();
+}
+
+function pintarSemanaSup() {
+  const h = Sup.semana;
+  const t = h.totales;
+  const caja = document.getElementById('sup-sem-contenido');
+  const columnas = columnasSemana(h);
+  const esperados = h.turnos.filter((x) => x.estado !== 'por_venir' && x.estado !== 'pendiente').length;
+  const sinHacer = h.turnos.filter((x) => x.estado === 'no_se_hizo');
+  document.getElementById('sup-sem-rango').textContent = `${supDiaCorto(h.desde)} al ${supDiaCorto(h.hasta)}`;
+  document.getElementById('sup-sem-siguiente').disabled = h.hasta >= h.hoy;
+  const revisar = document.getElementById('sup-sem-revisar');
+  revisar.hidden = Boolean(h.revisada) || !h.conteos.length;
+  const pieFila = (titulo, celda) => `<tr><th class="sem-producto">${titulo}</th>${columnas.map((c) => `<td>${c.estado === 'hecho' && c.conteo ? celda(c.conteo) : ''}</td>`).join('')}<td></td></tr>`;
+  const diferencias = [];
+  for (const c of columnas) {
+    if (!c.conteo || c.estado !== 'hecho') continue;
+    for (const p of h.productos) {
+      const x = p.celdas[c.conteo.id];
+      if (x && (x.estado === 'faltan' || x.estado === 'sobran')) diferencias.push({ c, p, x });
+    }
+  }
+  caja.innerHTML = `
+    <div class="sup-datos">
+      <span><small>Turnos contados</small><b>${t.turnos_hechos} de ${esperados}</b></span>
+      <span><small>Faltaron</small><b class="texto-peligro">${supNumero(t.piezas_faltan)} pza(s) · ${dinero(t.faltante)}</b></span>
+      <span><small>Sobraron</small><b>${supNumero(t.piezas_sobran)} pza(s) · ${dinero(t.sobrante)}</b></span>
+      <span><small>Revisión</small><b>${h.revisada ? `Revisada por ${escaparHtml(h.revisada.por)} el ${escaparHtml(supFecha(h.revisada.fecha))}` : 'Sin revisar'}</b></span>
+    </div>
+    ${sinHacer.length ? `<div class="franja-aviso error sup-sem-sin-hacer"><b>No se contó:</b> ${sinHacer.map((x) => `${escaparHtml(supDiaCorto(x.fecha))} ${SUP_TURNO[x.turno].toLowerCase()}`).join(' · ')}</div>` : ''}
+    ${h.conteos.length ? `
+    <div class="contenedor-tabla sup-semana-tabla"><table class="tabla tabla-semana">
+      <thead><tr><th class="sem-producto">Producto</th>${columnas.map((c) => `<th class="sem-col ${c.estado}">${escaparHtml(supDiaCorto(c.dia))}<b>${SUP_TURNO[c.turno] || c.turno}</b>
+        <small>${c.estado === 'hecho' && c.conteo ? `${escaparHtml(supHoraDe(c.conteo.inicio))} · ${escaparHtml(c.conteo.contaron.join(', '))}` : c.estado === 'pendiente' ? 'Pendiente' : 'No se hizo'}</small></th>`).join('')}
+        <th class="sem-col">Semana</th></tr></thead>
+      <tbody>${h.productos.map((p) => `<tr><td class="sem-producto">${escaparHtml(p.descripcion)}<small>${escaparHtml(p.departamento || '')}</small></td>
+        ${columnas.map((c) => celdaSemanaSup(c.conteo ? p.celdas[c.conteo.id] : null, c)).join('')}
+        <td class="sem-celda ${p.diferencia_semana < 0 ? 'falta' : p.diferencia_semana > 0 ? 'sobra' : 'cuadra'}">${p.diferencia_semana ? `${supCon(p.diferencia_semana)}<small>${dinero(Math.abs(p.valor_semana))}</small>` : '✓'}</td></tr>`).join('')}</tbody>
+      <tfoot>
+        ${pieFila('Faltaron', (c) => (c.piezas_faltan ? `<b class="texto-peligro">${supNumero(c.piezas_faltan)}</b><br><small>${dinero(c.faltante)}</small>` : '—'))}
+        ${pieFila('Sobraron', (c) => (c.piezas_sobran ? `<b>${supNumero(c.piezas_sobran)}</b><br><small>${dinero(c.sobrante)}</small>` : '—'))}
+        ${pieFila('Cobraron desde el conteo anterior', (c) => (c.cobraron == null ? '<small>sin datos</small>'
+          : c.cobraron.map((x) => `<small>${escaparHtml(x.usuario)} (${x.ventas})</small>`).join('<br>') || '<small>nadie</small>'))}
+        ${pieFila('Desde', (c) => `<small>${c.periodo_desde ? escaparHtml(supFecha(c.periodo_desde)) : '—'}</small>`)}
+      </tfoot>
+    </table></div>
+    <p class="texto-suave">Verde: cuadró · rojo: faltaron (el número chico es la diferencia) · azul: sobraron · —: no se contó. Pasa el mouse sobre una casilla para ver lo que decía el sistema, el motivo y quién contó.
+      Cada conteo revisa lo que pasó desde el conteo anterior; la existencia ya quedó ajustada a lo contado.</p>
+    <h3>Diferencias de la semana (${diferencias.length})</h3>
+    <div class="contenedor-tabla"><table class="tabla">
+      <thead><tr><th>Turno</th><th>Producto</th><th class="num">Sistema</th><th class="num">Contado</th><th class="num">Diferencia</th><th class="num">Valor</th><th>Motivo</th><th>Contó</th><th>Cobraron en ese tiempo</th></tr></thead>
+      <tbody>${diferencias.map(({ c, p, x }) => `<tr>
+        <td style="white-space:nowrap">${escaparHtml(supDiaCorto(c.dia))} ${(SUP_TURNO[c.turno] || '').toLowerCase()}</td><td>${escaparHtml(p.descripcion)}</td>
+        <td class="num">${supNumero(x.sistema)}</td><td class="num">${supNumero(x.contado)}</td>
+        <td class="num ${x.diferencia < 0 ? 'texto-peligro' : 'texto-exito'}">${supCon(x.diferencia)}</td><td class="num">${dinero(Math.abs(x.valor))}</td>
+        <td>${escaparHtml(x.motivo || '')}</td><td>${escaparHtml(x.contador || '')}</td>
+        <td>${c.conteo.cobraron ? escaparHtml(c.conteo.cobraron.map((v) => `${v.usuario} (${v.ventas})`).join(', ') || 'nadie') : 'sin datos'}</td></tr>`).join('')
+        || '<tr><td colspan="9" class="vacio">Todo cuadró esta semana.</td></tr>'}</tbody>
+    </table></div>`
+    : '<p class="vacio">Esta semana no hay inventarios de esta farmacia.</p>'}`;
+}
+
+// La misma hoja para abrirla en Excel
+function descargarSemanaSup() {
+  const h = Sup.semana;
+  if (!h) return;
+  const columnas = columnasSemana(h);
+  const celda = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const titulos = columnas.map((c) => `${supDiaCorto(c.dia)} ${SUP_TURNO[c.turno] || c.turno}`);
+  const lineas = [
+    [`Inventario de ${h.sucursal}`, `semana del ${h.desde} al ${h.hasta}`],
+    [],
+    ['Producto', 'Departamento', ...titulos, 'Diferencia de la semana', 'Valor de la diferencia'],
+    ...h.productos.map((p) => [p.descripcion, p.departamento, ...columnas.map((c) => {
+      const x = c.conteo && c.estado === 'hecho' ? p.celdas[c.conteo.id] : null;
+      if (!x) return c.estado === 'hecho' ? '' : 'no se hizo';
+      if (x.estado === 'no_contado') return 'no se contó';
+      return x.diferencia ? `${supNumero(x.contado)} (${x.diferencia > 0 ? '+' : '-'}${supNumero(Math.abs(x.diferencia))})` : supNumero(x.contado);
+    }), p.diferencia_semana, p.valor_semana.toFixed(2)]),
+    [],
+    ['Faltaron (piezas)', '', ...columnas.map((c) => (c.conteo && c.estado === 'hecho' ? c.conteo.piezas_faltan : ''))],
+    ['Faltaron ($)', '', ...columnas.map((c) => (c.conteo && c.estado === 'hecho' ? c.conteo.faltante.toFixed(2) : ''))],
+    ['Sobraron (piezas)', '', ...columnas.map((c) => (c.conteo && c.estado === 'hecho' ? c.conteo.piezas_sobran : ''))],
+    ['Contó', '', ...columnas.map((c) => (c.conteo && c.estado === 'hecho' ? c.conteo.contaron.join(' / ') : ''))],
+    ['Cobraron desde el conteo anterior', '', ...columnas.map((c) => (c.conteo && c.estado === 'hecho' && c.conteo.cobraron
+      ? c.conteo.cobraron.map((v) => `${v.usuario} (${v.ventas})`).join(' / ') : ''))],
+  ];
+  const texto = `\ufeff${lineas.map((l) => l.map(celda).join(',')).join('\r\n')}`;
+  const enlace = document.createElement('a');
+  enlace.href = URL.createObjectURL(new Blob([texto], { type: 'text/csv;charset=utf-8' }));
+  enlace.download = `inventario-${h.sucursal.replace(/[^\w]+/g, '-').toLowerCase()}-${h.desde}.csv`;
+  document.body.appendChild(enlace);
+  enlace.click();
+  setTimeout(() => { URL.revokeObjectURL(enlace.href); enlace.remove(); }, 1000);
+}
+
+async function revisarSemanaSup() {
+  const h = Sup.semana;
+  if (!h) return;
+  const confirmado = await confirmar({
+    titulo: 'Marcar la semana como revisada',
+    mensaje: `${h.sucursal}, del ${supDiaCorto(h.desde)} al ${supDiaCorto(h.hasta)}: faltaron ${supNumero(h.totales.piezas_faltan)} pieza(s) (${dinero(h.totales.faltante)}). Queda anotado en el registro de cambios.`,
+    boton: 'Marcar como revisada',
+  });
+  if (!confirmado) return;
+  try {
+    Sup.semana = await api('/api/conteos/semana/revisar', { method: 'POST', body: { sucursal_id: h.sucursal_id, semana: h.desde } });
+    pintarSemanaSup();
+    aviso('Semana marcada como revisada', 'exito');
   } catch (error) {
     aviso(error.message, 'error');
   }
@@ -468,6 +795,14 @@ async function cargarCreditosSup() {
     const r = await api(`/api/ventas-central/creditos${sucursal ? `?sucursal_id=${sucursal}` : ''}`);
     document.getElementById('sup-cre-resumen').innerHTML = `<div class="tarjeta-dato"><small>Por cobrar</small><b>${dinero(r.total)}</b></div>`
       + r.por_sucursal.map((s) => `<div class="tarjeta-dato"><small>${escaparHtml(s.sucursal)} (${s.clientes})</small><b>${dinero(s.saldo)}</b></div>`).join('');
+    document.getElementById('sup-cre-prestamos').innerHTML = r.prestamos == null ? '' : `
+      <h3>Préstamos a otras farmacias ${r.prestamos.length ? `· ${dinero(r.valor_prestado)} a costo` : ''}</h3>
+      <div class="contenedor-tabla"><table class="tabla"><thead><tr><th>Farmacia</th><th>Sucursal</th><th>Folio</th><th>Desde</th><th>Falta que regresen o paguen</th><th class="num">Piezas</th><th class="num">A costo</th></tr></thead>
+        <tbody>${r.prestamos.map((p) => `<tr><td>${escaparHtml(p.farmacia)}${p.nota ? `<br><small class="texto-suave">${escaparHtml(p.nota)}</small>` : ''}</td>
+          <td>${escaparHtml(p.sucursal)}</td><td>P-${p.folio}</td><td>${escaparHtml(supFecha(p.fecha))}</td>
+          <td>${p.productos.map((x) => `${supNumero(x.pendiente)} ${escaparHtml(x.descripcion)}`).join('<br>')}</td>
+          <td class="num">${supNumero(p.piezas)}</td><td class="num"><b>${dinero(p.valor)}</b></td></tr>`).join('')
+          || '<tr><td colspan="7">No hay nada prestado.</td></tr>'}</tbody></table></div>`;
     cuerpo.innerHTML = r.clientes.map((c) => `<tr class="${c.excedido ? 'fila-alerta' : ''}">
       <td>${escaparHtml(c.nombre)}${c.excedido ? ' <small class="texto-peligro">(pasó su límite)</small>' : ''}</td><td>${escaparHtml(c.sucursal)}</td>
       <td>${escaparHtml(c.telefono)}</td><td class="num"><b>${dinero(c.saldo)}</b></td><td class="num">${c.limite_credito ? dinero(c.limite_credito) : '—'}</td>
@@ -499,6 +834,12 @@ for (const id of ['sup-cam-desde', 'sup-cam-hasta', 'sup-cam-sucursal', 'sup-cam
 }
 document.getElementById('sup-cam-mas').addEventListener('click', () => cargarCambiosSup({ mas: true }));
 document.getElementById('sup-conteos-actualizar').addEventListener('click', () => cargarConteosSup());
+document.getElementById('sup-sem-sucursal').addEventListener('change', () => cargarSemanaSup());
+document.getElementById('sup-sem-anterior').addEventListener('click', () => Sup.semana && cargarSemanaSup({ desde: supSumarDias(Sup.semana.desde, -7) }));
+document.getElementById('sup-sem-siguiente').addEventListener('click', () => Sup.semana && cargarSemanaSup({ desde: supSumarDias(Sup.semana.desde, 7) }));
+document.getElementById('sup-sem-hoy').addEventListener('click', () => cargarSemanaSup({ desde: supDia(0) }));
+document.getElementById('sup-sem-descargar').addEventListener('click', descargarSemanaSup);
+document.getElementById('sup-sem-revisar').addEventListener('click', revisarSemanaSup);
 
 document.getElementById('seccion-movimientos').addEventListener('click', async (e) => {
   const verCorte = e.target.closest('[data-ver-corte]');
@@ -527,16 +868,20 @@ document.getElementById('seccion-movimientos').addEventListener('click', async (
     autorizarConteoSup(autorizar.dataset.autorizar);
     return;
   }
-  const guardar = e.target.closest('[data-guardar-cuota]');
-  if (guardar) {
-    const id = Number(guardar.dataset.guardarCuota);
-    const valor = Number(document.querySelector(`[data-cuota="${id}"]`).value);
-    try {
-      await api('/api/conteos/config', { method: 'PUT', body: { sucursal_id: id, productos_por_dia: valor } });
-      aviso('Productos por día guardados', 'exito');
-    } catch (error) {
-      aviso(error.message, 'error');
-    }
+  const deLista = e.target.closest('[data-lista-sup], [data-lista-quitar-sup], [data-lista-agregar-sup]');
+  if (deLista && !deLista.disabled) {
+    if (!Sup.lista) await cargarListaSup();
+    accionListaSup(deLista);
+  }
+});
+
+document.getElementById('sup-lista').addEventListener('change', (e) => {
+  if (e.target.id === 'sup-lista-sucursal') cargarListaSup(Number(e.target.value));
+});
+document.getElementById('sup-lista').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && e.target.id === 'sup-lista-buscar') {
+    e.preventDefault();
+    buscarListaSup();
   }
 });
 

@@ -1,6 +1,7 @@
-// Apoyos: traspaso de mercancía de la farmacia central hacia una sucursal.
-// Ciclo: borrador -> enviado (sale del inventario de la central)
-//                -> recibido (entra al inventario de la sucursal, revisado pieza por pieza)
+// Apoyos: traspaso de mercancía de una farmacia a otra. Cualquier farmacia le puede mandar a cualquiera
+// (la central a las sucursales, una sucursal a la central o a otra sucursal).
+// Ciclo: borrador -> enviado (sale del inventario de la farmacia que lo manda)
+//                -> recibido (entra al inventario de la que lo recibe, revisado pieza por pieza con el celular)
 // El inventario se mueve con el módulo unificado y cada cambio de estado se aparta primero
 // (en la central cuando hay Supabase), así dos computadoras no envían, reciben o cancelan
 // dos veces el mismo apoyo.
@@ -15,13 +16,6 @@ const { manejar } = require('../central');
 const router = express.Router();
 
 const redondear = (n) => Math.round((Number(n) || 0) * 100) / 100;
-
-function requiereCentral(req, res, next) {
-  if (!req.usuario.es_central) {
-    return res.status(403).json({ error: 'Solo la farmacia central puede armar y enviar apoyos' });
-  }
-  next();
-}
 
 function cargarApoyo(id) {
   const apoyo = db
@@ -88,14 +82,14 @@ function puedeVer(apoyo, usuario) {
   return apoyo.destino_id === usuario.sucursal_id && apoyo.estado !== 'borrador';
 }
 
-// Solo la farmacia que solicitó el apoyo puede cancelarlo
+// Solo la farmacia que lo recibe puede cancelar un apoyo enviado (la mercancía regresa a la que lo mandó)
 function puedeCancelarApoyo(apoyo, usuario) {
   if (!apoyo || !usuario) return false;
   if (apoyo.estado === 'cancelado' || apoyo.estado === 'recibido') return false;
   return apoyo.destino_id === usuario.sucursal_id;
 }
 
-// La central puede descartar un borrador que ella armó y que todavía no envía
+// La farmacia que armó el borrador lo puede descartar mientras no lo envía
 function puedeDescartarBorrador(apoyo, usuario) {
   if (!apoyo || !usuario) return false;
   return apoyo.estado === 'borrador' && apoyo.origen_id === usuario.sucursal_id;
@@ -107,7 +101,7 @@ function resolverPedidoTrasCancelarApoyo(apoyo, pedido, tieneOtrosApoyos = false
   return 'cancelado';
 }
 
-// Solo la central que lo creó puede tocar el contenido, y solo mientras es borrador
+// Solo la farmacia que lo armó puede tocar el contenido, y solo mientras es borrador
 function verificarEdicion(apoyo, usuario) {
   if (apoyo.origen_id !== usuario.sucursal_id) return 'Este apoyo lo armó otra farmacia';
   if (apoyo.estado !== 'borrador') return 'Este apoyo ya fue enviado y no se puede modificar';
@@ -150,7 +144,7 @@ router.get('/', manejar(async (req, res) => {
 }));
 
 // ---------- Abrir o crear el borrador hacia una sucursal ----------
-router.post('/', requiereCentral, manejar(async (req, res) => {
+router.post('/', manejar(async (req, res) => {
   const origenId = Number(req.usuario.sucursal_id);
   const destinoId = Number(req.body?.destino_id);
   await inventario.asegurarSucursales([destinoId]);
@@ -204,7 +198,7 @@ router.get('/:id', manejar(async (req, res) => {
 }));
 
 // ---------- Renglones (escaneo) ----------
-router.post('/:id/renglones', requiereCentral, manejar(async (req, res) => {
+router.post('/:id/renglones', manejar(async (req, res) => {
   await refrescar(req.params.id);
   const apoyo = cargarApoyo(req.params.id);
   if (!apoyo) return res.status(404).json({ error: 'Apoyo no encontrado' });
@@ -222,7 +216,7 @@ router.post('/:id/renglones', requiereCentral, manejar(async (req, res) => {
   res.json(await cargarApoyoCompleto(apoyo.id));
 }));
 
-router.put('/:id/renglones/:renglon', requiereCentral, manejar(async (req, res) => {
+router.put('/:id/renglones/:renglon', manejar(async (req, res) => {
   await refrescar(req.params.id);
   const apoyo = cargarApoyo(req.params.id);
   if (!apoyo) return res.status(404).json({ error: 'Apoyo no encontrado' });
@@ -234,7 +228,7 @@ router.put('/:id/renglones/:renglon', requiereCentral, manejar(async (req, res) 
   res.json(await cargarApoyoCompleto(apoyo.id));
 }));
 
-router.delete('/:id/renglones/:renglon', requiereCentral, manejar(async (req, res) => {
+router.delete('/:id/renglones/:renglon', manejar(async (req, res) => {
   await refrescar(req.params.id);
   const apoyo = cargarApoyo(req.params.id);
   if (!apoyo) return res.status(404).json({ error: 'Apoyo no encontrado' });
@@ -244,7 +238,7 @@ router.delete('/:id/renglones/:renglon', requiereCentral, manejar(async (req, re
   res.json(await cargarApoyoCompleto(apoyo.id));
 }));
 
-router.put('/:id', requiereCentral, manejar(async (req, res) => {
+router.put('/:id', manejar(async (req, res) => {
   await refrescar(req.params.id);
   const apoyo = cargarApoyo(req.params.id);
   if (!apoyo) return res.status(404).json({ error: 'Apoyo no encontrado' });
@@ -254,8 +248,8 @@ router.put('/:id', requiereCentral, manejar(async (req, res) => {
   res.json(await cargarApoyoCompleto(apoyo.id));
 }));
 
-// ---------- Enviar: la mercancía sale del inventario de la central ----------
-router.post('/:id/enviar', requiereCentral, manejar(async (req, res) => {
+// ---------- Enviar: la mercancía sale del inventario de la farmacia que lo manda ----------
+router.post('/:id/enviar', manejar(async (req, res) => {
   await refrescar(req.params.id);
   const apoyo = await cargarApoyoCompleto(req.params.id);
   if (!apoyo) return res.status(404).json({ error: 'Apoyo no encontrado' });
@@ -389,7 +383,7 @@ router.post('/:id/cancelar', manejar(async (req, res) => {
   if (!apoyo) return res.status(404).json({ error: 'Apoyo no encontrado' });
   const descarteDeLaCentral = puedeDescartarBorrador(apoyo, req.usuario);
   if (!puedeCancelarApoyo(apoyo, req.usuario) && !descarteDeLaCentral) {
-    return res.status(403).json({ error: 'Solo la farmacia que solicitó el apoyo puede cancelarlo' });
+    return res.status(403).json({ error: 'Solo la farmacia que recibe el apoyo puede cancelar el envío' });
   }
   if (apoyo.estado === 'recibido') {
     return res.status(400).json({ error: 'Este apoyo ya fue recibido, no se puede cancelar' });
@@ -407,7 +401,7 @@ router.post('/:id/cancelar', manejar(async (req, res) => {
   );
   if (!tomado) return res.status(400).json({ error: 'El apoyo cambió de estado; actualiza la pantalla' });
 
-  // Si ya se había enviado, la mercancía regresa al inventario de la central
+  // Si ya se había enviado, la mercancía regresa al inventario de la farmacia que lo mandó
   if (estadoPrevio === 'enviado') {
     try {
       await inventario.aplicar(
@@ -442,7 +436,7 @@ router.post('/:id/cancelar', manejar(async (req, res) => {
     });
   }
 
-  // Si la central solo descarta su borrador, el pedido sigue pendiente de surtir
+  // Si quien lo armó solo descarta su borrador, el pedido sigue pendiente de surtir
   if (apoyo.pedido_id && !descarteDeLaCentral) {
     const pedido = db.prepare('SELECT * FROM pedidos WHERE id = ?').get(apoyo.pedido_id);
     const tieneOtros = await traspasos.otrosApoyosActivos(apoyo.pedido_id, apoyo.id);

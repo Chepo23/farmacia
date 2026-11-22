@@ -6,11 +6,11 @@ cualquier aplicación, sin barra del navegador. Sirve para:
 - **Consultar** precio, precio de mayoreo, costo, cuántas piezas hay en **cada farmacia** y los
   **últimos movimientos** del producto (por ejemplo, para que el jefe consulte sin estar preguntando por mensajes).
 - **Recibir mercancía** escaneando con la cámara donde está la mercancía, sin cargarla a la computadora.
-- **Contar**: el **inventario del día** (una lista corta que arma el sistema cada día, se cuenta sin ver
+- **Contar**: el **inventario del turno** (la lista que el jefe arma para cada farmacia, se cuenta en la mañana y en la tarde sin ver
   lo que dice el sistema y el jefe autoriza las diferencias) y el conteo libre de un estante. En los
   dos se respetan las ventas que se hagan mientras se cuenta.
-- **Revisar los apoyos** que manda la central: cada pieza escaneada se palomea y al final dice si el
-  apoyo llegó completo o qué diferencias hubo.
+- **Revisar los apoyos** que manda otra farmacia (la central o una sucursal): cada pieza escaneada se
+  palomea y al final dice si el apoyo llegó completo o qué diferencias hubo.
 - **Cotizar** (solo el administrador de la central): arma una cotización y la manda a una sucursal
   para que ahí se cobre.
 - Entradas, mermas, ajustes, mínimos e historial de cada producto. El administrador de la central
@@ -23,7 +23,7 @@ cualquier aplicación, sin barra del navegador. Sirve para:
 
 | Cuenta | Pestañas en el celular |
 |---|---|
-| Jefe | **Inicio** (con lo vendido hoy en cada farmacia), **Consultar**, **Movimientos**, **Cotizar** y **Más** (ventas y utilidad, cortes de caja, créditos, inventario de las sucursales, inventarios del día, registro de cambios, productos por día, recibir y contar). Ver [jefe.md](jefe.md) |
+| Jefe | **Inicio** (con lo vendido hoy en cada farmacia), **Consultar**, **Movimientos**, **Cotizar** y **Más** (ventas y utilidad, cortes de caja, créditos, inventario de las sucursales, inventarios, registro de cambios, lista del inventario, recibir y contar). Ver [jefe.md](jefe.md) |
 | Administrador de la central | **Consultar** (con últimos movimientos, historial y cambiar precio), **Cotizar** y **Movimientos** de la central |
 | Administrador de una sucursal | **Consultar**, **Recibir**, **Contar**, **Apoyos** y **Movimientos** de su sucursal |
 | Cajeros | **Consultar**, **Recibir**, **Contar** y **Apoyos** (todo lo del inventario de su sucursal) |
@@ -155,8 +155,10 @@ Si un usuario se da de baja, sus celulares dejan de entrar.
 
 - **Consultar**: toca **Escanear** y apunta al código, o escribe el código o el nombre.
 - **Recibir**: cada escaneo suma una pieza (para cajas activa *Preguntar la cantidad al escanear*).
+  Lo que llega en caja y se vende suelto (como ampolletas) suma **todas las piezas de la caja** con cada
+  escaneo, y **+**/**−** van de caja en caja (ver [inyecciones.md](inyecciones.md)).
   Al terminar revisa la lista y toca **Aplicar entrada al inventario**.
-- **Contar**: arriba está el **inventario del día** (ver abajo). Más abajo, el conteo libre: escanea
+- **Contar**: arriba está el **inventario del turno** (ver abajo). Más abajo, el conteo libre: escanea
   cada pieza del estante; al terminar **Aplicar ajustes**.
 - Las listas de recibir y contar **se guardan en el celular**: si se va la señal o se cierra la app,
   no se pierde lo escaneado. Para aplicarlas se necesita internet.
@@ -168,27 +170,31 @@ Si un usuario se da de baja, sus celulares dejan de entrar.
   más recientes (ventas, entradas, mermas, ajustes) con quién y cuándo. **Historial completo** muestra más.
   El jefe ve los de todas las sucursales.
 
-### Inventario del día (pestaña Contar)
+### Inventario (pestaña Contar)
 
-1. Toca **Empezar** (o **Seguir contando**): sale la lista del día ordenada por departamento.
+1. Arriba sale el inventario del turno (**de la mañana** o **de la tarde**): la lista de productos que
+   el jefe arma para tu farmacia, ordenada por departamento. Si el jefe empezó un **inventario
+   completo**, también sale aquí. Toca **Empezar** (o **Seguir contando**).
 2. Escanea cada producto (o toca **Contar**) y escribe **cuántas piezas hay**, contando estante y bodega.
    No se ve lo que dice el sistema.
 3. Si no cuadra, la app pide contarlo **otra vez**; si sigue sin cuadrar, pide el **motivo**.
-4. Al final toca **Terminar el inventario del día**. Lo que no se alcanzó a contar queda para otro día.
+4. Al final toca **Terminar**. Lo que no se alcanzó a contar queda como *no contado*.
 
-Las diferencias no se ajustan solas: las autoriza un jefe (nunca quien contó). Todo lo del jefe está
-en [jefe.md](jefe.md).
+Al terminar, la existencia queda en lo que se contó (así el siguiente turno empieza con lo que de
+verdad hay) y el jefe lo revisa cada semana en la **Revisión semanal**. Todo lo del jefe está en
+[jefe.md](jefe.md).
 
 ### Revisar un apoyo que llegó (pestaña Apoyos)
 
-1. En **Apoyos** aparecen los apoyos que la central mandó a tu farmacia (el número rojo avisa cuántos hay).
+1. En **Apoyos** aparecen los apoyos que otra farmacia mandó a la tuya (el número rojo avisa cuántos hay).
+   En la central también tienen esta pestaña los administradores (no el jefe: él los ve en Movimientos).
 2. Abre el que llegó y toca **Escanear lo que llegó**: cada pieza escaneada se palomea en su renglón.
    También puedes usar **+** y **−**.
 3. Toca **Terminar revisión**:
    - Si todo cuadra dice **Apoyo completo**: toca **Recibir apoyo** y se suma al inventario.
    - Si no, muestra las **diferencias** (faltan, sobran, o llegó algo que no venía). Con **Recibir con
      diferencias** entra solo lo que sí llegó y venía en el apoyo, y las diferencias quedan anotadas en
-     el apoyo para que la central las revise.
+     el apoyo para que la farmacia que lo mandó las revise.
 4. Lo escaneado se guarda en el celular: si se sale de la app, la revisión sigue donde se quedó.
 5. En la computadora de la sucursal el apoyo aparece **En espera de verificación con el celular** y
    se actualiza solo cuando se termina la revisión. La recepción ya no se confirma desde la computadora.

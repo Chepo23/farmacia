@@ -30,6 +30,7 @@ CREATE TABLE productos (
   id INTEGER PRIMARY KEY AUTOINCREMENT, codigo_barras TEXT, descripcion TEXT NOT NULL, departamento TEXT DEFAULT '',
   precio_costo REAL NOT NULL DEFAULT 0, precio_venta REAL NOT NULL DEFAULT 0, precio_mayoreo REAL, cantidad_mayoreo REAL,
   usa_inventario INTEGER NOT NULL DEFAULT 1, es_comun INTEGER NOT NULL DEFAULT 0, activo INTEGER NOT NULL DEFAULT 1,
+  piezas_caja REAL, precio_caja REAL, es_coctel INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00','now')),
   CONSTRAINT productos_codigo_barras_key UNIQUE (codigo_barras));
@@ -128,12 +129,13 @@ CREATE TABLE bitacora (
   CONSTRAINT bitacora_clave_key UNIQUE (clave));
 CREATE TABLE conteos (
   id INTEGER PRIMARY KEY AUTOINCREMENT, sucursal_id INTEGER NOT NULL REFERENCES sucursales(id), fecha TEXT NOT NULL,
+  turno TEXT NOT NULL DEFAULT 'dia' CHECK (turno IN ('dia', 'manana', 'tarde', 'completo')), departamento TEXT NOT NULL DEFAULT '',
   estado TEXT NOT NULL DEFAULT 'abierto' CHECK (estado IN ('abierto', 'por_autorizar', 'cerrado', 'cancelado')),
   productos INTEGER NOT NULL DEFAULT 0, contados INTEGER NOT NULL DEFAULT 0, sin_diferencia INTEGER NOT NULL DEFAULT 0,
   nota TEXT NOT NULL DEFAULT '', creado TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00','now')),
   terminado TEXT, terminado_por INTEGER, cerrado TEXT, cerrado_por INTEGER,
-  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00','now')),
-  CONSTRAINT conteos_sucursal_id_fecha_key UNIQUE (sucursal_id, fecha));
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00','now')));
+CREATE UNIQUE INDEX conteos_turno_unico ON conteos (sucursal_id, fecha, turno) WHERE turno IN ('dia', 'manana', 'tarde');
 CREATE TABLE conteo_detalle (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   conteo_id INTEGER NOT NULL REFERENCES conteos(id) ON DELETE CASCADE,
@@ -143,7 +145,7 @@ CREATE TABLE conteo_detalle (
   razon TEXT NOT NULL DEFAULT '', costo REAL NOT NULL DEFAULT 0, existencia_sistema REAL, primer_conteo REAL, contado REAL,
   diferencia REAL, reconteos INTEGER NOT NULL DEFAULT 0, motivo TEXT NOT NULL DEFAULT '', contado_por INTEGER, contado_fecha TEXT,
   decision TEXT NOT NULL DEFAULT 'pendiente' CHECK (decision IN ('pendiente', 'cuadra', 'aprobado', 'rechazado', 'no_contado')),
-  decidido_por INTEGER, decidido TEXT,
+  decidido_por INTEGER, decidido TEXT, piezas_caja REAL,
   CONSTRAINT conteo_detalle_conteo_id_producto_id_key UNIQUE (conteo_id, producto_id));
 CREATE TABLE conteo_ultimos (
   sucursal_id INTEGER NOT NULL REFERENCES sucursales(id) ON DELETE CASCADE,
@@ -153,7 +155,13 @@ CREATE TABLE conteo_ultimos (
 CREATE TABLE conteo_config (
   sucursal_id INTEGER PRIMARY KEY REFERENCES sucursales(id) ON DELETE CASCADE,
   productos_por_dia INTEGER NOT NULL DEFAULT 40 CHECK (productos_por_dia BETWEEN 5 AND 500),
+  hora_tarde TEXT NOT NULL DEFAULT '14:00',
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00','now')));
+CREATE TABLE conteo_lista (
+  sucursal_id INTEGER NOT NULL REFERENCES sucursales(id) ON DELETE CASCADE,
+  producto_id INTEGER NOT NULL REFERENCES productos(id) ON DELETE CASCADE,
+  agregado_por INTEGER, agregado TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00','now')),
+  PRIMARY KEY (sucursal_id, producto_id));
 CREATE TABLE conteo_importantes (
   producto_id INTEGER PRIMARY KEY REFERENCES productos(id) ON DELETE CASCADE, creado_por INTEGER,
   creado TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00','now')));
@@ -197,12 +205,20 @@ CREATE TABLE abonos (
   cliente_nombre TEXT NOT NULL DEFAULT '', usuario_id INTEGER, monto REAL NOT NULL, forma_pago TEXT NOT NULL DEFAULT 'efectivo',
   saldo_anterior REAL, saldo_nuevo REAL, fecha TEXT NOT NULL, corte_clave TEXT,
   CONSTRAINT abonos_clave_key UNIQUE (clave));
+CREATE TABLE prestamos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, clave TEXT NOT NULL, caja_id INTEGER NOT NULL REFERENCES cajas(id),
+  sucursal_id INTEGER NOT NULL REFERENCES sucursales(id), prestamo_local_id INTEGER NOT NULL, folio INTEGER NOT NULL,
+  cliente_clave TEXT, cliente_nombre TEXT NOT NULL DEFAULT '', usuario_id INTEGER, fecha TEXT NOT NULL, nota TEXT NOT NULL DEFAULT '',
+  estado TEXT NOT NULL DEFAULT 'pendiente' CHECK (estado IN ('pendiente', 'cerrado')), piezas_pendientes REAL NOT NULL DEFAULT 0,
+  valor_pendiente REAL NOT NULL DEFAULT 0, detalle TEXT NOT NULL DEFAULT '[]',
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00','now')),
+  CONSTRAINT prestamos_clave_key UNIQUE (clave));
 `;
 
 // Columnas booleanas (SQLite guarda 0/1; PostgREST responde true/false)
 const BOOLEANAS = {
   sucursales: ['es_central', 'activa'],
-  productos: ['usa_inventario', 'es_comun', 'activo'],
+  productos: ['usa_inventario', 'es_comun', 'activo', 'es_coctel'],
   departamentos: ['activo'],
   usuarios_central: ['activo', 'jefe'],
   bitacora: ['alerta'],
@@ -214,6 +230,7 @@ const BOOLEANAS = {
 const JSON_COLUMNAS = {
   bitacora: ['detalle'],
   cortes: ['detalle'],
+  prestamos: ['detalle'],
 };
 
 function errorPg(status, code, message, details = null) {

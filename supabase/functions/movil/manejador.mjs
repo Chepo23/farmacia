@@ -10,11 +10,12 @@
 // Web Crypto, así se prueba en Node con la central falsa y se publica tal cual en Supabase.
 // Lo del jefe (movimientos, cambios, inventario de las sucursales e inventario del día) vive en
 // supervision.mjs, que también usa el servidor de cada computadora.
-import { crearSupervision, esJefe, describirCambiosProducto } from './supervision.mjs';
+import { crearSupervision, describirCambiosProducto } from './supervision.mjs';
 import { crearVentasCentral } from './ventas.mjs';
 
 const COLUMNAS_PRODUCTO =
-  'id,codigo_barras,descripcion,departamento,precio_costo,precio_venta,precio_mayoreo,cantidad_mayoreo,usa_inventario,activo';
+  'id,codigo_barras,descripcion,departamento,precio_costo,precio_venta,precio_mayoreo,cantidad_mayoreo,usa_inventario,activo,'
+  + 'piezas_caja,precio_caja,es_coctel';
 const TIPOS = ['entrada', 'salida', 'venta', 'ajuste'];
 const SESION_MAX_DIAS_SIN_USO = 180;
 const EPS = 1e-6;
@@ -83,6 +84,10 @@ function normalizarProducto(p) {
     cantidad_mayoreo: numeroONulo(p.cantidad_mayoreo),
     usa_inventario: p.usa_inventario === false || p.usa_inventario === 0 ? 0 : 1,
     activo: p.activo === false || p.activo === 0 ? 0 : 1,
+    // Se vende suelto y por caja (el inventario va en piezas); cóctel de inyecciones
+    piezas_caja: numeroONulo(p.piezas_caja) >= 2 ? Number(p.piezas_caja) : null,
+    precio_caja: numeroONulo(p.piezas_caja) >= 2 ? numeroONulo(p.precio_caja) : null,
+    es_coctel: p.es_coctel === true || p.es_coctel === 1 ? 1 : 0,
   };
 }
 
@@ -102,7 +107,7 @@ function validarProducto(body) {
   if (precioMayoreo !== null && precioMayoreo < 0) return { error: 'Precio de mayoreo no válido' };
   const cantidadMayoreo = numeroONulo(body.cantidad_mayoreo);
   if (cantidadMayoreo !== null && cantidadMayoreo <= 0) return { error: 'La cantidad para mayoreo debe ser mayor a cero' };
-  return {
+  const datos = {
     codigo_barras: String(body.codigo_barras || '').trim() || null,
     descripcion,
     departamento: String(body.departamento || '').trim(),
@@ -112,6 +117,18 @@ function validarProducto(body) {
     cantidad_mayoreo: cantidadMayoreo,
     usa_inventario: !(body.usa_inventario === false || body.usa_inventario === 0 || body.usa_inventario === '0'),
   };
+  // Venta por caja (solo si la pantalla la manda): cuántas piezas trae la caja y su precio completo
+  if ('piezas_caja' in body || 'precio_caja' in body) {
+    const piezasCaja = numeroONulo(body.piezas_caja);
+    if (piezasCaja !== null && !(Number.isInteger(piezasCaja) && piezasCaja >= 2 && piezasCaja <= 1000)) {
+      return { error: 'Las piezas por caja deben ser un número entero de 2 a 1000' };
+    }
+    const precioCaja = piezasCaja === null ? null : numeroONulo(body.precio_caja);
+    if (piezasCaja !== null && !(precioCaja > 0)) return { error: 'Escribe el precio de la caja completa' };
+    datos.piezas_caja = piezasCaja;
+    datos.precio_caja = precioCaja === null ? null : r2(precioCaja);
+  }
+  return datos;
 }
 
 export function crearManejador({ supabase, origenesPermitidos = ['*'], registrar = console.error, zona = undefined } = {}) {
@@ -448,6 +465,10 @@ export function crearManejador({ supabase, origenesPermitidos = ['*'], registrar
   ruta('GET', /^\/api\/auth\/yo$/, async ({ usuario }) => usuario);
 
   ruta('GET', /^\/api\/admin\/sucursales$/, async () => sucursalesActivas());
+  ruta('GET', /^\/api\/departamentos$/, async () => {
+    const { data } = await consultar(sb().from('departamentos').select('id,nombre').eq('activo', true).order('nombre'));
+    return (data || []).map((d) => ({ id: Number(d.id), nombre: d.nombre }));
+  });
 
   ruta('GET', /^\/api\/productos\/sincronizacion$/, async () => ({ modo: 'nube', disponible: true, pendientes: 0, errores: 0 }));
 
@@ -609,6 +630,12 @@ export function crearManejador({ supabase, origenesPermitidos = ['*'], registrar
     const datos = validarProducto(cuerpo);
     if (datos.error) throw new ErrorApp(datos.error);
     const antes = await productoPorId(params[0]);
+    // Un cóctel no se vende por caja ni lleva inventario
+    if (antes && antes.es_coctel) {
+      delete datos.piezas_caja;
+      delete datos.precio_caja;
+      datos.usa_inventario = false;
+    }
     try {
       const { data } = await consultar(
         sb().from('productos').update({ ...datos, updated_at: new Date().toISOString() }).eq('id', Number(params[0])).eq('activo', true).select('id')
@@ -999,15 +1026,19 @@ export function crearManejador({ supabase, origenesPermitidos = ['*'], registrar
   ruta('GET', /^\/api\/ventas-central\/cortes\/(\d+)$/, async ({ usuario, params }) => ventasCentral.cargarCorte(usuario, params[0]));
   ruta('GET', /^\/api\/ventas-central\/creditos$/, async ({ usuario, url }) => ventasCentral.creditos(usuario, parametros(url)));
 
-  // ---------- Inventario del día ----------
+  // ---------- Inventario (lista del jefe, turnos de mañana y tarde, inventario completo) ----------
   ruta('GET', /^\/api\/conteos\/hoy$/, async ({ usuario, url }) => supervision.conteoDeHoy(usuario, parametros(url)));
   ruta('GET', /^\/api\/conteos\/config$/, async ({ usuario }) => supervision.configuracion(usuario));
   ruta('PUT', /^\/api\/conteos\/config$/, async ({ usuario, cuerpo }) => supervision.guardarConfiguracion(usuario, cuerpo));
-  ruta('GET', /^\/api\/conteos\/importante\/(\d+)$/, async ({ usuario, params }) => {
-    if (!esJefe(usuario)) throw new ErrorApp('Esto solo lo ve el jefe', { status: 403, codigo: 'SOLO_JEFE' });
-    return { producto_id: Number(params[0]), importante: await supervision.esImportante(params[0]) };
-  });
-  ruta('POST', /^\/api\/conteos\/importante$/, async ({ usuario, cuerpo }) => supervision.marcarImportante(usuario, cuerpo));
+  ruta('GET', /^\/api\/conteos\/lista$/, async ({ usuario, url }) => supervision.lista(usuario, parametros(url)));
+  ruta('POST', /^\/api\/conteos\/lista$/, async ({ usuario, cuerpo }) => supervision.agregarALista(usuario, cuerpo));
+  ruta('POST', /^\/api\/conteos\/lista\/quitar$/, async ({ usuario, cuerpo }) => supervision.quitarDeLista(usuario, cuerpo));
+  ruta('GET', /^\/api\/conteos\/lista\/producto\/(\d+)$/, async ({ usuario, params }) => supervision.listasDeProducto(usuario, params[0]));
+  ruta('POST', /^\/api\/conteos\/lista\/producto$/, async ({ usuario, cuerpo }) => supervision.cambiarListaProducto(usuario, cuerpo));
+  ruta('POST', /^\/api\/conteos\/completo$/, async ({ usuario, cuerpo }) => supervision.iniciarCompleto(usuario, cuerpo));
+  ruta('POST', /^\/api\/conteos\/(\d+)\/cancelar$/, async ({ usuario, params }) => supervision.cancelarConteo(usuario, params[0]));
+  ruta('GET', /^\/api\/conteos\/semana$/, async ({ usuario, url }) => supervision.semana(usuario, parametros(url)));
+  ruta('POST', /^\/api\/conteos\/semana\/revisar$/, async ({ usuario, cuerpo }) => supervision.revisarSemana(usuario, cuerpo));
   ruta('GET', /^\/api\/conteos$/, async ({ usuario, url }) => supervision.listarConteos(usuario, parametros(url)));
   ruta('GET', /^\/api\/conteos\/(\d+)$/, async ({ usuario, params }) => supervision.cargarConteo(usuario, params[0]));
   ruta('POST', /^\/api\/conteos\/(\d+)\/contar$/, async ({ usuario, params, cuerpo }) => supervision.contar(usuario, params[0], cuerpo));

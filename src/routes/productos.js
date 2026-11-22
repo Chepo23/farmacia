@@ -14,7 +14,7 @@ const router = express.Router();
 const esAdminCentral = (usuario) => usuario.rol === 'admin' && Number(usuario.es_central) === 1;
 
 // Los precios son los mismos en todas las sucursales: solo el administrador de la central los fija
-const CAMPOS_PRECIO = ['precio_costo', 'precio_venta', 'precio_mayoreo', 'cantidad_mayoreo'];
+const CAMPOS_PRECIO = ['precio_costo', 'precio_venta', 'precio_mayoreo', 'cantidad_mayoreo', 'piezas_caja', 'precio_caja', 'es_coctel'];
 const mismoValor = (a, b) => (a == null && b == null) || (a != null && b != null && Math.abs(Number(a) - Number(b)) < 0.005);
 
 // Los cajeros solo mueven el inventario de su sucursal; el administrador de la central, el de cualquiera
@@ -46,6 +46,7 @@ async function listar(req, limitePorDefecto) {
   const { productos } = await catalogo.buscar({
     q: req.query.q || '',
     limite: limiteDe(req.query.limite, limitePorDefecto, 1000),
+    departamento: req.query.departamento || '',
   });
   const { productos: conStock, fuente } = await inventario.conExistencias(productos, { sucursalId: req.usuario.sucursal_id });
   return { conStock, fuente };
@@ -64,6 +65,11 @@ router.get('/buscar', manejar(async (req, res) => {
   const { conStock, fuente } = await listar(req, 50);
   res.set('X-Fuente-Inventario', fuente);
   res.json(conStock);
+}));
+
+// Los cócteles de inyecciones que dio de alta la central (para cobrarlos en la caja)
+router.get('/cocteles', manejar(async (req, res) => {
+  res.json(await catalogo.cocteles());
 }));
 
 // Listado del catálogo con existencias en todas las sucursales
@@ -173,6 +179,10 @@ router.post('/inventario/lote', manejar(async (req, res) => {
 router.post('/', manejar(async (req, res) => {
   const datos = catalogo.validar(req.body || {});
   if (datos.error) return res.status(400).json({ error: datos.error });
+  // Un cóctel fija un precio para varias ampolletas: lo da de alta la central, como los precios
+  if (datos.es_coctel && !esAdminCentral(req.usuario)) {
+    return res.status(403).json({ error: 'Solo la central da de alta los cócteles', codigo: 'SOLO_CENTRAL' });
+  }
   const sucursalId = sucursalPermitida(req, req.body?.sucursal_id);
   const existenciaInicial = req.body?.existencia_inicial === '' || req.body?.existencia_inicial == null
     ? 0 : Number(req.body.existencia_inicial);
@@ -240,7 +250,12 @@ router.put('/:id', manejar(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// Dar de baja quita el producto en TODAS las farmacias: lo hace el administrador de la central (o el
+// jefe), igual que los precios
 router.delete('/:id', requiereAdmin, manejar(async (req, res) => {
+  if (!esAdminCentral(req.usuario)) {
+    return res.status(403).json({ error: 'Solo la central da de baja productos: se quitan en todas las farmacias' });
+  }
   const actual = await catalogo.porId(req.params.id);
   await catalogo.darDeBaja(req.params.id);
   if (actual) {

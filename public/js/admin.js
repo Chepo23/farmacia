@@ -89,7 +89,7 @@ function formularioUsuario(u = {}) {
       </label>
     </div>
     <p id="usu-ayuda-jefe" class="texto-suave" hidden>El jefe es de la central y, además de todo lo del administrador, ve los movimientos,
-      el registro de cambios y el inventario de todas las sucursales, y autoriza las diferencias del inventario del día.
+      el registro de cambios y el inventario de todas las sucursales, y revisa cada semana el inventario de todas las sucursales.
       Solo otro jefe puede cambiar o dar de baja su cuenta.</p>
     <div id="usu-error" class="mensaje-error" hidden></div>
     <div class="pie">
@@ -301,11 +301,53 @@ async function cargarRespaldos() {
       ${r.error_extra ? `<div class="mensaje-error">${escaparHtml(r.error_extra)}</div>` : ''}
       ${r.respaldos.length ? `<ul class="lista-respaldos">${r.respaldos.slice(0, 5).map((x) => `
         <li><span>${escaparHtml(x.nombre)} <small>${tamanio(x.bytes)}</small></span>
-          <a class="boton chico" href="/api/respaldos/${encodeURIComponent(x.nombre)}" download>Descargar</a></li>`).join('')}</ul>` : ''}`;
+          <a class="boton chico" href="/api/respaldos/${encodeURIComponent(x.nombre)}" download>Descargar</a></li>`).join('')}</ul>` : ''}
+      ${pintarCopiaCentral(r.central)}`;
   } catch (err) {
     contenedor.innerHTML = `<div class="mensaje-error">${escaparHtml(err.message)}</div>`;
   }
 }
+
+// La copia diaria de la base central (inventario de todas las farmacias, conteos, apoyos, ventas…)
+function pintarCopiaCentral(c) {
+  const boton = document.getElementById('boton-copiar-central');
+  if (!c || !c.activo) {
+    boton.hidden = true;
+    return '';
+  }
+  boton.hidden = false;
+  const ultima = c.ultima;
+  const vieja = !ultima || (Date.now() - new Date(ultima.creado).getTime()) > 3 * 86400000;
+  return `
+    <h4 class="subtitulo-respaldos">Copia de la central</h4>
+    <p><small>Cada día se guarda aquí también una copia de la base central: el inventario de todas las farmacias,
+      productos, conteos, apoyos, préstamos, ventas y el registro de cambios.</small></p>
+    <div class="dato-secundario"><span>Última copia</span>
+      <b class="${vieja ? 'texto-rojo' : ''}">${ultima ? escaparHtml(new Date(ultima.creado).toLocaleString('es-MX')) : 'Todavía no hay'}</b></div>
+    <div class="dato-secundario"><span>Copias guardadas</span><b>${c.total} (se conservan ${c.conservar_dias} días)</b></div>
+    <div class="dato-secundario"><span>Carpeta</span><b class="texto-ruta">${escaparHtml(c.carpeta)}</b></div>
+    ${c.en_curso ? '<div class="dato-secundario"><span>Estado</span><b>Copiando…</b></div>' : ''}
+    ${c.error ? `<div class="mensaje-error">${escaparHtml(c.error)}</div>` : ''}
+    ${c.error_extra ? `<div class="mensaje-error">${escaparHtml(c.error_extra)}</div>` : ''}
+    ${c.copias.length ? `<ul class="lista-respaldos">${c.copias.slice(0, 3).map((x) => `
+      <li><span>${escaparHtml(x.nombre)} <small>${tamanio(x.bytes)}</small></span>
+        <a class="boton chico" href="/api/respaldos/central/${encodeURIComponent(x.nombre)}" download>Descargar</a></li>`).join('')}</ul>` : ''}`;
+}
+
+document.getElementById('boton-copiar-central').addEventListener('click', async (e) => {
+  const boton = e.currentTarget;
+  boton.disabled = true;
+  aviso('Copiando la central… puede tardar unos segundos');
+  try {
+    const r = await api('/api/respaldos/central', { method: 'POST' });
+    aviso(`Copia de la central guardada: ${r.nombre}`, 'exito');
+  } catch (err) {
+    aviso(err.message, 'error');
+  } finally {
+    boton.disabled = false;
+  }
+  cargarRespaldos();
+});
 
 document.getElementById('boton-respaldar').addEventListener('click', async (e) => {
   const boton = e.currentTarget;

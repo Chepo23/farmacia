@@ -6,7 +6,10 @@ const assert = require('node:assert/strict');
 const { createClient } = require('@supabase/supabase-js');
 const { iniciarCentralFalsa, sembrarBase } = require('./helpers/central-falsa');
 const { SUCURSALES } = require('./helpers/escenario');
-const { leerExportacion, seleccionar, desdePorDefecto, cargarEnCentral, existenciaDespues } = require('../scripts/importar-eleventa');
+const {
+  leerExportacion, seleccionar, desdePorDefecto, cargarEnCentral, existenciaDespues,
+  leerDepartamentos, unificarDepartamentos, sincronizarDepartamentos, cargarExistencias,
+} = require('../scripts/importar-eleventa');
 
 // Como lo escribe isql de Eleventa: "#campos#" rellenos de espacios
 const renglon = (campos) => `#${campos.join('|')}#${' '.repeat(40)}`;
@@ -71,4 +74,88 @@ test('el catálogo se carga en la central con existencia en 0 y se puede repetir
   assert.equal(otraVez.productos_nuevos, 0);
   assert.equal(central.db.prepare('SELECT COUNT(*) AS n FROM productos').get().n, 3);
   assert.equal(central.db.prepare('SELECT COUNT(*) AS n FROM inventario').get().n, 6);
+});
+
+const DEPARTAMENTOS = [
+  renglon(['1', 'PATENTE', '1']),
+  renglon(['5', 'HIGIENE Y BELLEZA', '1']),
+  renglon(['124', 'higiene  y belleza', '1']),
+  renglon(['14', 'Higiene y  belleza}', '1']),
+  renglon(['10', '0 (Eliminado 14/04/2025)', '0']),
+  renglon(['60', 'ACNE', '1']),
+  renglon(['129', '+', '1']),
+].join('\r\n');
+
+test('los departamentos quedan como en Eleventa: se agregan, se juntan los repetidos y se quitan los borrados', async (t) => {
+  const deEleventa = leerDepartamentos(DEPARTAMENTOS);
+  assert.equal(deEleventa.length, 7);
+  assert.equal(deEleventa.find((d) => d.id === 10).activo, false);
+  const usos = [...Array(3).fill('HIGIENE Y BELLEZA'), 'higiene  y belleza'].map((departamento) => ({ departamento }));
+  const unificados = unificarDepartamentos(deEleventa, usos);
+  assert.deepEqual(unificados.activos, ['+', 'ACNE', 'HIGIENE Y BELLEZA', 'PATENTE']);
+  assert.equal(unificados.mapa.get('higiene  y belleza'), 'HIGIENE Y BELLEZA', 'se juntan en el que tiene más productos');
+  assert.equal(unificados.mapa.get('Higiene y  belleza}'), 'HIGIENE Y BELLEZA');
+  assert.equal(unificados.mapa.get('0 (Eliminado 14/04/2025)'), '', 'lo borrado en Eleventa queda sin departamento');
+
+  const central = await iniciarCentralFalsa();
+  t.after(() => central.cerrar());
+  sembrarBase(central.db, {
+    sucursales: SUCURSALES,
+    departamentos: ['PATENTE', 'HIGIENE Y BELLEZA', 'higiene  y belleza', '0 (Eliminado 14/04/2025)', 'INYECTABLES'].map((nombre) => ({ nombre })),
+  });
+  const alta = central.db.prepare('INSERT INTO productos (codigo_barras, descripcion, precio_venta, departamento) VALUES (?, ?, 10, ?)');
+  alta.run('1', 'Crema', 'higiene  y belleza');
+  alta.run('2', 'Algo viejo', '0 (Eliminado 14/04/2025)');
+  alta.run('3', 'Complejo B inyectable', 'INYECTABLES');
+  const supabase = createClient(central.url, central.key, { auth: { persistSession: false, autoRefreshToken: false } });
+
+  const vista = await sincronizarDepartamentos(supabase, unificados, { aplicar: false });
+  assert.deepEqual(vista.se_crean, ['+', 'ACNE']);
+  assert.deepEqual(vista.se_desactivan.sort(), ['0 (Eliminado 14/04/2025)', 'higiene  y belleza']);
+  assert.equal(central.db.prepare('SELECT COUNT(*) AS n FROM departamentos').get().n, 5, 'la vista previa no toca nada');
+
+  await sincronizarDepartamentos(supabase, unificados, { aplicar: true });
+  const activos = central.db.prepare('SELECT nombre FROM departamentos WHERE activo = 1 ORDER BY nombre').all().map((d) => d.nombre);
+  assert.deepEqual(activos, ['+', 'ACNE', 'HIGIENE Y BELLEZA', 'INYECTABLES', 'PATENTE'], 'el que se creó a mano en el sistema se queda');
+  const depto = (codigo) => central.db.prepare('SELECT departamento FROM productos WHERE codigo_barras = ?').get(codigo).departamento;
+  assert.deepEqual([depto('1'), depto('2'), depto('3')], ['HIGIENE Y BELLEZA', '', 'INYECTABLES']);
+  assert.match(central.db.prepare("SELECT descripcion FROM bitacora WHERE tipo = 'producto_cambio'").get().descripcion, /Departamentos igualados con Eleventa: 2 nuevo/);
+
+  const otraVez = await sincronizarDepartamentos(supabase, unificados, { aplicar: true });
+  assert.deepEqual([otraVez.se_crean, otraVez.se_desactivan, otraVez.productos_que_cambian], [[], [], []], 'se puede repetir');
+});
+
+test('la existencia de una farmacia se carga de Eleventa y queda en Movimientos', async (t) => {
+  const central = await iniciarCentralFalsa();
+  t.after(() => central.cerrar());
+  sembrarBase(central.db, { sucursales: SUCURSALES });
+  const alta = central.db.prepare('INSERT INTO productos (codigo_barras, descripcion, precio_costo, precio_venta) VALUES (?, ?, ?, 20)');
+  for (const [codigo, costo] of [['7501000000101', 14.5], ['7501000000202', 12], ['7501000000303', 20], ['7501000000505', 11], ['7509999999999', 5]]) {
+    alta.run(codigo, codigo, costo);
+  }
+  for (const p of central.db.prepare('SELECT id FROM productos').all()) {
+    for (const s of [1, 2]) central.db.prepare('INSERT INTO inventario (producto_id, sucursal_id, existencia) VALUES (?, ?, 0)').run(p.id, s);
+  }
+  const historial = `${HISTORIAL}\r\n${renglon(['6', '7501000000303', '2026-10-01 10:00:00.0000', 's', '0.0000', '2.0000'])}`;
+  const productos = leerExportacion({ productosTexto: PRODUCTOS, historialTexto: historial });
+  const supabase = createClient(central.url, central.key, { auth: { persistSession: false, autoRefreshToken: false } });
+
+  const vista = await cargarExistencias(supabase, productos, { sucursalId: 1, aplicar: false });
+  assert.deepEqual([vista.se_actualizan, vista.piezas, vista.negativos_en_eleventa_quedan_en_0], [3, 19, 1], '7 + 5 + 7; la crema en negativo queda en 0');
+  assert.equal(vista.valor_a_costo, 7 * 14.5 + 5 * 12 + 7 * 11);
+
+  await cargarExistencias(supabase, productos, { sucursalId: 1, origen: 'Eleventa (prueba.fdb)', aplicar: true });
+  const existencia = (codigo, sucursal) => central.db.prepare(
+    'SELECT i.existencia FROM inventario i JOIN productos p ON p.id = i.producto_id WHERE p.codigo_barras = ? AND i.sucursal_id = ?'
+  ).get(codigo, sucursal).existencia;
+  assert.deepEqual(['7501000000101', '7501000000202', '7501000000303', '7501000000505', '7509999999999'].map((c) => existencia(c, 1)), [7, 5, 0, 7, 0]);
+  assert.equal(existencia('7501000000101', 2), 0, 'las otras farmacias no se tocan');
+  const movs = central.db.prepare('SELECT tipo, cantidad, nota, existencia_resultante FROM movimientos_inventario WHERE sucursal_id = 1 ORDER BY id').all();
+  assert.equal(movs.length, 3);
+  assert.ok(movs.every((m) => m.tipo === 'ajuste' && /^Existencia inicial desde Eleventa \(prueba\.fdb\)/.test(m.nota) && m.cantidad === m.existencia_resultante));
+  assert.match(central.db.prepare("SELECT descripcion FROM bitacora WHERE tipo = 'existencia_carga'").get().descripcion, /existencia cargada desde Eleventa \(prueba\.fdb\) en 3 producto/);
+
+  const otraVez = await cargarExistencias(supabase, productos, { sucursalId: 1, aplicar: true });
+  assert.equal(otraVez.se_actualizan, 0, 'se puede repetir sin duplicar movimientos');
+  assert.equal(central.db.prepare('SELECT COUNT(*) AS n FROM movimientos_inventario').get().n, 3);
 });

@@ -19,7 +19,8 @@ const compartida = crearSupervision({
   aplicarMovimientos: (movimientos, usuarioId) => inventario.aplicar(movimientos, { usuarioId }),
   existenciaActual: async (productoId, sucursalId) => (await inventario.existenciaDe(productoId, sucursalId)).existencia,
   registrarCambio: (cambio) => bitacora.registrar(cambio),
-  zona: process.env.FARMACIA_ZONA_HORARIA || undefined,
+  // El "día" es el de esta computadora (la misma hora con la que guarda sus ventas), salvo que se indique otro
+  zona: process.env.FARMACIA_ZONA_HORARIA || Intl.DateTimeFormat().resolvedOptions().timeZone || undefined,
   ventasHoy: () => ventasCentral.hoyPorSucursal(),
 });
 
@@ -56,10 +57,11 @@ function sucursalDeMovimientos(usuario, pedida) {
 
 const PREFIJOS_CLASE = {
   apoyo: ['Apoyo folio', 'Cancelación del apoyo'],
-  conteo: ['Conteo físico', 'Inventario del día'],
+  conteo: ['Conteo físico', 'Inventario del día', 'Inventario de la mañana', 'Inventario de la tarde', 'Inventario completo'],
   cancelacion: ['Cancelación de la venta'],
   recepcion: ['Recepción de mercancía'],
   alta: ['Existencia inicial'],
+  prestamo: ['Préstamo P-', 'Devolución del préstamo P-'],
 };
 
 // 'AAAA-MM-DD' -> rango de texto con la hora de esta computadora (así se guardan las fechas aquí)

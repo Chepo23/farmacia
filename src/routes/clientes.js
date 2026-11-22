@@ -38,7 +38,9 @@ router.get('/', (req, res) => {
     .prepare(
       `SELECT c.id, c.nombre, c.telefono, c.limite_credito, c.notas, c.credito_autorizado, c.sucursal_id,
               s.nombre AS sucursal, ${consultaSaldo},
-              (SELECT MAX(fecha) FROM abonos a WHERE a.cliente_id = c.id) AS ultimo_abono
+              (SELECT MAX(fecha) FROM abonos a WHERE a.cliente_id = c.id) AS ultimo_abono,
+              (SELECT COUNT(*) FROM prestamos p WHERE p.cliente_id = c.id AND EXISTS (
+                 SELECT 1 FROM prestamo_detalle d WHERE d.prestamo_id = p.id AND d.cantidad - d.devuelto - d.cobrado > 0.0005)) AS prestamos_pendientes
        FROM clientes c JOIN sucursales s ON s.id = c.sucursal_id
        WHERE c.activo = 1 AND (c.nombre LIKE ? OR c.telefono LIKE ?)
        ORDER BY c.nombre LIMIT 300`

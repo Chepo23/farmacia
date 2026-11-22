@@ -6,10 +6,16 @@
 const db = require('./db');
 const { ErrorApp, modoCentral, centralDisponible, consultar, sb } = require('./central');
 
-const COLUMNAS_CENTRAL =
+const COLUMNAS_BASE =
   'id,codigo_barras,descripcion,departamento,precio_costo,precio_venta,precio_mayoreo,cantidad_mayoreo,usa_inventario,activo';
+// Venta por caja (piezas por caja y su precio) y cócteles. Si la central todavía no tiene estas columnas
+// (no se ha actualizado), el catálogo sigue funcionando sin ellas.
+const CAMPOS_CAJA = ['piezas_caja', 'precio_caja', 'es_coctel'];
+let centralConCaja = true;
+const columnasCentral = () => (centralConCaja ? `${COLUMNAS_BASE},${CAMPOS_CAJA.join(',')}` : COLUMNAS_BASE);
+const faltaColumnaCaja = (error) => /piezas_caja|precio_caja|es_coctel|PGRST204|42703/i.test(`${error?.codigo || ''} ${error?.message || ''}`);
 const CAMPOS_LOCAL = `p.id, p.codigo_barras, p.descripcion, p.departamento, p.precio_costo, p.precio_venta,
-  p.precio_mayoreo, p.cantidad_mayoreo, p.usa_inventario, p.activo`;
+  p.precio_mayoreo, p.cantidad_mayoreo, p.usa_inventario, p.activo, p.piezas_caja, p.precio_caja, p.es_coctel`;
 const ID_ARTICULO_COMUN = 0;
 const TAMANO_LOTE = 150; // ids por consulta .in() para no pasar el límite de la URL
 
@@ -32,7 +38,31 @@ function normalizar(p) {
     cantidad_mayoreo: numeroONulo(p.cantidad_mayoreo),
     usa_inventario: p.usa_inventario === false || p.usa_inventario === 0 ? 0 : 1,
     activo: p.activo === false || p.activo === 0 ? 0 : 1,
+    // Se vende suelto y por caja: cuántas piezas trae la caja y su precio (el inventario va en piezas)
+    piezas_caja: numeroONulo(p.piezas_caja) >= 2 ? Number(p.piezas_caja) : null,
+    precio_caja: numeroONulo(p.piezas_caja) >= 2 ? numeroONulo(p.precio_caja) : null,
+    // Cóctel de inyecciones: no tiene inventario; su precio se cobra por las ampolletas que se usaron
+    es_coctel: p.es_coctel === true || p.es_coctel === 1 ? 1 : 0,
   };
+}
+
+// Consulta a la central con las columnas de caja y cóctel; sin ellas si la central no las tiene aún
+async function consultarProductos(construir) {
+  try {
+    return await consultar(construir(columnasCentral()));
+  } catch (error) {
+    if (!centralConCaja || !faltaColumnaCaja(error)) throw error;
+    centralConCaja = false;
+    return consultar(construir(columnasCentral()));
+  }
+}
+
+// Lo que se escribe en la central (sin las columnas nuevas si todavía no las tiene)
+function paraEscribir(datos) {
+  if (centralConCaja) return datos;
+  const sinCaja = { ...datos };
+  for (const campo of CAMPOS_CAJA) delete sinCaja[campo];
+  return sinCaja;
 }
 
 function lotes(lista, tamano = TAMANO_LOTE) {
@@ -44,14 +74,15 @@ function lotes(lista, tamano = TAMANO_LOTE) {
 // ---------- Copia local ----------
 const upsertLocal = db.prepare(
   `INSERT INTO productos (id, codigo_barras, descripcion, departamento, precio_costo, precio_venta,
-     precio_mayoreo, cantidad_mayoreo, usa_inventario, es_comun, activo)
+     precio_mayoreo, cantidad_mayoreo, usa_inventario, es_comun, activo, piezas_caja, precio_caja, es_coctel)
    VALUES (@id, @codigo_barras, @descripcion, @departamento, @precio_costo, @precio_venta,
-     @precio_mayoreo, @cantidad_mayoreo, @usa_inventario, 0, @activo)
+     @precio_mayoreo, @cantidad_mayoreo, @usa_inventario, 0, @activo, @piezas_caja, @precio_caja, @es_coctel)
    ON CONFLICT(id) DO UPDATE SET codigo_barras = excluded.codigo_barras, descripcion = excluded.descripcion,
      departamento = excluded.departamento, precio_costo = excluded.precio_costo,
      precio_venta = excluded.precio_venta, precio_mayoreo = excluded.precio_mayoreo,
      cantidad_mayoreo = excluded.cantidad_mayoreo, usa_inventario = excluded.usa_inventario,
-     es_comun = 0, activo = excluded.activo`
+     es_comun = 0, activo = excluded.activo, piezas_caja = excluded.piezas_caja,
+     precio_caja = excluded.precio_caja, es_coctel = excluded.es_coctel`
 );
 const liberarCodigo = db.prepare('UPDATE productos SET codigo_barras = NULL WHERE codigo_barras = ? AND id <> ?');
 
@@ -65,17 +96,18 @@ const guardarLocal = db.transaction((productos) => {
   }
 });
 
-function buscarLocal(texto, limite, incluirInactivos) {
+function buscarLocal(texto, limite, incluirInactivos, departamento = '') {
   const like = `%${texto}%`;
   return db
     .prepare(
       `SELECT ${CAMPOS_LOCAL} FROM productos p
        WHERE p.id <> ${ID_ARTICULO_COMUN} ${incluirInactivos ? '' : 'AND p.activo = 1'}
          AND (p.descripcion LIKE @like OR p.codigo_barras LIKE @like)
+         ${departamento ? 'AND p.departamento = @departamento' : ''}
        ORDER BY (p.codigo_barras = @texto) DESC, p.descripcion
        LIMIT @limite`
     )
-    .all({ like, texto, limite })
+    .all({ like, texto, limite, departamento })
     .map(normalizar);
 }
 
@@ -99,17 +131,22 @@ function patronIlike(texto) {
 }
 
 // ---------- Lectura ----------
-async function buscar({ q = '', limite = 50, incluirInactivos = false } = {}) {
+// departamento: solo los de ese departamento (para revisar o limpiar el catálogo por partes)
+async function buscar({ q = '', limite = 50, incluirInactivos = false, departamento = '' } = {}) {
   const texto = String(q || '').trim();
+  const depto = String(departamento || '').trim();
   if (modoCentral() && centralDisponible()) {
     try {
-      let consulta = sb().from('productos').select(COLUMNAS_CENTRAL);
-      if (!incluirInactivos) consulta = consulta.eq('activo', true);
-      if (texto) {
-        const patron = patronIlike(texto);
-        consulta = consulta.or(`descripcion.ilike.${patron},codigo_barras.ilike.${patron}`);
-      }
-      const { data } = await consultar(consulta.order('descripcion').limit(limite));
+      const { data } = await consultarProductos((columnas) => {
+        let consulta = sb().from('productos').select(columnas);
+        if (!incluirInactivos) consulta = consulta.eq('activo', true);
+        if (depto) consulta = consulta.eq('departamento', depto);
+        if (texto) {
+          const patron = patronIlike(texto);
+          consulta = consulta.or(`descripcion.ilike.${patron},codigo_barras.ilike.${patron}`);
+        }
+        return consulta.order('descripcion').limit(limite);
+      });
       guardarLocal(data);
       const productos = (data || []).map(normalizar);
       // El código exacto primero (lo que se escaneó)
@@ -119,7 +156,7 @@ async function buscar({ q = '', limite = 50, incluirInactivos = false } = {}) {
       if (!error.sinConexion) throw error;
     }
   }
-  return { productos: buscarLocal(texto, limite, incluirInactivos), fuente: 'local' };
+  return { productos: buscarLocal(texto, limite, incluirInactivos, depto), fuente: 'local' };
 }
 
 async function porCodigo(codigo) {
@@ -127,8 +164,8 @@ async function porCodigo(codigo) {
   if (!texto) return null;
   if (modoCentral() && centralDisponible()) {
     try {
-      const { data } = await consultar(
-        sb().from('productos').select(COLUMNAS_CENTRAL).eq('codigo_barras', texto).eq('activo', true).limit(1)
+      const { data } = await consultarProductos(
+        (columnas) => sb().from('productos').select(columnas).eq('codigo_barras', texto).eq('activo', true).limit(1)
       );
       guardarLocal(data);
       return data && data[0] ? normalizar(data[0]) : null;
@@ -150,9 +187,10 @@ async function porIds(ids, { incluirInactivos = false } = {}) {
     try {
       const mapa = new Map();
       for (const lote of lotes(unicos)) {
-        let consulta = sb().from('productos').select(COLUMNAS_CENTRAL).in('id', lote);
-        if (!incluirInactivos) consulta = consulta.eq('activo', true);
-        const { data } = await consultar(consulta);
+        const { data } = await consultarProductos((columnas) => {
+          const consulta = sb().from('productos').select(columnas).in('id', lote);
+          return incluirInactivos ? consulta : consulta.eq('activo', true);
+        });
         guardarLocal(data);
         for (const fila of data || []) mapa.set(Number(fila.id), normalizar(fila));
       }
@@ -199,6 +237,14 @@ function validar(body) {
   if (precioMayoreo !== null && precioMayoreo < 0) return { error: 'Precio de mayoreo no válido' };
   const cantidadMayoreo = numeroONulo(body.cantidad_mayoreo);
   if (cantidadMayoreo !== null && cantidadMayoreo <= 0) return { error: 'La cantidad para mayoreo debe ser mayor a cero' };
+  const esCoctel = body.es_coctel === true || body.es_coctel === 1 || body.es_coctel === '1';
+  const piezasCaja = esCoctel ? null : numeroONulo(body.piezas_caja);
+  if (piezasCaja !== null && !(Number.isInteger(piezasCaja) && piezasCaja >= 2 && piezasCaja <= 1000)) {
+    return { error: 'Las piezas por caja deben ser un número entero de 2 a 1000' };
+  }
+  const precioCaja = piezasCaja === null ? null : numeroONulo(body.precio_caja);
+  if (piezasCaja !== null && !(precioCaja > 0)) return { error: 'Escribe el precio de la caja completa' };
+  if (esCoctel && !(precioVenta > 0)) return { error: 'Escribe el precio del cóctel' };
   return {
     codigo_barras: String(body.codigo_barras || '').trim() || null,
     descripcion,
@@ -207,7 +253,11 @@ function validar(body) {
     precio_venta: Math.round(precioVenta * 100) / 100,
     precio_mayoreo: precioMayoreo === null ? null : Math.round(precioMayoreo * 100) / 100,
     cantidad_mayoreo: cantidadMayoreo,
-    usa_inventario: body.usa_inventario === false || body.usa_inventario === 0 || body.usa_inventario === '0' ? 0 : 1,
+    // Un cóctel no tiene inventario: se descuentan las ampolletas que se usaron
+    usa_inventario: esCoctel || body.usa_inventario === false || body.usa_inventario === 0 || body.usa_inventario === '0' ? 0 : 1,
+    piezas_caja: piezasCaja,
+    precio_caja: precioCaja === null ? null : Math.round(precioCaja * 100) / 100,
+    es_coctel: esCoctel ? 1 : 0,
   };
 }
 
@@ -220,7 +270,18 @@ function esDuplicado(error) {
 }
 
 function paraCentral(datos) {
-  return { ...datos, usa_inventario: Boolean(datos.usa_inventario) };
+  return paraEscribir({ ...datos, usa_inventario: Boolean(datos.usa_inventario), es_coctel: Boolean(datos.es_coctel) });
+}
+
+// Escribe en la central; si le faltan las columnas de caja y cóctel, lo intenta otra vez sin ellas
+async function escribirProducto(construir, datos) {
+  try {
+    return await consultar(construir(paraCentral(datos), columnasCentral()));
+  } catch (error) {
+    if (!centralConCaja || !faltaColumnaCaja(error)) throw error;
+    centralConCaja = false;
+    return consultar(construir(paraCentral(datos), columnasCentral()));
+  }
 }
 
 async function crear(datos) {
@@ -232,8 +293,9 @@ async function crear(datos) {
       if (existente && existente.length) throw errorCodigoDuplicado();
     }
     try {
-      const { data } = await consultar(
-        sb().from('productos').insert({ ...paraCentral(datos), activo: true }).select(COLUMNAS_CENTRAL).single()
+      const { data } = await escribirProducto(
+        (fila, columnas) => sb().from('productos').insert({ ...fila, activo: true }).select(columnas).single(),
+        datos
       );
       guardarLocal([data]);
       return normalizar(data);
@@ -246,9 +308,9 @@ async function crear(datos) {
     const info = db
       .prepare(
         `INSERT INTO productos (codigo_barras, descripcion, departamento, precio_costo, precio_venta,
-           precio_mayoreo, cantidad_mayoreo, usa_inventario)
+           precio_mayoreo, cantidad_mayoreo, usa_inventario, piezas_caja, precio_caja, es_coctel)
          VALUES (@codigo_barras, @descripcion, @departamento, @precio_costo, @precio_venta,
-           @precio_mayoreo, @cantidad_mayoreo, @usa_inventario)`
+           @precio_mayoreo, @cantidad_mayoreo, @usa_inventario, @piezas_caja, @precio_caja, @es_coctel)`
       )
       .run(datos);
     return porIdsLocal([Number(info.lastInsertRowid)], true).get(Number(info.lastInsertRowid));
@@ -263,11 +325,12 @@ async function actualizar(id, datos) {
   if (!productoId) throw new ErrorApp('Producto no encontrado', { status: 404 });
   if (modoCentral()) {
     try {
-      const { data } = await consultar(
-        sb().from('productos')
-          .update({ ...paraCentral(datos), updated_at: new Date().toISOString() })
+      const { data } = await escribirProducto(
+        (fila, columnas) => sb().from('productos')
+          .update({ ...fila, updated_at: new Date().toISOString() })
           .eq('id', productoId).eq('activo', true)
-          .select(COLUMNAS_CENTRAL)
+          .select(columnas),
+        datos
       );
       if (!data || data.length === 0) throw new ErrorApp('Producto no encontrado', { status: 404 });
       guardarLocal(data);
@@ -283,7 +346,8 @@ async function actualizar(id, datos) {
         `UPDATE productos SET codigo_barras = @codigo_barras, descripcion = @descripcion,
            departamento = @departamento, precio_costo = @precio_costo, precio_venta = @precio_venta,
            precio_mayoreo = @precio_mayoreo, cantidad_mayoreo = @cantidad_mayoreo,
-           usa_inventario = @usa_inventario
+           usa_inventario = @usa_inventario, piezas_caja = @piezas_caja, precio_caja = @precio_caja,
+           es_coctel = @es_coctel
          WHERE id = @id AND activo = 1 AND id <> 0`
       )
       .run({ ...datos, id: productoId });
@@ -317,8 +381,8 @@ async function sincronizarCatalogoCompleto() {
   const PAGINA = 1000;
   const ids = [];
   for (let desde = 0; ; desde += PAGINA) {
-    const { data } = await consultar(
-      sb().from('productos').select(COLUMNAS_CENTRAL).order('id').range(desde, desde + PAGINA - 1)
+    const { data } = await consultarProductos(
+      (columnas) => sb().from('productos').select(columnas).order('id').range(desde, desde + PAGINA - 1)
     );
     guardarLocal(data);
     for (const fila of data || []) ids.push(Number(fila.id));
@@ -337,8 +401,29 @@ async function sincronizarCatalogoCompleto() {
   return { productos: ids.length };
 }
 
+// Los cócteles que dio de alta la central (nombre y precio), para cobrarlos en la caja
+async function cocteles() {
+  if (modoCentral() && centralDisponible() && centralConCaja) {
+    try {
+      const { data } = await consultar(
+        sb().from('productos').select(columnasCentral()).eq('es_coctel', true).eq('activo', true).order('descripcion')
+      );
+      guardarLocal(data);
+      return (data || []).map(normalizar);
+    } catch (error) {
+      if (faltaColumnaCaja(error)) centralConCaja = false;
+      else if (!error.sinConexion) throw error;
+    }
+  }
+  return db
+    .prepare(`SELECT ${CAMPOS_LOCAL} FROM productos p WHERE p.es_coctel = 1 AND p.activo = 1 AND p.id <> 0 ORDER BY p.descripcion`)
+    .all()
+    .map(normalizar);
+}
+
 module.exports = {
   ID_ARTICULO_COMUN,
+  cocteles,
   normalizar,
   guardarLocal,
   buscar,

@@ -10,7 +10,8 @@
 // Como el resto de la función, no depende de Deno ni de Node: recibe el cliente de Supabase ya creado.
 
 export const ZONA_HORARIA = 'America/Mexico_City';
-export const PRODUCTOS_POR_DIA = 40;
+// El turno de la tarde del inventario empieza a esta hora si el jefe no pone otra
+export const HORA_TARDE = '14:00';
 export const DIAS_SIN_MOVIMIENTO = 60;
 
 const EPS = 0.005;
@@ -36,11 +37,12 @@ const esAdminCentral = (u) => Boolean(u) && u.rol === 'admin' && Number(u.es_cen
 const CLASES = [
   { clase: 'cancelacion', prefijos: ['Cancelación de la venta'] },
   { clase: 'apoyo', prefijos: ['Apoyo folio', 'Cancelación del apoyo'] },
-  { clase: 'conteo', prefijos: ['Conteo físico', 'Inventario del día'] },
+  { clase: 'conteo', prefijos: ['Conteo físico', 'Inventario del día', 'Inventario de la mañana', 'Inventario de la tarde', 'Inventario completo'] },
   { clase: 'recepcion', prefijos: ['Recepción de mercancía'] },
   { clase: 'alta', prefijos: ['Existencia inicial'] },
+  { clase: 'prestamo', prefijos: ['Préstamo P-', 'Devolución del préstamo P-'] },
 ];
-export const TIPOS_MOVIMIENTO = ['venta', 'entrada', 'salida', 'ajuste', 'apoyo', 'conteo', 'cancelacion', 'recepcion', 'alta'];
+export const TIPOS_MOVIMIENTO = ['venta', 'entrada', 'salida', 'ajuste', 'apoyo', 'conteo', 'cancelacion', 'recepcion', 'alta', 'prestamo'];
 
 export function claseDeMovimiento(tipo, nota) {
   if (tipo === 'venta') return 'venta';
@@ -75,18 +77,25 @@ export const TIPOS_CAMBIO = {
   apoyo_cancelado: 'Apoyo cancelado',
   cotizacion_creada: 'Cotización enviada',
   cotizacion_cancelada: 'Cotización cancelada',
-  conteo_terminado: 'Inventario del día terminado',
-  conteo_autorizado: 'Ajustes del inventario del día',
-  conteo_config: 'Productos por día del inventario',
+  conteo_terminado: 'Inventario terminado',
+  conteo_autorizado: 'Ajustes del inventario',
+  conteo_config: 'Turnos del inventario',
+  conteo_lista: 'Lista del inventario',
+  conteo_completo: 'Inventario completo',
   conteo_importante: 'Producto importante para contar',
+  existencia_carga: 'Carga de existencias',
+  inventario_revisado: 'Revisión semanal del inventario',
+  precio_en_venta: 'Precio cambiado en una venta',
+  prestamo: 'Préstamo a otra farmacia',
+  prestamo_devuelto: 'Devolución de un préstamo',
 };
 export const GRUPOS_CAMBIO = {
   productos: ['producto_alta', 'producto_cambio', 'producto_baja'],
   usuarios: ['usuario_alta', 'usuario_cambio', 'usuario_baja', 'sucursal_alta', 'sucursal_cambio', 'sucursal_baja'],
-  caja: ['venta_cancelada', 'corte', 'efectivo_salida', 'efectivo_entrada'],
-  apoyos: ['apoyo_enviado', 'apoyo_recibido', 'apoyo_cancelado'],
+  caja: ['venta_cancelada', 'corte', 'efectivo_salida', 'efectivo_entrada', 'precio_en_venta'],
+  apoyos: ['apoyo_enviado', 'apoyo_recibido', 'apoyo_cancelado', 'prestamo', 'prestamo_devuelto'],
   cotizaciones: ['cotizacion_creada', 'cotizacion_cancelada'],
-  conteos: ['conteo_terminado', 'conteo_autorizado', 'conteo_config', 'conteo_importante'],
+  conteos: ['conteo_terminado', 'conteo_autorizado', 'conteo_config', 'conteo_lista', 'conteo_completo', 'conteo_importante', 'existencia_carga', 'inventario_revisado'],
 };
 
 // "precio $28.00 → $30.00, costo $14.50 → $15.00": para el registro de cambios
@@ -98,23 +107,43 @@ export function describirCambiosProducto(antes, despues) {
     ['precio_costo', 'costo', dinero, true],
     ['precio_mayoreo', 'mayoreo', dinero, true],
     ['cantidad_mayoreo', 'mayoreo desde', (n) => (n == null ? 'sin cantidad' : `${n} pzas`), true],
+    ['precio_caja', 'precio de caja', (n) => (n == null ? 'no se vende por caja' : `$${Number(n).toFixed(2)}`), true],
+    ['piezas_caja', 'piezas por caja', (n) => (n == null ? 'sin caja' : `${n}`), true],
+    ['es_coctel', 'cóctel', (n) => (Number(n) ? 'sí' : 'no'), 'si-no'],
     ['descripcion', 'descripción', (s) => `"${s}"`, false],
     ['codigo_barras', 'código', (s) => s || 'sin código', false],
     ['departamento', 'departamento', (s) => s || 'sin departamento', false],
   ];
   for (const [campo, nombre, formato, numerico] of campos) {
+    // Solo lo que se está guardando (el celular no manda la caja ni el cóctel)
+    if (!(campo in despues)) continue;
     const a = antes[campo] ?? null;
     const d = despues[campo] ?? null;
-    const iguales = numerico
-      ? (a == null) === (d == null) && Math.abs((Number(a) || 0) - (Number(d) || 0)) < 0.005
-      : String(a ?? '') === String(d ?? '');
+    const iguales = numerico === 'si-no'
+      ? Boolean(Number(a)) === Boolean(Number(d))
+      : numerico
+        ? (a == null) === (d == null) && Math.abs((Number(a) || 0) - (Number(d) || 0)) < 0.005
+        : String(a ?? '') === String(d ?? '');
     if (!iguales) lista.push({ campo, antes: a, despues: d, texto: `${nombre} ${formato(a)} → ${formato(d)}` });
   }
-  return { lista, texto: lista.map((c) => c.texto).join(', '), precio: lista.some((c) => c.campo === 'precio_venta') };
+  return {
+    lista,
+    texto: lista.map((c) => c.texto).join(', '),
+    precio: lista.some((c) => c.campo === 'precio_venta' || c.campo === 'precio_caja'),
+  };
 }
 
 // ---------- Inventario del día ----------
+export const TURNOS = {
+  dia: 'Inventario del día',
+  manana: 'Inventario de la mañana',
+  tarde: 'Inventario de la tarde',
+  completo: 'Inventario completo',
+};
 export const RAZONES_CONTEO = {
+  lista: 'De la lista del inventario',
+  completo: 'Inventario completo',
+  // De la lista automática anterior (inventarios viejos)
   negativo: 'Tenía existencia negativa',
   diferencia: 'No cuadró en su último conteo',
   importante: 'Marcado como importante',
@@ -550,10 +579,31 @@ export function crearSupervision({
     };
   }
 
-  // ---------- Inventario del día ----------
-  async function cuotaDe(sucursalId) {
-    const { data } = await consultar(sb().from('conteo_config').select('productos_por_dia').eq('sucursal_id', sucursalId).limit(1));
-    return data && data[0] ? Number(data[0].productos_por_dia) || PRODUCTOS_POR_DIA : PRODUCTOS_POR_DIA;
+  // ---------- Inventario: la lista del jefe, dos turnos al día y el inventario completo ----------
+  // Cada farmacia tiene su lista de productos (la arma el jefe). Cada día se cuenta dos veces: en el
+  // turno de la mañana y en el de la tarde (empieza a la hora que diga el jefe, 14:00 si no se cambia).
+  // Aparte, el jefe puede empezar un inventario completo (todo o un departamento) que queda abierto
+  // hasta que se termina.
+  const formatoHora = new Intl.DateTimeFormat('en-GB', { timeZone: zona, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  const horaDe = (instante = new Date()) => formatoHora.format(instante).replace(/^24/, '00');
+  const horaValida = (texto) => {
+    const m = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(String(texto || '').trim());
+    return m ? `${m[1].padStart(2, '0')}:${m[2]}` : null;
+  };
+  const turnoDe = (c) => c.turno || 'dia';
+  const tituloConteo = (c) => `${TURNOS[turnoDe(c)] || TURNOS.dia}${c.departamento ? ` · ${c.departamento}` : ''}`;
+  const porDepartamento = (a, b) => (a.departamento || '￿').localeCompare(b.departamento || '￿', 'es')
+    || String(a.descripcion || '').localeCompare(String(b.descripcion || ''), 'es');
+
+  async function configDe(sucursalId) {
+    const { data } = await consultar(sb().from('conteo_config').select('hora_tarde').eq('sucursal_id', Number(sucursalId)).limit(1));
+    return { hora_tarde: (data && data[0] && horaValida(data[0].hora_tarde)) || HORA_TARDE };
+  }
+
+  async function sucursalValida(id) {
+    const s = (await sucursalesActivas()).find((x) => x.id === Number(id));
+    if (!s) throw new ErrorApp('Sucursal no válida');
+    return s;
   }
 
   async function sucursalDelConteo(usuario, pedida) {
@@ -576,85 +626,52 @@ export function crearSupervision({
     return todas(() => sb().from('conteo_detalle').select('*').eq('conteo_id', Number(conteoId)).order('orden').order('id'));
   }
 
-  // La lista del día. Prioridad: existencia negativa, lo que no cuadró la última vez y lo marcado
-  // como importante (entre los tres, a lo mucho 3/4 de la lista); el resto, mitad lo que se movió
-  // desde su último conteo y mitad lo que lleva más tiempo sin contarse, para que todo pase por turno.
-  async function armarLista(sucursalId, cuota, hoy) {
-    const [productos, filas, ultimos, importantes] = await Promise.all([
-      todas(() => sb().from('productos').select('id,codigo_barras,descripcion,departamento,precio_costo').eq('activo', true).eq('usa_inventario', true).order('id')),
-      todas(() => sb().from('inventario').select('producto_id,existencia,updated_at').eq('sucursal_id', sucursalId).order('id')),
-      todas(() => sb().from('conteo_ultimos').select('producto_id,contado,diferencia').eq('sucursal_id', sucursalId).order('producto_id')),
-      todas(() => sb().from('conteo_importantes').select('producto_id').order('producto_id')),
-    ]);
-    const porId = new Map(productos.filter((p) => Number(p.id) > 0).map((p) => [Number(p.id), p]));
-    const ultimo = new Map(ultimos.map((u) => [Number(u.producto_id), u]));
-    const marcados = new Set(importantes.map((i) => Number(i.producto_id)));
-    const inicioHoy = new Date(inicioDelDia(hoy)).getTime();
-    const ahora = Date.now();
-
-    const candidatos = [];
-    for (const f of filas) {
-      const p = porId.get(Number(f.producto_id));
-      if (!p) continue;
-      const u = ultimo.get(Number(p.id));
-      const contadoMs = u ? new Date(u.contado).getTime() : null;
-      if (contadoMs !== null && contadoMs >= inicioHoy) continue; // ya se contó hoy
-      const movidoMs = f.updated_at ? new Date(f.updated_at).getTime() : 0;
-      const existencia = r2(f.existencia);
-      candidatos.push({
-        producto: p,
-        existencia,
-        contadoMs,
-        diferencia: u ? r2(u.diferencia) : 0,
-        movido: contadoMs === null ? ahora - movidoMs < 30 * DIA_MS : movidoMs > contadoMs,
-        valor: Math.max(0, existencia) * (Number(p.precio_costo) || 0),
-        importante: marcados.has(Number(p.id)),
-      });
+  // Los productos de la lista de una farmacia (activos y que usan inventario)
+  async function productosDeLista(sucursalId) {
+    const filas = await todas(() => sb().from('conteo_lista').select('producto_id').eq('sucursal_id', Number(sucursalId)).order('producto_id'));
+    const productos = [];
+    for (const lote of lotes(idsValidos(filas.map((f) => f.producto_id)), 150)) {
+      const { data } = await consultar(sb().from('productos').select('id,codigo_barras,descripcion,departamento,precio_costo,activo,usa_inventario,piezas_caja').in('id', lote));
+      productos.push(...(data || []).filter((p) => p.activo !== false && p.usa_inventario !== false));
     }
+    return productos.sort(porDepartamento);
+  }
 
-    const elegidos = new Map();
-    const tomar = (lista, razon, maximo = Infinity) => {
-      let tomados = 0;
-      for (const c of lista) {
-        if (elegidos.size >= cuota || tomados >= maximo) break;
-        const id = Number(c.producto.id);
-        if (elegidos.has(id)) continue;
-        elegidos.set(id, { ...c, razon: typeof razon === 'function' ? razon(c) : razon });
-        tomados += 1;
-      }
-      return tomados;
-    };
-    // Primero lo que lleva más tiempo sin contarse (lo nunca contado antes que todo); a igual tiempo, lo de más valor
-    const porAntiguedad = (a, b) => (a.contadoMs ?? -Infinity) - (b.contadoMs ?? -Infinity) || b.valor - a.valor;
-    const hace7Dias = ahora - 7 * DIA_MS;
+  async function cuantosEnLista(sucursalId) {
+    const { count } = await consultar(sb().from('conteo_lista').select('producto_id', { count: 'exact', head: true }).eq('sucursal_id', Number(sucursalId)));
+    return Number(count) || 0;
+  }
 
-    let cupo = Math.ceil(cuota * 0.75);
-    cupo -= tomar(candidatos.filter((c) => c.existencia < -EPS).sort(porAntiguedad), 'negativo', cupo);
-    cupo -= tomar(candidatos.filter((c) => Math.abs(c.diferencia) > EPS).sort(porAntiguedad), 'diferencia', cupo);
-    tomar(
-      candidatos.filter((c) => c.importante && (c.contadoMs === null || c.contadoMs < hace7Dias)).sort(porAntiguedad),
-      'importante',
-      Math.min(cupo, Math.ceil(cuota / 2))
-    );
-    const movidos = candidatos.filter((c) => c.movido).sort(porAntiguedad);
-    tomar(movidos, (c) => (c.contadoMs === null ? 'nunca' : 'movimiento'), Math.ceil((cuota - elegidos.size) / 2));
-    tomar([...candidatos].sort(porAntiguedad), (c) => (c.contadoMs === null ? 'nunca' : 'turno'));
+  // Todos los productos que usan inventario (o los de un departamento), para el inventario completo
+  async function productosParaCompleto(departamento = '') {
+    const filas = await todas(() => {
+      let consulta = sb().from('productos').select('id,codigo_barras,descripcion,departamento,precio_costo,piezas_caja').eq('activo', true).eq('usa_inventario', true);
+      if (departamento) consulta = consulta.eq('departamento', departamento);
+      return consulta.order('id');
+    });
+    return filas.filter((p) => Number(p.id) > 0).sort(porDepartamento);
+  }
 
-    // Por departamento y nombre, para recorrer los estantes en orden
-    return [...elegidos.values()]
-      .sort((a, b) => (a.producto.departamento || '￿').localeCompare(b.producto.departamento || '￿', 'es')
-        || a.producto.descripcion.localeCompare(b.producto.descripcion, 'es'))
-      .map((c, i) => ({
-        sucursal_id: sucursalId,
-        producto_id: Number(c.producto.id),
-        codigo_barras: c.producto.codigo_barras || null,
-        descripcion: c.producto.descripcion,
-        departamento: c.producto.departamento || '',
-        orden: i + 1,
-        razon: c.razon,
-        costo: r2(c.producto.precio_costo),
-        decision: 'pendiente',
-      }));
+  // Por departamento y nombre, para recorrer los estantes en orden
+  function renglonesPara(sucursalId, productos, razon) {
+    return productos.map((p, i) => ({
+      sucursal_id: Number(sucursalId),
+      producto_id: Number(p.id),
+      codigo_barras: p.codigo_barras || null,
+      descripcion: p.descripcion,
+      departamento: p.departamento || '',
+      orden: i + 1,
+      razon,
+      costo: r2(p.precio_costo),
+      decision: 'pendiente',
+      piezas_caja: Number(p.piezas_caja) >= 2 ? Number(p.piezas_caja) : null,
+    }));
+  }
+
+  async function guardarRenglones(conteoId, renglones) {
+    for (const lote of lotes(renglones, 500)) {
+      await consultar(sb().from('conteo_detalle').upsert(lote.map((r) => ({ ...r, conteo_id: Number(conteoId) })), { onConflict: 'conteo_id,producto_id', ignoreDuplicates: true }));
+    }
   }
 
   // Estado de un renglón para quien cuenta (sin la cantidad del sistema)
@@ -681,6 +698,7 @@ export function crearSupervision({
       sentido: final ? (Number(r.diferencia) < 0 ? 'faltan' : 'sobran') : null,
       motivo: r.motivo || '',
       decision: r.decision,
+      piezas_caja: Number(r.piezas_caja) >= 2 ? Number(r.piezas_caja) : null,
     };
   }
 
@@ -708,8 +726,12 @@ export function crearSupervision({
     const contados = renglones.filter((r) => r.contado != null);
     const conDiferencia = contados.filter((r) => r.decision !== 'cuadra' && Math.abs(Number(r.diferencia) || 0) > EPS);
     const valor = (r) => r2((Number(r.diferencia) || 0) * (Number(r.costo) || 0));
+    const piezas = (signo) => r2(Math.abs(conDiferencia.filter((r) => Math.sign(Number(r.diferencia)) === signo)
+      .reduce((t, r) => t + (Number(r.diferencia) || 0), 0)));
     return {
       productos: renglones.length,
+      piezas_faltan: piezas(-1),
+      piezas_sobran: piezas(1),
       contados: contados.length,
       sin_diferencia: contados.filter((r) => r.decision === 'cuadra').length,
       con_diferencia: conDiferencia.length,
@@ -727,6 +749,9 @@ export function crearSupervision({
       sucursal_id: Number(c.sucursal_id),
       sucursal: n.sucursal(c.sucursal_id),
       fecha: c.fecha,
+      turno: turnoDe(c),
+      departamento: c.departamento || '',
+      titulo: tituloConteo(c),
       estado: c.estado,
       nota: c.nota || '',
       creado: c.creado,
@@ -751,74 +776,170 @@ export function crearSupervision({
     return conteoParaMostrar(c, filas, n, { completo });
   }
 
+  // Resumen sin renglones (para las tarjetas): cuántos lleva contados
+  async function resumenConteo(c) {
+    const filas = await todas(() => sb().from('conteo_detalle').select('decision,contado,diferencia,costo').eq('conteo_id', Number(c.id)).order('id'));
+    const n = await nombres({ sucursales: [c.sucursal_id] });
+    return conteoParaMostrar(c, filas, n, { conRenglones: false });
+  }
+
   // Termina un conteo: lo que no se contó queda como "no contado" y, si hay diferencias, pasa a autorizar
-  async function finalizar(c, usuario, { automatico = false } = {}) {
+  // Lo que no cuadró se ajusta al terminar, por la diferencia (se respetan las ventas hechas después de
+  // contar): así el siguiente turno empieza con lo que de verdad hay y no carga con lo que faltó antes.
+  // No hace falta que el jefe lo autorice: lo revisa en la revisión semanal. El ajuste queda a nombre
+  // de quien contó.
+  async function ajustarDiferencias(c, filas) {
+    if (!filas.length) return { aplicados: [], fallidos: [] };
+    const { data } = await consultar(
+      sb().from('conteo_detalle').update({ decision: 'aprobado', decidido_por: null, decidido: new Date().toISOString() })
+        .in('id', filas.map((r) => Number(r.id))).eq('conteo_id', Number(c.id)).eq('decision', 'pendiente').select('*')
+    );
+    const dia = new Date(`${c.fecha}T12:00:00Z`).toLocaleDateString('es-MX', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+    const porQuien = new Map();
+    for (const r of data || []) {
+      const quien = Number(r.contado_por) || 0;
+      if (!porQuien.has(quien)) porQuien.set(quien, []);
+      porQuien.get(quien).push(r);
+    }
+    const aplicados = [];
+    const fallidos = [];
+    for (const [quien, grupo] of porQuien) {
+      const movimientos = grupo.map((r) => ({
+        producto_id: Number(r.producto_id),
+        sucursal_id: Number(c.sucursal_id),
+        tipo: Number(r.diferencia) > 0 ? 'entrada' : 'salida',
+        cantidad: Math.abs(r2(r.diferencia)),
+        validar: false,
+        descripcion: r.descripcion,
+        nota: `${TURNOS[turnoDe(c)] || TURNOS.dia} ${dia}: el sistema tenía ${r2(r.existencia_sistema)} y se contaron ${r2(r.contado)}`
+          + `${r.motivo ? ` (${r.motivo})` : Number(r.reconteos) ? '' : ' (sin recontar)'}`,
+      }));
+      try {
+        await aplicarMovimientos(movimientos, quien || null);
+        aplicados.push(...grupo);
+      } catch (error) {
+        registrar('No se pudo ajustar el inventario del conteo:', error.message);
+        fallidos.push(...grupo);
+      }
+    }
+    if (fallidos.length) {
+      await consultar(
+        sb().from('conteo_detalle').update({ decision: 'pendiente', decidido_por: null, decidido: null }).in('id', fallidos.map((r) => Number(r.id)))
+      ).catch(() => {});
+    }
+    return { aplicados, fallidos };
+  }
+
+  async function finalizar(c, usuario, { automatico = false, porTurno = false } = {}) {
     const ahora = new Date().toISOString();
     await consultar(
       sb().from('conteo_detalle').update({ decision: 'no_contado' }).eq('conteo_id', Number(c.id)).is('contado', null).eq('decision', 'pendiente')
     );
     const renglones = await renglonesDe(c.id);
     const t = totales(renglones);
-    const estado = t.por_autorizar > 0 ? 'por_autorizar' : 'cerrado';
     const cambios = {
-      estado,
+      estado: 'cerrado',
       productos: t.productos,
       contados: t.contados,
       sin_diferencia: t.sin_diferencia,
       terminado: ahora,
       terminado_por: usuario ? Number(usuario.id) : null,
+      cerrado: ahora,
       updated_at: ahora,
     };
-    if (automatico) cambios.nota = t.contados ? 'Se cerró solo al día siguiente' : 'Nadie lo contó';
-    if (estado === 'cerrado') cambios.cerrado = ahora;
+    if (automatico) {
+      cambios.nota = !t.contados ? 'Nadie lo contó' : porTurno ? 'Se cerró solo al empezar el turno de la tarde' : 'Se cerró solo al día siguiente';
+    }
     const { data } = await consultar(sb().from('conteos').update(cambios).eq('id', Number(c.id)).eq('estado', 'abierto').select('*'));
     if (!data || !data.length) return null; // alguien más lo terminó al mismo tiempo
+    let final = data[0];
+    const conDiferencia = renglones.filter((r) => r.contado != null && r.decision === 'pendiente' && Math.abs(Number(r.diferencia) || 0) > EPS);
+    const { fallidos } = await ajustarDiferencias(c, conDiferencia);
+    if (fallidos.length) {
+      // No se pudo ajustar (por ejemplo, se fue el internet a la mitad): el jefe lo aplica desde Inventarios
+      const { data: pendiente } = await consultar(
+        sb().from('conteos').update({ estado: 'por_autorizar', cerrado: null, updated_at: new Date().toISOString() }).eq('id', Number(c.id)).select('*')
+      ).catch(() => ({ data: null }));
+      if (pendiente && pendiente[0]) final = pendiente[0];
+    }
     if (t.contados) {
       const n = await nombres({ sucursales: [c.sucursal_id] });
+      const diferencias = conDiferencia.slice(0, 30).map((r) => ({
+        producto: r.descripcion, sistema: r2(r.existencia_sistema), contado: r2(r.contado), diferencia: r2(r.diferencia), motivo: r.motivo || '',
+      }));
       await anotarCambio({
         usuario,
         sucursal_id: c.sucursal_id,
         tipo: 'conteo_terminado',
-        descripcion: `${n.sucursal(c.sucursal_id)}: ${t.sin_diferencia} de ${t.contados} productos cuadraron`
-          + `${t.con_diferencia ? `; ${t.con_diferencia} con diferencia (faltan $${t.faltante.toFixed(2)}, sobran $${t.sobrante.toFixed(2)})` : ''}`
+        descripcion: `${n.sucursal(c.sucursal_id)} (${tituloConteo(c).toLowerCase()}): ${t.sin_diferencia} de ${t.contados} productos cuadraron`
+          + `${t.piezas_faltan ? `; faltan ${t.piezas_faltan} pieza(s) ($${t.faltante.toFixed(2)})` : ''}`
+          + `${t.piezas_sobran ? `; sobran ${t.piezas_sobran} pieza(s) ($${t.sobrante.toFixed(2)})` : ''}`
+          + `${t.con_diferencia ? (fallidos.length ? '; falta ajustar la existencia' : '; se ajustó la existencia') : ''}`
           + `${t.productos > t.contados ? `; ${t.productos - t.contados} sin contar` : ''}${automatico ? ' (se cerró solo)' : ''}`,
-        detalle: { conteo_id: Number(c.id), fecha: c.fecha, ...t },
-        alerta: t.faltante >= 200,
+        detalle: { conteo_id: Number(c.id), fecha: c.fecha, turno: turnoDe(c), ...t, diferencias },
+        // El jefe se entera el mismo día si faltó algo
+        alerta: t.piezas_faltan > EPS || fallidos.length > 0,
       });
     }
-    return data[0];
+    return final;
   }
 
-  // Los conteos de días anteriores que se quedaron abiertos se cierran solos
-  async function cerrarAnteriores(sucursalId, hoy) {
+  // Lo que se quedó abierto se cierra solo: los turnos de días anteriores y, al empezar la tarde, el de
+  // la mañana. El inventario completo no: sigue abierto hasta que se termina o se cancela.
+  async function cerrarAnteriores(sucursalId, hoy, turno) {
     const { data } = await consultar(
-      sb().from('conteos').select('*').eq('sucursal_id', sucursalId).eq('estado', 'abierto').lt('fecha', hoy).limit(20)
+      sb().from('conteos').select('*').eq('sucursal_id', sucursalId).eq('estado', 'abierto').lte('fecha', hoy).limit(40)
     );
-    for (const c of data || []) await finalizar(c, null, { automatico: true });
+    for (const c of data || []) {
+      const t = turnoDe(c);
+      if (t === 'completo') continue;
+      const deLaManana = c.fecha === hoy && t === 'manana' && turno === 'tarde';
+      if (c.fecha < hoy || deLaManana) await finalizar(c, null, { automatico: true, porTurno: deLaManana });
+    }
   }
 
-  // La lista de hoy de la sucursal; si todavía no existe, se arma. Solo una computadora o celular la
-  // arma a la vez: se "aparta" poniendo productos = -1 mientras se elige.
+  async function completoAbierto(sucursalId) {
+    const { data } = await consultar(
+      sb().from('conteos').select('*').eq('sucursal_id', Number(sucursalId)).eq('turno', 'completo').eq('estado', 'abierto')
+        .order('id', { ascending: false }).limit(1)
+    );
+    return data && data[0] ? data[0] : null;
+  }
+
+  // El conteo del turno que corre (mañana o tarde) de la sucursal; si todavía no existe, se arma con
+  // los productos de su lista. Solo una computadora o celular lo arma a la vez: se "aparta" poniendo
+  // productos = -1 mientras se arma. También dice si hay un inventario completo abierto.
   async function conteoDeHoy(usuario, { sucursal_id } = {}) {
     const sucursalId = await sucursalDelConteo(usuario, sucursal_id);
     const hoy = diaDe();
-    await cerrarAnteriores(sucursalId, hoy);
+    const { hora_tarde } = await configDe(sucursalId);
+    const turno = horaDe() < hora_tarde ? 'manana' : 'tarde';
+    await cerrarAnteriores(sucursalId, hoy, turno);
+    const abierto = await completoAbierto(sucursalId);
+    const completo = abierto ? await resumenConteo(abierto) : null;
     const buscar = async () => {
-      const { data } = await consultar(sb().from('conteos').select('*').eq('sucursal_id', sucursalId).eq('fecha', hoy).limit(1));
+      const { data } = await consultar(sb().from('conteos').select('*').eq('sucursal_id', sucursalId).eq('fecha', hoy).eq('turno', turno).limit(1));
       return data && data[0] ? data[0] : null;
     };
     let c = await buscar();
     if (!c) {
+      if (!(await cuantosEnLista(sucursalId))) {
+        const n = await nombres({ sucursales: [sucursalId] });
+        return {
+          sin_lista: true, sucursal_id: sucursalId, sucursal: n.sucursal(sucursalId), fecha: hoy, turno,
+          titulo: TURNOS[turno], hora_tarde, productos: 0, contados: 0, renglones: [], completo,
+        };
+      }
       try {
-        await consultar(sb().from('conteos').insert({ sucursal_id: sucursalId, fecha: hoy, estado: 'abierto', productos: 0 }).select('id'));
+        await consultar(sb().from('conteos').insert({ sucursal_id: sucursalId, fecha: hoy, turno, estado: 'abierto', productos: 0 }).select('id'));
       } catch (error) {
-        if (error.codigo !== '23505') throw error; // otro la creó al mismo tiempo
+        if (error.codigo !== '23505') throw error; // otro lo creó al mismo tiempo
       }
       c = await buscar();
     }
     for (let intento = 0; intento < 4 && c.estado === 'abierto' && Number(c.productos) <= 0; intento += 1) {
       const libre = Number(c.productos) === 0;
-      // Si quien la apartó se quedó a medias (se fue el internet), después de un minuto otro la arma
+      // Si quien lo apartó se quedó a medias (se fue el internet), después de un minuto otro lo arma
       const atorada = !libre && new Date(c.updated_at).getTime() < Date.now() - 60000;
       if (libre || atorada) {
         let apartar = sb().from('conteos').update({ productos: -1, updated_at: new Date().toISOString() }).eq('id', Number(c.id));
@@ -827,10 +948,8 @@ export function crearSupervision({
         if (apartado && apartado.length) {
           let lista = [];
           try {
-            lista = await armarLista(sucursalId, await cuotaDe(sucursalId), hoy);
-            if (lista.length) {
-              await consultar(sb().from('conteo_detalle').upsert(lista.map((r) => ({ ...r, conteo_id: Number(c.id) })), { onConflict: 'conteo_id,producto_id', ignoreDuplicates: true }));
-            }
+            lista = renglonesPara(sucursalId, await productosDeLista(sucursalId), 'lista');
+            await guardarRenglones(c.id, lista);
           } finally {
             await consultar(sb().from('conteos').update({ productos: lista.length, updated_at: new Date().toISOString() }).eq('id', Number(c.id)));
           }
@@ -838,10 +957,10 @@ export function crearSupervision({
           break;
         }
       }
-      await esperar(1200); // otro la está armando
+      await esperar(1200); // otro lo está armando
       c = await buscar();
     }
-    return mostrarConteo(c, usuario);
+    return { ...(await mostrarConteo(c, usuario)), hora_tarde, completo };
   }
 
   async function conteoEditable(usuario, conteoId) {
@@ -854,7 +973,7 @@ export function crearSupervision({
 
   async function renglonDe(c, renglonId) {
     const { data } = await consultar(sb().from('conteo_detalle').select('*').eq('id', Number(renglonId)).eq('conteo_id', Number(c.id)).limit(1));
-    if (!data || !data.length) throw new ErrorApp('Ese producto no está en la lista de hoy', { status: 404 });
+    if (!data || !data.length) throw new ErrorApp('Ese producto no está en esta lista', { status: 404 });
     return data[0];
   }
 
@@ -924,7 +1043,7 @@ export function crearSupervision({
     const sinMotivo = estados.filter((e) => e === 'falta_motivo').length;
     if (sinMotivo) throw new ErrorApp(`Falta anotar el motivo de ${sinMotivo} producto(s) con diferencia`, { codigo: 'FALTA_MOTIVO' });
     const porContar = estados.filter((e) => e === 'por_contar').length;
-    if (!renglones.length) throw new ErrorApp('La lista de hoy no tiene productos');
+    if (!renglones.length) throw new ErrorApp('Esta lista no tiene productos');
     if (porContar === renglones.length) throw new ErrorApp('Todavía no has contado ningún producto');
     if (porContar && !dejar_pendientes) {
       throw new ErrorApp(`Faltan ${porContar} producto(s) por contar`, { status: 409, codigo: 'FALTAN_POR_CONTAR', datos: { por_contar: porContar } });
@@ -938,7 +1057,8 @@ export function crearSupervision({
     let consulta = sb().from('conteos').select('*');
     if (!jefe) consulta = consulta.eq('sucursal_id', Number(usuario.sucursal_id));
     else if (Number(filtros.sucursal_id)) consulta = consulta.eq('sucursal_id', Number(filtros.sucursal_id));
-    if (['abierto', 'por_autorizar', 'cerrado'].includes(filtros.estado)) consulta = consulta.eq('estado', filtros.estado);
+    if (['abierto', 'por_autorizar', 'cerrado', 'cancelado'].includes(filtros.estado)) consulta = consulta.eq('estado', filtros.estado);
+    if (Object.keys(TURNOS).includes(filtros.turno)) consulta = consulta.eq('turno', filtros.turno);
     const limite = Math.min(Math.max(Number(filtros.limite) || 30, 1), 60);
     const { data } = await consultar(consulta.gt('productos', 0).order('fecha', { ascending: false }).order('id', { ascending: false }).limit(limite));
     const conteos = data || [];
@@ -1002,7 +1122,7 @@ export function crearSupervision({
         cantidad: Math.abs(r2(r.diferencia)),
         validar: false,
         descripcion: r.descripcion,
-        nota: `Inventario del día ${dia}: el sistema tenía ${r2(r.existencia_sistema)} y se contaron ${r2(r.contado)}${r.motivo ? ` (${r.motivo})` : ''}`,
+        nota: `${TURNOS[turnoDe(c)] || TURNOS.dia} ${dia}: el sistema tenía ${r2(r.existencia_sistema)} y se contaron ${r2(r.contado)}${r.motivo ? ` (${r.motivo})` : ''}`,
       }));
       if (movimientos.length) await aplicarMovimientos(movimientos, Number(usuario.id));
     } catch (error) {
@@ -1024,7 +1144,7 @@ export function crearSupervision({
       usuario,
       sucursal_id: c.sucursal_id,
       tipo: 'conteo_autorizado',
-      descripcion: `${n.sucursal(c.sucursal_id)}, inventario del ${c.fecha}: ${aprobados.length} ajuste(s) aprobado(s) ($${valor(aprobados).toFixed(2)})`
+      descripcion: `${n.sucursal(c.sucursal_id)}, ${tituloConteo(c).toLowerCase()} del ${c.fecha}: ${aprobados.length} ajuste(s) aprobado(s) ($${valor(aprobados).toFixed(2)})`
         + `${rechazados.length ? ` y ${rechazados.length} rechazado(s)` : ''}`,
       detalle: {
         conteo_id: Number(c.id),
@@ -1035,90 +1155,455 @@ export function crearSupervision({
     return mostrarConteo(await conteoPorId(c.id), usuario, { renglones: restantes });
   }
 
+  // ---------- Revisión semanal del inventario (jefe) ----------
+  // Como la hoja de Excel de antes: los productos que se contaron en la semana en renglones y cada
+  // conteo (día y turno) en columnas, con lo que se contó y si cuadró. Cada conteo revisa lo que pasó
+  // desde el conteo anterior de esa farmacia: dice quién contó y quién cobró en ese tiempo.
+  const lunesDe = (dia) => sumarDias(dia, -((new Date(`${dia}T12:00:00Z`).getUTCDay() + 6) % 7));
+  const detalleDe = (f) => {
+    if (!f || f.detalle == null) return {};
+    if (typeof f.detalle !== 'string') return f.detalle;
+    try { return JSON.parse(f.detalle); } catch { return {}; }
+  };
+
+  function estadoCelda(r) {
+    if (r.contado == null) return 'no_contado';
+    if (r.decision === 'cuadra' || Math.abs(Number(r.diferencia) || 0) < EPS) return 'cuadra';
+    return Number(r.diferencia) < 0 ? 'faltan' : 'sobran';
+  }
+
+  async function revisionDeSemana(sucursalId, lunes) {
+    const { data } = await consultar(
+      sb().from('bitacora').select('*').eq('tipo', 'inventario_revisado').eq('sucursal_id', Number(sucursalId))
+        .gte('fecha', inicioDelDia(lunes)).order('fecha', { ascending: false }).limit(50)
+    );
+    return (data || []).find((f) => detalleDe(f).semana === lunes) || null;
+  }
+
+  async function semana(usuario, { sucursal_id, desde } = {}) {
+    soloJefe(usuario);
+    const sucursales = await sucursalesActivas();
+    const sucursal = Number(sucursal_id) ? await sucursalValida(sucursal_id) : sucursales[0];
+    if (!sucursal) throw new ErrorApp('No hay sucursales');
+    const hoy = diaDe();
+    const lunes = lunesDe(diaValido(desde) || hoy);
+    const domingo = sumarDias(lunes, 6);
+    const { hora_tarde } = await configDe(sucursal.id);
+    const [{ data: deLaSemana }, { data: anteriores }, revision] = await Promise.all([
+      consultar(sb().from('conteos').select('*').eq('sucursal_id', sucursal.id).gte('fecha', lunes).lte('fecha', domingo)
+        .gt('productos', 0).neq('estado', 'cancelado').order('fecha').order('id')),
+      consultar(sb().from('conteos').select('*').eq('sucursal_id', sucursal.id).lt('fecha', lunes)
+        .gt('productos', 0).neq('estado', 'cancelado').order('fecha', { ascending: false }).order('id', { ascending: false }).limit(1)),
+      revisionDeSemana(sucursal.id, lunes),
+    ]);
+    const previo = (anteriores || [])[0] || null;
+    const todos = [...(previo ? [previo] : []), ...(deLaSemana || [])];
+    const renglones = [];
+    for (const lote of lotes(idsValidos(todos.map((c) => c.id)), 40)) {
+      renglones.push(...await todas(() => sb().from('conteo_detalle').select('*').in('conteo_id', lote).order('id')));
+    }
+    const porConteo = new Map(todos.map((c) => [Number(c.id), []]));
+    for (const r of renglones) porConteo.get(Number(r.conteo_id))?.push(r);
+    // Cuándo se contó: del primer al último producto contado
+    const tiempos = (c) => {
+      const fechas = (porConteo.get(Number(c.id)) || []).map((r) => r.contado_fecha).filter(Boolean).sort();
+      const respaldo = c.terminado || c.creado || inicioDelDia(c.fecha);
+      return { inicio: fechas[0] || respaldo, fin: fechas[fechas.length - 1] || respaldo };
+    };
+    const ordenados = (deLaSemana || []).map((c) => ({ c, ...tiempos(c) })).sort((a, b) => String(a.inicio).localeCompare(String(b.inicio)));
+    let anterior = previo ? tiempos(previo).fin : null;
+    for (const o of ordenados) {
+      o.desde = anterior;
+      anterior = o.fin;
+    }
+    // Quién cobró entre un conteo y el siguiente
+    let ventas = null;
+    if (ordenados.length) {
+      try {
+        const inicioVentas = ordenados[0].desde || inicioDelDia(lunes);
+        const finVentas = ordenados[ordenados.length - 1].inicio;
+        ventas = await todas(() => sb().from('ventas').select('usuario_id,fecha,cancelada').eq('sucursal_id', sucursal.id)
+          .gt('fecha', inicioVentas).lte('fecha', finVentas).order('fecha'));
+      } catch {
+        ventas = null; // sin las ventas en la central, la revisión sale igual sin "quién cobró"
+      }
+    }
+    const usuarios = [
+      ...renglones.map((r) => r.contado_por),
+      ...todos.map((c) => c.terminado_por),
+      ...(ventas || []).map((v) => v.usuario_id),
+      revision ? revision.usuario_id : null,
+    ];
+    const n = await nombres({ sucursales: [sucursal.id], usuarios });
+    const instante = (texto) => new Date(texto).getTime();
+    const conteos = ordenados.map(({ c, inicio, fin, desde: periodoDesde }) => {
+      const filas = porConteo.get(Number(c.id)) || [];
+      let cobraron = null;
+      if (ventas) {
+        const cuenta = new Map();
+        for (const v of ventas) {
+          if (v.cancelada === true || Number(v.cancelada) === 1) continue;
+          const t = instante(v.fecha);
+          if ((periodoDesde && t <= instante(periodoDesde)) || t > instante(inicio)) continue;
+          const quien = Number(v.usuario_id) || 0;
+          cuenta.set(quien, (cuenta.get(quien) || 0) + 1);
+        }
+        cobraron = [...cuenta].map(([id, num]) => ({ usuario: id ? n.usuario(id) : 'Sin usuario', ventas: num })).sort((a, b) => b.ventas - a.ventas);
+      }
+      return {
+        id: Number(c.id),
+        fecha: c.fecha,
+        turno: turnoDe(c),
+        titulo: tituloConteo(c),
+        estado: c.estado,
+        nota: c.nota || '',
+        inicio,
+        fin,
+        hora: horaDe(new Date(inicio)),
+        periodo_desde: periodoDesde,
+        contaron: [...new Set(filas.filter((r) => r.contado_por != null).map((r) => n.usuario(r.contado_por)))],
+        cobraron,
+        ...totales(filas),
+      };
+    });
+    // Los productos (renglones de la hoja), con lo que se contó en cada conteo
+    const productos = new Map();
+    for (const { c } of ordenados) {
+      for (const r of porConteo.get(Number(c.id)) || []) {
+        const id = Number(r.producto_id);
+        if (!productos.has(id)) {
+          productos.set(id, { producto_id: id, descripcion: r.descripcion, departamento: r.departamento || '', codigo_barras: r.codigo_barras || null, celdas: {} });
+        }
+        const p = productos.get(id);
+        const estado = estadoCelda(r);
+        p.celdas[Number(c.id)] = {
+          estado,
+          contado: r.contado == null ? null : r2(r.contado),
+          sistema: r.existencia_sistema == null ? null : r2(r.existencia_sistema),
+          diferencia: estado === 'faltan' || estado === 'sobran' ? r2(r.diferencia) : 0,
+          valor: estado === 'faltan' || estado === 'sobran' ? r2((Number(r.diferencia) || 0) * (Number(r.costo) || 0)) : 0,
+          primer_conteo: r.primer_conteo == null ? null : r2(r.primer_conteo),
+          motivo: r.motivo || '',
+          contador: r.contado_por == null ? '' : n.usuario(r.contado_por),
+          hora: r.contado_fecha ? horaDe(new Date(r.contado_fecha)) : '',
+        };
+      }
+    }
+    const filasProductos = [...productos.values()].sort(porDepartamento).map((p) => {
+      const celdas = Object.values(p.celdas);
+      return {
+        ...p,
+        diferencia_semana: r2(celdas.reduce((t, x) => t + (Number(x.diferencia) || 0), 0)),
+        valor_semana: r2(celdas.reduce((t, x) => t + (Number(x.valor) || 0), 0)),
+      };
+    });
+    // Los dos turnos de cada día: cuáles se hicieron y cuáles no
+    const ahora = horaDe();
+    const turnos = [];
+    for (let i = 0; i < 7; i += 1) {
+      const dia = sumarDias(lunes, i);
+      for (const turno of ['manana', 'tarde']) {
+        const hecho = conteos.find((x) => x.fecha === dia && x.turno === turno && x.contados > 0);
+        let estado = 'por_venir';
+        if (hecho) estado = 'hecho';
+        else if (dia < hoy || (dia === hoy && turno === 'manana' && ahora >= hora_tarde)) estado = 'no_se_hizo';
+        else if (dia === hoy) estado = 'pendiente';
+        turnos.push({ fecha: dia, turno, titulo: TURNOS[turno], estado, conteo_id: hecho ? hecho.id : null });
+      }
+    }
+    const suma = (campo) => r2(conteos.reduce((t, x) => t + (Number(x[campo]) || 0), 0));
+    return {
+      sucursal_id: sucursal.id,
+      sucursal: sucursal.nombre,
+      sucursales: sucursales.map((s) => ({ id: s.id, nombre: s.nombre })),
+      desde: lunes,
+      hasta: domingo,
+      hoy,
+      hora_tarde,
+      conteos,
+      productos: filasProductos,
+      turnos,
+      ventas_disponibles: Boolean(ventas) || !ordenados.length,
+      totales: {
+        conteos: conteos.length,
+        turnos_hechos: turnos.filter((t) => t.estado === 'hecho').length,
+        turnos_sin_hacer: turnos.filter((t) => t.estado === 'no_se_hizo').length,
+        piezas_faltan: suma('piezas_faltan'),
+        piezas_sobran: suma('piezas_sobran'),
+        faltante: suma('faltante'),
+        sobrante: suma('sobrante'),
+        con_diferencia: conteos.reduce((t, x) => t + x.con_diferencia, 0),
+        contados: conteos.reduce((t, x) => t + x.contados, 0),
+      },
+      revisada: revision ? { por: revision.usuario_id == null ? '' : n.usuario(revision.usuario_id), fecha: revision.fecha } : null,
+    };
+  }
+
+  // El jefe marca la semana como revisada (queda en el registro de cambios)
+  async function revisarSemana(usuario, { sucursal_id, semana: dia } = {}) {
+    soloJefe(usuario);
+    const hoja = await semana(usuario, { sucursal_id, desde: dia });
+    const t = hoja.totales;
+    const formato = (d) => new Date(`${d}T12:00:00Z`).toLocaleDateString('es-MX', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+    const fecha = new Date().toISOString();
+    await anotarCambio({
+      usuario,
+      sucursal_id: hoja.sucursal_id,
+      tipo: 'inventario_revisado',
+      descripcion: `${hoja.sucursal}: semana del ${formato(hoja.desde)} al ${formato(hoja.hasta)} revisada`
+        + ` (${t.turnos_hechos} de 14 turnos contados${t.turnos_sin_hacer ? `, ${t.turnos_sin_hacer} sin hacer` : ''}`
+        + `; faltaron ${t.piezas_faltan} pieza(s), $${t.faltante.toFixed(2)}; sobraron ${t.piezas_sobran}, $${t.sobrante.toFixed(2)})`,
+      detalle: { semana: hoja.desde, ...t },
+    });
+    return { ...hoja, revisada: { por: usuario.nombre || '', fecha } };
+  }
+
+  // ---------- Inventario completo (todo o un departamento) ----------
+  async function iniciarCompleto(usuario, { sucursal_id, departamento = '' } = {}) {
+    soloJefe(usuario, 'Solo el jefe empieza un inventario completo');
+    const sucursal = await sucursalValida(sucursal_id);
+    if (await completoAbierto(sucursal.id)) {
+      throw new ErrorApp('Ya hay un inventario completo abierto en esta sucursal: termínalo o cancélalo antes de empezar otro', { codigo: 'COMPLETO_ABIERTO' });
+    }
+    const depto = String(departamento || '').trim();
+    const productos = await productosParaCompleto(depto);
+    if (!productos.length) throw new ErrorApp(depto ? `El departamento "${depto}" no tiene productos que usen inventario` : 'No hay productos que usen inventario');
+    const ahora = () => new Date().toISOString();
+    const { data } = await consultar(sb().from('conteos').insert({
+      sucursal_id: sucursal.id, fecha: diaDe(), turno: 'completo', departamento: depto, estado: 'abierto', productos: -1,
+    }).select('*'));
+    const c = data[0];
+    try {
+      await guardarRenglones(c.id, renglonesPara(sucursal.id, productos, 'completo'));
+    } catch (error) {
+      await consultar(sb().from('conteos').update({ estado: 'cancelado', nota: 'No se pudo armar la lista', updated_at: ahora() }).eq('id', Number(c.id))).catch(() => {});
+      throw error;
+    }
+    await consultar(sb().from('conteos').update({ productos: productos.length, updated_at: ahora() }).eq('id', Number(c.id)));
+    await anotarCambio({
+      usuario, sucursal_id: sucursal.id, tipo: 'conteo_completo',
+      descripcion: `${sucursal.nombre}: empezó un inventario completo ${depto ? `del departamento ${depto}` : 'de todos los productos'} (${productos.length} productos)`,
+      detalle: { conteo_id: Number(c.id), departamento: depto, productos: productos.length },
+    });
+    return resumenConteo(await conteoPorId(c.id));
+  }
+
+  // El jefe cancela un inventario completo abierto (por ejemplo, si se empezó por error)
+  async function cancelarConteo(usuario, conteoId) {
+    soloJefe(usuario, 'Solo el jefe cancela un inventario completo');
+    const c = await conteoPorId(conteoId);
+    if (!c) throw new ErrorApp('Conteo no encontrado', { status: 404 });
+    if (turnoDe(c) !== 'completo') throw new ErrorApp('Solo se cancela un inventario completo; los de cada turno se terminan solos');
+    const { data } = await consultar(sb().from('conteos').update({ estado: 'cancelado', nota: `Lo canceló ${usuario.nombre || 'el jefe'}`, updated_at: new Date().toISOString() })
+      .eq('id', Number(c.id)).eq('estado', 'abierto').select('*'));
+    if (!data || !data.length) throw new ErrorApp('Este inventario ya no está abierto; actualiza la pantalla', { codigo: 'CONTEO_CERRADO' });
+    const n = await nombres({ sucursales: [c.sucursal_id] });
+    await anotarCambio({
+      usuario, sucursal_id: c.sucursal_id, tipo: 'conteo_completo',
+      descripcion: `${n.sucursal(c.sucursal_id)}: se canceló el ${tituloConteo(c).toLowerCase()} del ${c.fecha}`,
+      detalle: { conteo_id: Number(c.id), cancelado: true },
+    });
+    return resumenConteo(data[0]);
+  }
+
+  // ---------- La lista del inventario de cada farmacia (la arma el jefe) ----------
+  async function lista(usuario, { sucursal_id } = {}) {
+    soloJefe(usuario);
+    const sucursales = await sucursalesActivas();
+    const sucursal = sucursales.find((s) => s.id === Number(sucursal_id)) || sucursales[0];
+    if (!sucursal) throw new ErrorApp('No hay sucursales activas');
+    const [productos, config, abierto] = await Promise.all([productosDeLista(sucursal.id), configDe(sucursal.id), completoAbierto(sucursal.id)]);
+    return {
+      sucursal_id: sucursal.id,
+      sucursal: sucursal.nombre,
+      sucursales: sucursales.map((s) => ({ id: s.id, nombre: s.nombre })),
+      hora_tarde: config.hora_tarde,
+      total: productos.length,
+      // Unos 30 segundos por producto (escanear, contar estante y bodega)
+      minutos_por_turno: Math.ceil(productos.length / 2),
+      productos: productos.map((p) => ({ producto_id: Number(p.id), codigo_barras: p.codigo_barras || null, descripcion: p.descripcion, departamento: p.departamento || '' })),
+      completo: abierto ? await resumenConteo(abierto) : null,
+    };
+  }
+
+  async function agregarIds(usuario, sucursal, ids, origen = '') {
+    const validos = [];
+    for (const lote of lotes(idsValidos(ids), 150)) {
+      const { data } = await consultar(sb().from('productos').select('id,descripcion,activo,usa_inventario').in('id', lote));
+      validos.push(...(data || []).filter((p) => p.activo !== false && p.usa_inventario !== false));
+    }
+    if (!validos.length) throw new ErrorApp('Esos productos no usan inventario o están dados de baja');
+    const ya = new Set((await todas(() => sb().from('conteo_lista').select('producto_id').eq('sucursal_id', sucursal.id).order('producto_id')))
+      .map((f) => Number(f.producto_id)));
+    const nuevos = validos.filter((p) => !ya.has(Number(p.id)));
+    for (const lote of lotes(nuevos, 500)) {
+      await consultar(sb().from('conteo_lista').upsert(
+        lote.map((p) => ({ sucursal_id: sucursal.id, producto_id: Number(p.id), agregado_por: Number(usuario.id) })),
+        { onConflict: 'sucursal_id,producto_id', ignoreDuplicates: true }
+      ));
+    }
+    if (nuevos.length) {
+      const nombresP = nuevos.slice(0, 3).map((p) => p.descripcion).join(', ');
+      await anotarCambio({
+        usuario, sucursal_id: sucursal.id, tipo: 'conteo_lista',
+        descripcion: `${sucursal.nombre}: ${nuevos.length} producto(s) a la lista del inventario`
+          + (origen ? ` (de ${origen})` : `: ${nombresP}${nuevos.length > 3 ? '…' : ''}`),
+        detalle: { agregados: nuevos.map((p) => Number(p.id)).slice(0, 500), origen },
+      });
+    }
+    return { agregados: nuevos.length, ya_estaban: validos.length - nuevos.length };
+  }
+
+  async function quitarIds(usuario, sucursal, ids, { todo = false } = {}) {
+    let quitados = [];
+    if (todo) {
+      const { data } = await consultar(sb().from('conteo_lista').delete().eq('sucursal_id', sucursal.id).select('producto_id'));
+      quitados = data || [];
+    } else {
+      for (const lote of lotes(idsValidos(ids), 150)) {
+        const { data } = await consultar(sb().from('conteo_lista').delete().eq('sucursal_id', sucursal.id).in('producto_id', lote).select('producto_id'));
+        quitados.push(...(data || []));
+      }
+    }
+    if (quitados.length) {
+      const n = await nombres({ productos: quitados.slice(0, 3).map((f) => f.producto_id) });
+      const nombresP = quitados.slice(0, 3).map((f) => n.producto(f.producto_id)?.descripcion || `producto ${f.producto_id}`).join(', ');
+      await anotarCambio({
+        usuario, sucursal_id: sucursal.id, tipo: 'conteo_lista',
+        descripcion: `${sucursal.nombre}: se quitaron ${quitados.length} producto(s) de la lista del inventario`
+          + (todo ? ' (toda la lista)' : `: ${nombresP}${quitados.length > 3 ? '…' : ''}`),
+        detalle: { quitados: quitados.map((f) => Number(f.producto_id)).slice(0, 500) },
+      });
+    }
+    return { quitados: quitados.length };
+  }
+
+  // Agrega productos sueltos, un departamento completo o la lista de otra farmacia
+  async function agregarALista(usuario, { sucursal_id, producto_ids = [], departamento = '', copiar_de = null } = {}) {
+    soloJefe(usuario, 'Solo el jefe arma la lista del inventario');
+    const sucursal = await sucursalValida(sucursal_id);
+    let ids = idsValidos(producto_ids);
+    let origen = '';
+    const depto = String(departamento || '').trim();
+    if (depto) {
+      ids = ids.concat((await productosParaCompleto(depto)).map((p) => Number(p.id)));
+      origen = `el departamento ${depto}`;
+    }
+    if (Number(copiar_de)) {
+      const otra = await sucursalValida(copiar_de);
+      if (otra.id === sucursal.id) throw new ErrorApp('Elige otra farmacia para copiar su lista');
+      ids = ids.concat((await productosDeLista(otra.id)).map((p) => Number(p.id)));
+      origen = `la lista de ${otra.nombre}`;
+    }
+    if (!ids.length) throw new ErrorApp(origen ? `No hay productos en ${origen}` : 'Elige qué productos agregar');
+    const r = await agregarIds(usuario, sucursal, ids, origen);
+    return { ...r, ...(await lista(usuario, { sucursal_id: sucursal.id })) };
+  }
+
+  async function quitarDeLista(usuario, { sucursal_id, producto_ids = [], todo = false } = {}) {
+    soloJefe(usuario, 'Solo el jefe arma la lista del inventario');
+    const sucursal = await sucursalValida(sucursal_id);
+    if (!todo && !idsValidos(producto_ids).length) throw new ErrorApp('Elige qué productos quitar');
+    const r = await quitarIds(usuario, sucursal, producto_ids, { todo: Boolean(todo) });
+    return { ...r, ...(await lista(usuario, { sucursal_id: sucursal.id })) };
+  }
+
+  // En qué listas está un producto (para el interruptor al consultarlo)
+  async function listasDeProducto(usuario, productoId) {
+    soloJefe(usuario);
+    const [sucursales, { data }] = await Promise.all([
+      sucursalesActivas(),
+      consultar(sb().from('conteo_lista').select('sucursal_id').eq('producto_id', Number(productoId))),
+    ]);
+    const en = new Set((data || []).map((f) => Number(f.sucursal_id)));
+    return { producto_id: Number(productoId), sucursales: sucursales.map((s) => ({ sucursal_id: s.id, sucursal: s.nombre, en_lista: en.has(s.id) })) };
+  }
+
+  async function cambiarListaProducto(usuario, { producto_id, sucursal_id, en_lista } = {}) {
+    soloJefe(usuario, 'Solo el jefe arma la lista del inventario');
+    const sucursal = await sucursalValida(sucursal_id);
+    if (en_lista) await agregarIds(usuario, sucursal, [producto_id]);
+    else await quitarIds(usuario, sucursal, [producto_id]);
+    return listasDeProducto(usuario, producto_id);
+  }
+
+  // A qué hora empieza el turno de la tarde en cada farmacia y cuántos productos tiene su lista
   async function configuracion(usuario) {
     soloJefe(usuario);
     const [sucursales, { data }] = await Promise.all([
       sucursalesActivas(),
-      consultar(sb().from('conteo_config').select('sucursal_id,productos_por_dia')),
+      consultar(sb().from('conteo_config').select('sucursal_id,hora_tarde')),
     ]);
-    const cuotas = new Map((data || []).map((f) => [Number(f.sucursal_id), Number(f.productos_por_dia)]));
-    return sucursales.map((s) => ({ sucursal_id: s.id, sucursal: s.nombre, productos_por_dia: cuotas.get(s.id) || PRODUCTOS_POR_DIA }));
+    const horas = new Map((data || []).map((f) => [Number(f.sucursal_id), horaValida(f.hora_tarde)]));
+    const salida = [];
+    for (const s of sucursales) {
+      salida.push({ sucursal_id: s.id, sucursal: s.nombre, hora_tarde: horas.get(s.id) || HORA_TARDE, productos_en_lista: await cuantosEnLista(s.id) });
+    }
+    return salida;
   }
 
-  async function guardarConfiguracion(usuario, { sucursal_id, productos_por_dia } = {}) {
+  async function guardarConfiguracion(usuario, { sucursal_id, hora_tarde } = {}) {
     soloJefe(usuario);
-    const sucursal = Number(sucursal_id);
-    const cuota = Math.round(Number(productos_por_dia));
-    if (!(cuota >= 5 && cuota <= 500)) throw new ErrorApp('Escribe de 5 a 500 productos por día');
-    const s = (await sucursalesActivas()).find((x) => x.id === sucursal);
-    if (!s) throw new ErrorApp('Sucursal no válida');
-    const anterior = await cuotaDe(sucursal);
-    await consultar(sb().from('conteo_config').upsert({ sucursal_id: sucursal, productos_por_dia: cuota, updated_at: new Date().toISOString() }, { onConflict: 'sucursal_id' }));
-    if (anterior !== cuota) {
+    const hora = horaValida(hora_tarde);
+    if (!hora) throw new ErrorApp('Escribe la hora en que empieza el turno de la tarde, por ejemplo 14:00');
+    const s = await sucursalValida(sucursal_id);
+    const anterior = (await configDe(s.id)).hora_tarde;
+    await consultar(sb().from('conteo_config').upsert({ sucursal_id: s.id, hora_tarde: hora, updated_at: new Date().toISOString() }, { onConflict: 'sucursal_id' }));
+    if (anterior !== hora) {
       await anotarCambio({
-        usuario, sucursal_id: sucursal, tipo: 'conteo_config',
-        descripcion: `${s.nombre}: el inventario del día pasa de ${anterior} a ${cuota} productos (desde mañana)`,
-        detalle: { antes: anterior, despues: cuota },
+        usuario, sucursal_id: s.id, tipo: 'conteo_config',
+        descripcion: `${s.nombre}: el turno de la tarde del inventario empieza a las ${hora} (antes ${anterior})`,
+        detalle: { antes: anterior, despues: hora },
       });
     }
     return configuracion(usuario);
-  }
-
-  async function esImportante(productoId) {
-    const { data } = await consultar(sb().from('conteo_importantes').select('producto_id').eq('producto_id', Number(productoId)).limit(1));
-    return Boolean(data && data.length);
-  }
-
-  async function marcarImportante(usuario, { producto_id, importante } = {}) {
-    soloJefe(usuario);
-    const id = Number(producto_id);
-    const { data: productos } = await consultar(sb().from('productos').select('id,descripcion').eq('id', id).limit(1));
-    if (!productos || !productos.length) throw new ErrorApp('Producto no encontrado', { status: 404 });
-    const antes = await esImportante(id);
-    const marcar = Boolean(importante);
-    if (marcar && !antes) {
-      await consultar(sb().from('conteo_importantes').upsert({ producto_id: id, creado_por: Number(usuario.id) }, { onConflict: 'producto_id', ignoreDuplicates: true }));
-    } else if (!marcar && antes) {
-      await consultar(sb().from('conteo_importantes').delete().eq('producto_id', id));
-    }
-    if (marcar !== antes) {
-      await anotarCambio({
-        usuario, tipo: 'conteo_importante',
-        descripcion: `${productos[0].descripcion}: ${marcar ? 'se contará seguido en el inventario del día' : 'vuelve a contarse por turno'}`,
-        detalle: { producto_id: id, importante: marcar },
-      });
-    }
-    return { producto_id: id, importante: marcar };
   }
 
   // ---------- Inicio del jefe ----------
   async function inicio(usuario, { fresco = false } = {}) {
     soloJefe(usuario);
     const hoy = diaDe();
-    const [datos, conteosHoy, porAutorizar, alertas, ventas] = await Promise.all([
+    const [datos, conteosHoy, completos, porAutorizar, alertas, ventas] = await Promise.all([
       datosInventario({ fresco }),
       consultar(sb().from('conteos').select('*').eq('fecha', hoy)),
+      consultar(sb().from('conteos').select('*').eq('turno', 'completo').eq('estado', 'abierto')),
       listarConteos(usuario, { estado: 'por_autorizar', limite: 20 }),
       listarCambios(usuario, { grupo: 'alertas', limite: 15 }),
       // Si la central todavía no tiene las ventas, el inicio sale igual sin ellas
       ventasHoy ? ventasHoy().catch(() => null) : null,
     ]);
-    const deHoy = conteosHoy.data || [];
+    const vistos = new Set();
+    const conteos = [...(conteosHoy.data || []), ...(completos.data || [])]
+      .filter((c) => Number(c.productos) > 0 && !vistos.has(Number(c.id)) && vistos.add(Number(c.id)));
     const detalle = [];
-    for (const lote of lotes(idsValidos(deHoy.map((c) => c.id)), 40)) {
+    for (const lote of lotes(idsValidos(conteos.map((c) => c.id)), 40)) {
       detalle.push(...await todas(() => sb().from('conteo_detalle').select('conteo_id,decision,contado,diferencia,costo').in('conteo_id', lote).order('id')));
     }
-    const n = await nombres({ sucursales: deHoy.map((c) => c.sucursal_id) });
+    const n = await nombres({ sucursales: conteos.map((c) => c.sucursal_id) });
+    const resumen = (c) => (c ? conteoParaMostrar(c, detalle.filter((d) => Number(d.conteo_id) === Number(c.id)), n, { conRenglones: false }) : null);
+    const sucursales = [];
+    for (const s of resumirInventario(datos)) {
+      const deLaSucursal = conteos.filter((c) => Number(c.sucursal_id) === s.sucursal_id);
+      const deHoy = (turno) => deLaSucursal.find((c) => c.fecha === hoy && turnoDe(c) === turno) || null;
+      const turnos = {
+        manana: resumen(deHoy('manana')),
+        tarde: resumen(deHoy('tarde')),
+        completo: resumen(deLaSucursal.find((c) => turnoDe(c) === 'completo' && c.estado === 'abierto')),
+        en_lista: await cuantosEnLista(s.sucursal_id),
+      };
+      sucursales.push({
+        ...s,
+        ventas_hoy: ventas ? ventas.get(s.sucursal_id) || null : null,
+        inventario_hoy: turnos,
+        // Lo último de hoy (para las pantallas que solo muestran uno)
+        conteo_hoy: turnos.tarde || turnos.manana || resumen(deHoy('dia')),
+      });
+    }
     return {
       hoy,
       inventario_leido: datos.leido,
       ventas_disponibles: Boolean(ventas),
-      sucursales: resumirInventario(datos).map((s) => {
-        const c = deHoy.find((x) => Number(x.sucursal_id) === s.sucursal_id);
-        const ventas_hoy = ventas ? ventas.get(s.sucursal_id) || null : null;
-        if (!c || Number(c.productos) <= 0) return { ...s, ventas_hoy, conteo_hoy: null };
-        return { ...s, ventas_hoy, conteo_hoy: conteoParaMostrar(c, detalle.filter((d) => Number(d.conteo_id) === Number(c.id)), n, { conRenglones: false }) };
-      }),
+      sucursales,
       por_autorizar: porAutorizar,
       alertas: alertas.cambios,
     };
@@ -1146,7 +1631,14 @@ export function crearSupervision({
     autorizar: protegido(autorizar),
     configuracion: protegido(configuracion),
     guardarConfiguracion: protegido(guardarConfiguracion),
-    esImportante: protegido(esImportante),
-    marcarImportante: protegido(marcarImportante),
+    lista: protegido(lista),
+    agregarALista: protegido(agregarALista),
+    quitarDeLista: protegido(quitarDeLista),
+    listasDeProducto: protegido(listasDeProducto),
+    cambiarListaProducto: protegido(cambiarListaProducto),
+    iniciarCompleto: protegido(iniciarCompleto),
+    cancelarConteo: protegido(cancelarConteo),
+    semana: protegido(semana),
+    revisarSemana: protegido(revisarSemana),
   };
 }

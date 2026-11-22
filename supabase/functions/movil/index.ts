@@ -11,8 +11,9 @@
 //                        Si no existe se usa SUPABASE_SERVICE_ROLE_KEY, que Supabase pone sola.
 //   MOVIL_ORIGENES       opcional: direcciones permitidas de la app, separadas por comas
 //                        (por ejemplo https://farmacia-inventario.pages.dev). Por defecto, todas.
-//   FARMACIA_ZONA_HORARIA opcional: zona horaria del "día" del inventario (por defecto America/Mexico_City;
-//                        si se cambia, poner la misma en el .env de las computadoras).
+//   FARMACIA_ZONA_HORARIA opcional: zona horaria de las farmacias para el "día" (inventario del día, ventas
+//                        de hoy). Por defecto America/Mexico_City; en Sonora, America/Hermosillo. Las
+//                        computadoras usan su propia hora.
 import { createClient } from 'npm:@supabase/supabase-js@2.116.0';
 import { crearManejador } from './manejador.mjs';
 

@@ -66,7 +66,7 @@ async function cargarCorte() {
       </tr>`)
       .join('') || '<tr><td colspan="5" class="vacio">Sin entradas ni salidas de efectivo en este turno</td></tr>';
 
-    document.getElementById('cuerpo-departamentos').innerHTML = (p.departamentos || [])
+    document.getElementById('cuerpo-departamentos-corte').innerHTML = (p.departamentos || [])
       .map((d) => `<tr><td>${escaparHtml(d.departamento)}</td><td class="num">${d.piezas}</td><td class="num">${dinero(d.total)}</td></tr>`)
       .join('') || '<tr><td colspan="3" class="vacio">Sin ventas en este turno</td></tr>';
     pintarEstadisticas(p.estadisticas, p.num_ventas);
@@ -111,6 +111,7 @@ function pintarEstadisticas(e, numVentas) {
       ${dato('Artículos vendidos', e.piezas)}
     </div>
     ${e.vendido_sin_costo ? `<p class="aclaracion">La utilidad no cuenta ${dinero(e.vendido_sin_costo)} vendidos sin costo registrado (por ejemplo, artículos comunes). Captura el costo de esos productos para que salga completa.</p>` : ''}
+    ${e.ventas_precio_especial ? `<p class="aclaracion">Precio cambiado en ${e.ventas_precio_especial} venta(s)${e.descuentos ? `: se descontaron ${dinero(e.descuentos)}` : ''}.</p>` : ''}
     ${(e.mas_vendidos || []).length ? `<h4 class="subtitulo-corte">Lo más vendido</h4>
       <table class="tabla-simple">${e.mas_vendidos.map((m) => `<tr><td>${escaparHtml(m.descripcion)}</td><td class="num">${m.piezas} pza.</td><td class="num">${dinero(m.total)}</td></tr>`).join('')}</table>` : ''}`;
 }

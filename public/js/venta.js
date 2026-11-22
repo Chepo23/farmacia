@@ -16,6 +16,7 @@ function ticketNuevo() {
     carrito: [], // { producto, cantidad }
     filaSeleccionada: -1,
     mayoreo: false, // F11: cobrar con precio de mayoreo
+    clienteSugerido: null, // al cobrar un préstamo, el cliente ya sale elegido para el crédito
     // Cotización cargada desde "Cotizaciones": { id, folio, cliente, vigente, vigente_hasta, precios: Map(producto -> { precio, cantidad }) }
     cotizacion: null,
   };
@@ -36,9 +37,18 @@ function redondear2(n) {
   return Math.round((Number(n) || 0) * 100) / 100;
 }
 
-// Piezas del mismo producto en toda la venta (para el mayoreo por cantidad)
+// Venta por caja: el producto dice cuántas piezas trae su caja y el precio de la caja completa.
+// El inventario siempre va en piezas: una caja vendida descuenta todas sus piezas.
+const vendeCaja = (producto) => !producto.comun && Number(producto.piezas_caja) >= 2 && Number(producto.precio_caja) > 0;
+// Renglón normal: ni caja completa, ni parte de un cóctel, ni lo de un préstamo (solo estos cuentan para
+// mayoreo y cotización)
+const suelto = (r) => !r.caja && !r.coctel && !r.prestamo;
+// Piezas que salen del inventario por un renglón
+const piezasRenglon = (r) => (r.caja ? r.cantidad * Number(r.producto.piezas_caja) : r.cantidad);
+
+// Piezas sueltas del mismo producto en toda la venta (para el mayoreo por cantidad)
 function piezasDe(producto, t = Venta) {
-  return t.carrito.filter((r) => r.producto.id === producto.id).reduce((s, r) => s + r.cantidad, 0);
+  return t.carrito.filter((r) => r.producto.id === producto.id && suelto(r)).reduce((s, r) => s + r.cantidad, 0);
 }
 
 // Mayoreo con F11, o automático al llegar a la cantidad de mayoreo del producto
@@ -68,11 +78,44 @@ function precioUnitario(producto, t = Venta) {
   return cotizado != null ? Math.min(normal, cotizado) : normal;
 }
 
-function totalVenta(t = Venta) {
-  return redondear2(t.carrito.reduce((suma, r) => suma + redondear2(precioUnitario(r.producto, t) * r.cantidad), 0));
+// Precio normal de un renglón: la caja completa a su precio; suelto, el de la pieza (con mayoreo o cotización)
+function precioNormalRenglon(r, t = Venta) {
+  return r.caja ? Number(r.producto.precio_caja) : precioUnitario(r.producto, t);
+}
+// El que se cobra: el normal, o el que se cambió en esta venta (doble clic en el precio)
+function precioRenglon(r, t = Venta) {
+  return r.precioManual != null ? Number(r.precioManual) : precioNormalRenglon(r, t);
+}
+// Costo de lo que se cobra en un renglón (una pieza o la caja completa): no se vende abajo de él
+const costoRenglon = (r) => (r.producto.comun ? 0 : (Number(r.producto.precio_costo) || 0) * (r.caja ? Number(r.producto.piezas_caja) : 1));
+const importeRenglon = (r, t = Venta) => redondear2(precioRenglon(r, t) * r.cantidad);
+
+// Cócteles de la venta (número de grupo -> { id, grupo, descripcion, precio, renglones })
+function coctelesDe(t = Venta) {
+  const grupos = new Map();
+  for (const r of t.carrito) {
+    if (!r.coctel) continue;
+    if (!grupos.has(r.coctel.grupo)) grupos.set(r.coctel.grupo, { ...r.coctel, renglones: [] });
+    grupos.get(r.coctel.grupo).renglones.push(r);
+  }
+  return grupos;
 }
 
-const articulosDe = (t) => Math.round(t.carrito.reduce((s, r) => s + r.cantidad, 0) * 1000) / 1000;
+// Un cóctel lleva por lo menos dos productos: si le quitaron renglones, lo que queda vuelve a su precio
+function revisarCocteles(t = Venta) {
+  for (const g of coctelesDe(t).values()) {
+    if (g.renglones.length < 2) g.renglones.forEach((r) => delete r.coctel);
+  }
+}
+
+// Lo suelto y las cajas a su precio; cada cóctel a su precio (lo que lleva no se cobra aparte)
+function totalVenta(t = Venta) {
+  const sueltos = t.carrito.filter((r) => !r.coctel).reduce((suma, r) => suma + importeRenglon(r, t), 0);
+  const cocteles = [...coctelesDe(t).values()].reduce((suma, g) => suma + Number(g.precio), 0);
+  return redondear2(sueltos + cocteles);
+}
+
+const articulosDe = (t) => Math.round(t.carrito.reduce((s, r) => s + piezasRenglon(r), 0) * 1000) / 1000;
 const ticketVacio = (t) => t.carrito.length === 0 && !t.cotizacion;
 const nombreTicket = (t) => t.nombre || `Ticket ${t.numero}`;
 
@@ -87,26 +130,59 @@ function existenciaLocal(producto) {
   return Infinity;
 }
 
+function filaVenta(r, i) {
+  const enCoctel = Boolean(r.coctel);
+  const precio = precioRenglon(r);
+  const especial = r.precioManual != null;
+  const cotizado = suelto(r) && !especial ? precioCotizado(r.producto) : null;
+  const mayoreo = suelto(r) && !especial && cotizado == null && aplicaMayoreo(r.producto);
+  const cotizadoAqui = suelto(r) && Venta.cotizacion && Venta.cotizacion.precios.get(r.producto.id);
+  const pasado = Venta.cotizacion && Venta.cotizacion.vigente && cotizadoAqui && cotizado == null;
+  const piezasCaja = Number(r.producto.piezas_caja);
+  // Lo que llega en caja con piezas sin código (ej. ampolletas): se cobra suelto o la caja completa
+  const presentacion = vendeCaja(r.producto) && !enCoctel && !r.prestamo
+    ? ` <button type="button" class="boton-presentacion" data-caja="${i}">${r.caja
+      ? `Vender suelta · ${dinero(r.producto.precio_venta)} c/u`
+      : `Vender caja c/${piezasCaja} · ${dinero(r.producto.precio_caja)}`}</button>`
+    : '';
+  return `<tr data-indice="${i}" class="${i === Venta.filaSeleccionada ? 'seleccionado' : ''}${enCoctel ? ' en-coctel' : ''}">
+    <td class="col-cant"><input type="number" class="cantidad" min="${r.caja ? 1 : 0.01}" step="${r.caja ? 1 : 'any'}" value="${r.cantidad}" data-indice="${i}" aria-label="${r.caja ? 'Cajas' : 'Cantidad'}">${r.caja ? `<small class="unidad-caja">caja${r.cantidad === 1 ? '' : 's'}</small>` : ''}</td>
+    <td>${escaparHtml(r.producto.descripcion)}${r.caja ? ` <span class="chip enviado">Caja c/${piezasCaja}</span>` : ''}${mayoreo ? ' <span class="chip enviado">Mayoreo</span>' : ''}${cotizado != null ? ' <span class="chip ok">Precio cotizado</span>' : ''}${pasado && !especial ? ` <span class="chip pendiente" title="Se cotizaron ${cotizadoAqui.cantidad}">Más de lo cotizado: precio normal</span>` : ''}${especial ? ' <span class="chip ok">Precio especial</span>' : ''}${r.prestamo ? ` <span class="chip pendiente" title="Ya salió del inventario cuando se prestó">Préstamo P-${r.prestamo.folio}</span>` : ''}${presentacion}</td>
+    <td class="num ${enCoctel ? '' : 'col-precio'}" ${enCoctel ? '' : 'title="Doble clic para cambiar el precio solo en esta venta"'}>${enCoctel ? '<small class="texto-suave">en el cóctel</small>'
+      : `${dinero(precio)}${especial ? `<small class="precio-antes">antes ${dinero(precioNormalRenglon(r))}</small>` : ''}`}</td>
+    <td class="num col-importe">${enCoctel ? '' : dinero(importeRenglon(r))}</td>
+    <td><button class="boton-quitar" data-indice="${i}" title="Quitar renglón"><svg class="icono"><use href="#i-x"/></svg></button></td>
+  </tr>`;
+}
+
+// Encabezado de un cóctel: su nombre y su precio; lo que lleva va debajo
+function filaCoctel(g) {
+  return `<tr class="fila-coctel">
+    <td class="col-cant"><b>1</b></td>
+    <td><b>${escaparHtml(g.descripcion)}</b> <small class="texto-suave">${g.renglones.length} productos · la aplicación no se cobra</small>
+      <button type="button" class="boton-presentacion" data-quitar-coctel="${g.grupo}" title="Lo que lleva vuelve a su precio normal">Quitar cóctel</button></td>
+    <td class="num">${dinero(g.precio)}</td>
+    <td class="num col-importe">${dinero(g.precio)}</td>
+    <td></td>
+  </tr>`;
+}
+
 function pintarVenta() {
+  revisarCocteles();
   const cuerpo = document.getElementById('cuerpo-venta');
+  const grupos = coctelesDe();
+  const pintados = new Set();
   cuerpo.innerHTML = Venta.carrito
     .map((r, i) => {
-      const precio = precioUnitario(r.producto);
-      const importe = redondear2(precio * r.cantidad);
-      const cotizado = precioCotizado(r.producto);
-      const mayoreo = cotizado == null && aplicaMayoreo(r.producto);
-      const cotizadoAqui = Venta.cotizacion && Venta.cotizacion.precios.get(r.producto.id);
-      const pasado = Venta.cotizacion && Venta.cotizacion.vigente && cotizadoAqui && cotizado == null;
-      return `<tr data-indice="${i}" class="${i === Venta.filaSeleccionada ? 'seleccionado' : ''}">
-        <td class="col-cant"><input type="number" class="cantidad" min="0.01" step="any" value="${r.cantidad}" data-indice="${i}" aria-label="Cantidad"></td>
-        <td>${escaparHtml(r.producto.descripcion)}${mayoreo ? ' <span class="chip enviado">Mayoreo</span>' : ''}${cotizado != null ? ' <span class="chip ok">Precio cotizado</span>' : ''}${pasado ? ` <span class="chip pendiente" title="Se cotizaron ${cotizadoAqui.cantidad}">Más de lo cotizado: precio normal</span>` : ''}</td>
-        <td class="num">${dinero(precio)}</td>
-        <td class="num col-importe">${dinero(importe)}</td>
-        <td><button class="boton-quitar" data-indice="${i}" title="Quitar renglón"><svg class="icono"><use href="#i-x"/></svg></button></td>
-      </tr>`;
+      let encabezado = '';
+      if (r.coctel && !pintados.has(r.coctel.grupo)) {
+        pintados.add(r.coctel.grupo);
+        encabezado = filaCoctel(grupos.get(r.coctel.grupo));
+      }
+      return encabezado + filaVenta(r, i);
     })
     .join('');
-  const articulos = Math.round(Venta.carrito.reduce((s, r) => s + r.cantidad, 0) * 1000) / 1000;
+  const articulos = articulosDe(Venta);
   const total = totalVenta();
   document.getElementById('total-venta').textContent = dinero(total);
   document.getElementById('articulos-venta').textContent = `${articulos} artículo${articulos === 1 ? '' : 's'}`;
@@ -256,6 +332,7 @@ async function restaurarTickets() {
       nombre: String(t.nombre || ''),
       carrito: t.carrito.filter((r) => r && r.producto && Number(r.cantidad) > 0),
       mayoreo: Boolean(t.mayoreo),
+      clienteSugerido: Number(t.clienteSugerido) || null,
       cotizacion: t.cotizacion ? { ...t.cotizacion, precios: new Map(t.cotizacion.precios || []) } : null,
     }))
     .filter((t) => !ticketVacio(t));
@@ -266,7 +343,8 @@ async function restaurarTickets() {
     return;
   }
   // Datos de hoy de cada producto (precio y existencia); los que ya no se venden se quitan
-  const ids = [...new Set(recuperados.flatMap((t) => t.carrito.filter((r) => !r.producto.comun).map((r) => Number(r.producto.id))))];
+  const ids = [...new Set(recuperados.flatMap((t) => t.carrito.filter((r) => !r.producto.comun)
+    .flatMap((r) => [Number(r.producto.id), ...(r.coctel ? [Number(r.coctel.id)] : [])])))];
   const quitados = [];
   if (ids.length) {
     try {
@@ -279,6 +357,19 @@ async function restaurarTickets() {
           else r.producto = fresco;
           return Boolean(fresco);
         });
+        for (const r of t.carrito) {
+          // Si ya no se vende por caja, o el cóctel ya no existe, el renglón vuelve a suelto
+          if (r.caja && !vendeCaja(r.producto)) {
+            delete r.caja;
+            delete r.precioManual;
+          }
+          if (r.precioManual != null && costoRenglon(r) > 0 && Number(r.precioManual) + 0.005 < costoRenglon(r)) delete r.precioManual;
+          if (r.coctel) {
+            const coctel = frescos.get(Number(r.coctel.id));
+            if (coctel && coctel.es_coctel) Object.assign(r.coctel, { descripcion: coctel.descripcion, precio: Number(coctel.precio_venta) });
+            else delete r.coctel;
+          }
+        }
       }
     } catch { /* sin conexión: se usan los datos guardados; el servidor revisa todo al cobrar */ }
   }
@@ -340,22 +431,43 @@ function fechaDiaCorta(iso) {
   return Number.isNaN(fecha.getTime()) ? '' : fecha.toLocaleDateString('es-MX', { day: 'numeric', month: 'short' });
 }
 
-function agregarProducto(producto, cantidad) {
-  const existente = Venta.carrito.find((r) => r.producto.id === producto.id);
-  const cantidadFinal = Math.round(((existente ? existente.cantidad : 0) + cantidad) * 1000) / 1000;
+// ¿Alcanza la existencia si el renglón queda con esa cantidad? Cuenta también los otros renglones del
+// mismo producto (suelto, en caja o en un cóctel): el inventario va en piezas.
+function alcanza(renglon, cantidad, caja = Boolean(renglon.caja)) {
+  const producto = renglon.producto;
+  // Lo de un préstamo ya salió del inventario: solo se cobra lo que falta
+  if (renglon.prestamo) {
+    if (cantidad > Number(renglon.prestamo.pendiente) + 1e-9) {
+      aviso(`Del préstamo P-${renglon.prestamo.folio} solo faltan ${renglon.prestamo.pendiente} de "${producto.descripcion}"`, 'error');
+      return false;
+    }
+    return true;
+  }
   const existencia = existenciaLocal(producto);
-  if (cantidadFinal > existencia + 1e-9) {
-    aviso(`No hay suficiente existencia de "${producto.descripcion}" (hay ${existencia})`, 'error');
+  const otros = Venta.carrito.reduce((s, r) => (r !== renglon && !r.prestamo && r.producto.id === producto.id ? s + piezasRenglon(r) : s), 0);
+  const piezas = otros + (caja ? cantidad * Number(producto.piezas_caja) : cantidad);
+  if (piezas > existencia + 1e-9) {
+    aviso(`No hay suficiente existencia de "${producto.descripcion}" (hay ${existencia}${vendeCaja(producto) ? ' piezas' : ''})`, 'error');
     return false;
   }
-  if (existente) {
-    existente.cantidad = cantidadFinal;
-    existente.producto = producto; // datos frescos (precio y existencia)
-    Venta.filaSeleccionada = Venta.carrito.indexOf(existente);
-  } else {
-    Venta.carrito.push({ producto, cantidad });
-    Venta.filaSeleccionada = Venta.carrito.length - 1;
+  return true;
+}
+
+function agregarProducto(producto, cantidad) {
+  // Un cóctel no se agrega como producto: se escanea lo que lleva y se cobra con Cóctel (F10)
+  if (producto.es_coctel) {
+    abrirCoctel(producto.id);
+    return true;
   }
+  // Se suma al renglón suelto del mismo producto (no a una caja ni a un cóctel)
+  const existente = Venta.carrito.find((r) => r.producto.id === producto.id && suelto(r));
+  const renglon = existente || { producto, cantidad: 0 };
+  renglon.producto = producto; // datos frescos (precio y existencia)
+  const cantidadFinal = Math.round((renglon.cantidad + cantidad) * 1000) / 1000;
+  if (!alcanza(renglon, cantidadFinal)) return false;
+  renglon.cantidad = cantidadFinal;
+  if (!existente) Venta.carrito.push(renglon);
+  Venta.filaSeleccionada = Venta.carrito.indexOf(renglon);
   pintarVenta();
   return true;
 }
@@ -411,6 +523,254 @@ function alternarMayoreo() {
   aviso(Venta.mayoreo ? 'Precio de MAYOREO activado' : 'Precio normal activado');
 }
 
+// ---------- Cambiar el precio solo en esta venta (doble clic en el precio, como en Eleventa) ----------
+// Lo puede hacer cualquiera, nunca abajo del costo. El precio del producto no cambia; queda en el
+// registro de cambios para el jefe.
+function abrirPrecioRenglon(i) {
+  const r = Venta.carrito[i];
+  if (!r || r.coctel) return;
+  const comun = Boolean(r.producto.comun);
+  const normal = comun ? Number(r.producto.precio_venta) : precioNormalRenglon(r);
+  const costo = costoRenglon(r);
+  const unidad = r.caja ? `la caja c/${Number(r.producto.piezas_caja)}` : 'la pieza';
+  const modal = abrirModal(`
+    <h3>Precio en esta venta</h3>
+    <p><b>${escaparHtml(r.producto.descripcion)}</b><br>
+      ${comun ? 'Artículo común' : `Precio normal de ${unidad}: <b>${dinero(normal)}</b>${costo > 0 ? ` · costo: ${dinero(costo)}` : ''}`}</p>
+    <div class="fila">
+      <label>Precio nuevo ($) <input type="number" id="pr-precio" step="0.01" min="0" value="${precioRenglon(r).toFixed(2)}"></label>
+      ${comun ? '' : '<label>o descuento (%) <input type="number" id="pr-descuento" step="1" min="0" max="100" placeholder="0"></label>'}
+    </div>
+    <p class="texto-suave">Solo cambia en esta venta; el precio del producto sigue igual.${costo > 0 ? ' No se puede dejar abajo del costo.' : ''}</p>
+    <div id="pr-error" class="mensaje-error" hidden></div>
+    <div class="pie">
+      ${r.precioManual != null ? '<button class="boton" id="pr-normal">Precio normal</button>' : ''}
+      ${costo > 0 ? `<button class="boton" id="pr-costo">A costo (${dinero(costo)})</button>` : ''}
+      <button class="boton" id="pr-cancelar">Cancelar (Esc)</button>
+      <button class="boton exito" id="pr-aceptar">Aplicar (Enter)</button>
+    </div>
+  `);
+  const entrada = modal.querySelector('#pr-precio');
+  const descuento = modal.querySelector('#pr-descuento');
+  entrada.select();
+  descuento?.addEventListener('input', () => {
+    const d = Number(descuento.value);
+    if (d >= 0 && d <= 100) entrada.value = (Math.round(normal * (100 - d)) / 100).toFixed(2);
+  });
+  entrada.addEventListener('input', () => { if (descuento) descuento.value = ''; });
+  function aplicar(valor) {
+    const errorEl = modal.querySelector('#pr-error');
+    const nuevo = redondear2(valor);
+    errorEl.hidden = true;
+    if (!(nuevo > 0)) {
+      errorEl.textContent = 'Escribe un precio mayor a cero';
+      errorEl.hidden = false;
+      return;
+    }
+    if (costo > 0 && nuevo + 0.005 < costo) {
+      errorEl.textContent = `No se puede vender abajo del costo (${dinero(costo)})`;
+      errorEl.hidden = false;
+      return;
+    }
+    if (comun) r.producto.precio_venta = nuevo;
+    else if (Math.abs(nuevo - normal) < 0.005) delete r.precioManual;
+    else r.precioManual = nuevo;
+    Venta.filaSeleccionada = i;
+    cerrarModal();
+    pintarVenta();
+    if (!comun && r.precioManual != null) aviso(`${r.producto.descripcion}: ${dinero(nuevo)} en esta venta (normal ${dinero(normal)})`);
+  }
+  modal.querySelector('#pr-aceptar').addEventListener('click', () => aplicar(Number(entrada.value)));
+  modal.querySelector('#pr-cancelar').addEventListener('click', cerrarModal);
+  modal.querySelector('#pr-costo')?.addEventListener('click', () => aplicar(costo));
+  modal.querySelector('#pr-normal')?.addEventListener('click', () => aplicar(normal));
+  modal.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.target.tagName !== 'BUTTON') {
+      e.preventDefault();
+      aplicar(Number(entrada.value));
+    }
+  });
+}
+
+document.getElementById('cuerpo-venta').addEventListener('dblclick', (e) => {
+  const celda = e.target.closest('td.col-precio');
+  if (!celda) return;
+  e.preventDefault();
+  abrirPrecioRenglon(Number(celda.closest('tr[data-indice]').dataset.indice));
+});
+
+// ---------- Venta por caja ----------
+// Lo que llega en caja con piezas sin código (como el ketorolaco con 3 ampolletas) se cobra suelto
+// o por caja completa. El botón cambia la unidad del renglón; el número se queda igual.
+function alternarCaja(i) {
+  const renglon = Venta.carrito[i];
+  if (!renglon || renglon.coctel || !vendeCaja(renglon.producto)) return;
+  const caja = !renglon.caja;
+  const cantidad = caja ? Math.max(1, Math.round(renglon.cantidad)) : renglon.cantidad;
+  if (!alcanza(renglon, cantidad, caja)) return;
+  if (caja) renglon.caja = true;
+  else delete renglon.caja;
+  delete renglon.precioManual;
+  renglon.cantidad = cantidad;
+  // Si ya había un renglón igual del mismo producto (suelto o en caja), se juntan
+  const igual = Venta.carrito.find((r) => r !== renglon && r.producto.id === renglon.producto.id && !r.coctel && Boolean(r.caja) === caja);
+  if (igual) {
+    igual.cantidad = Math.round((igual.cantidad + renglon.cantidad) * 1000) / 1000;
+    Venta.carrito.splice(i, 1);
+  }
+  Venta.filaSeleccionada = Venta.carrito.indexOf(igual || renglon);
+  pintarVenta();
+  entradaCodigo.focus();
+}
+
+// ---------- Cóctel de inyecciones (F10) ----------
+// Se escanea lo que se usó (las ampolletas, la jeringa y la aguja), se toca Cóctel y se elige cuál: todo
+// eso se cobra junto al precio del cóctel. El inventario descuenta exactamente lo que se usó, sea de la
+// marca que sea.
+const sinAcentos = (texto) => String(texto || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+// Si solo un cóctel tiene una palabra suya (ej. "ceftriaxona") en lo que se escaneó, ya queda elegido
+function coctelSugerido(lista, renglones) {
+  const palabras = (c) => sinAcentos(c.descripcion).split(/[^a-z0-9]+/).filter((p) => p.length >= 5 && p !== 'coctel');
+  const escaneado = renglones.map((r) => sinAcentos(r.producto.descripcion)).join(' ');
+  const coinciden = lista.filter((c) => {
+    const deOtros = new Set(lista.filter((o) => o !== c).flatMap(palabras));
+    return palabras(c).some((p) => !deOtros.has(p) && escaneado.includes(p));
+  });
+  return coinciden.length === 1 ? coinciden[0] : null;
+}
+
+async function abrirCoctel(coctelId = null) {
+  const elegibles = Venta.carrito.filter((r) => !r.producto.comun && suelto(r));
+  if (elegibles.length < 2) {
+    aviso('Primero escanea lo que lleva la inyección (las ampolletas, la jeringa y la aguja) y luego toca Cóctel (F10)', 'error');
+    entradaCodigo.focus();
+    return;
+  }
+  let lista = [];
+  try {
+    lista = await api('/api/productos/cocteles');
+  } catch (err) {
+    aviso(err.message, 'error');
+    return;
+  }
+  if (!lista.length) {
+    aviso('Todavía no hay cócteles: la central los da de alta en Productos (Nuevo producto, marcando "Es un cóctel")', 'error');
+    return;
+  }
+  if (hayModalAbierto()) return;
+  let elegido = lista.find((c) => c.id === coctelId) || (lista.length === 1 ? lista[0] : coctelSugerido(lista, elegibles));
+  const modal = abrirModal(`
+    <h3>Cobrar como cóctel</h3>
+    <p>Elige el cóctel y deja marcado lo que lleva la inyección (ampolletas, jeringa y aguja): se cobra todo junto al precio del cóctel. La aplicación no se cobra.</p>
+    <div class="formas-pago opciones-coctel" role="radiogroup" aria-label="Cóctel">
+      ${lista.map((c, k) => `<button type="button" class="forma-pago" data-coctel="${c.id}" role="radio" aria-checked="false">
+          ${k < 9 ? `<small class="tecla-forma">${k + 1}</small>` : ''}
+          <b>${escaparHtml(c.descripcion)}</b><span>${dinero(c.precio_venta)}</span>
+        </button>`).join('')}
+    </div>
+    <div class="resultados-busqueda">
+      <table class="tabla">
+        <thead><tr><th></th><th class="num">Cant.</th><th>Lleva</th><th class="num">Por separado</th></tr></thead>
+        <tbody id="coctel-renglones">${elegibles.map((r, k) => `<tr data-k="${k}">
+            <td><input type="checkbox" data-k="${k}" checked aria-label="Va en el cóctel" style="width:auto"></td>
+            <td class="num">${r.cantidad}</td>
+            <td>${escaparHtml(r.producto.descripcion)}</td>
+            <td class="num">${dinero(redondear2(Number(r.producto.precio_venta) * r.cantidad))}</td>
+          </tr>`).join('')}</tbody>
+      </table>
+    </div>
+    <div class="fila-esperado" id="coctel-resumen"></div>
+    <div id="coctel-error" class="mensaje-error" hidden></div>
+    <div class="pie">
+      <button class="boton" id="coctel-cancelar">Cancelar (Esc)</button>
+      <button class="boton exito" id="coctel-aceptar">Cobrar como cóctel (Enter)</button>
+    </div>
+  `);
+  const marcados = () => elegibles.filter((r, k) => modal.querySelector(`input[data-k="${k}"]`).checked);
+  function actualizar() {
+    modal.querySelectorAll('[data-coctel]').forEach((b) => {
+      const activa = Boolean(elegido) && Number(b.dataset.coctel) === elegido.id;
+      b.classList.toggle('activa', activa);
+      b.setAttribute('aria-checked', String(activa));
+    });
+    const separado = redondear2(marcados().reduce((s, r) => s + Number(r.producto.precio_venta) * r.cantidad, 0));
+    modal.querySelector('#coctel-resumen').innerHTML = `Por separado: <b>${dinero(separado)}</b>
+      ${elegido ? `· Como cóctel: <b>${dinero(elegido.precio_venta)}</b>` : '· <b>Elige el cóctel</b>'}`;
+  }
+  function aceptar() {
+    const errorEl = modal.querySelector('#coctel-error');
+    const filas = marcados();
+    errorEl.hidden = true;
+    if (!elegido || filas.length < 2) {
+      errorEl.textContent = !elegido ? 'Elige el cóctel (tecla 1, 2…)' : 'Marca por lo menos dos productos (las ampolletas y la jeringa)';
+      errorEl.hidden = false;
+      return;
+    }
+    const grupo = 1 + Math.max(0, ...Venta.carrito.filter((r) => r.coctel).map((r) => Number(r.coctel.grupo) || 0));
+    for (const r of filas) {
+      r.coctel = { id: elegido.id, grupo, descripcion: elegido.descripcion, precio: Number(elegido.precio_venta) };
+      delete r.precioManual;
+    }
+    // Lo del cóctel queda junto, donde estaba lo primero que se escaneó
+    const enGrupo = new Set(filas);
+    const primero = Math.min(...filas.map((r) => Venta.carrito.indexOf(r)));
+    const nuevo = [];
+    Venta.carrito.forEach((r, i) => {
+      if (i === primero) nuevo.push(...filas);
+      if (!enGrupo.has(r)) nuevo.push(r);
+    });
+    Venta.carrito = nuevo;
+    Venta.filaSeleccionada = nuevo.indexOf(filas[filas.length - 1]);
+    const nombre = elegido.descripcion;
+    const precio = elegido.precio_venta;
+    cerrarModal();
+    pintarVenta();
+    aviso(`${nombre}: ${dinero(precio)}`, 'exito');
+  }
+  modal.querySelector('.opciones-coctel').addEventListener('click', (e) => {
+    const boton = e.target.closest('[data-coctel]');
+    if (!boton) return;
+    elegido = lista.find((c) => c.id === Number(boton.dataset.coctel)) || null;
+    actualizar();
+    modal.querySelector('#coctel-aceptar').focus();
+  });
+  modal.querySelector('#coctel-renglones').addEventListener('click', (e) => {
+    const fila = e.target.closest('tr[data-k]');
+    if (!fila) return;
+    // Un clic en cualquier parte del renglón lo marca o lo desmarca
+    if (e.target.tagName !== 'INPUT') {
+      const casilla = fila.querySelector('input');
+      casilla.checked = !casilla.checked;
+    }
+    actualizar();
+  });
+  modal.querySelector('#coctel-aceptar').addEventListener('click', aceptar);
+  modal.querySelector('#coctel-cancelar').addEventListener('click', cerrarModal);
+  modal.addEventListener('keydown', (e) => {
+    const n = Number(e.key);
+    if (Number.isInteger(n) && n >= 1 && n <= Math.min(lista.length, 9) && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      e.preventDefault();
+      elegido = lista[n - 1];
+      actualizar();
+      return;
+    }
+    if (e.key === 'Enter' && e.target.id !== 'coctel-cancelar') {
+      e.preventDefault();
+      aceptar();
+    }
+  });
+  actualizar();
+  modal.querySelector('#coctel-aceptar').focus();
+}
+
+function quitarCoctel(grupo) {
+  for (const r of Venta.carrito) if (r.coctel && r.coctel.grupo === grupo) delete r.coctel;
+  pintarVenta();
+  aviso('Se quitó el cóctel: lo que llevaba se cobra a su precio normal');
+  entradaCodigo.focus();
+}
+
 // ---------- Captura con escáner / teclado ----------
 const entradaCodigo = document.getElementById('entrada-codigo');
 
@@ -446,14 +806,12 @@ entradaCodigo.addEventListener('keydown', async (e) => {
 document.getElementById('cuerpo-venta').addEventListener('change', (e) => {
   if (!e.target.classList.contains('cantidad')) return;
   const i = Number(e.target.dataset.indice);
-  const nueva = Number(e.target.value);
+  const renglon = Venta.carrito[i];
+  if (!renglon) return;
+  const nueva = Math.round(Number(e.target.value) * 1000) / 1000;
   if (nueva > 0) {
-    const existencia = existenciaLocal(Venta.carrito[i].producto);
-    if (nueva > existencia + 1e-9) {
-      aviso(`No hay suficiente existencia de "${Venta.carrito[i].producto.descripcion}" (hay ${existencia})`, 'error');
-    } else {
-      Venta.carrito[i].cantidad = nueva;
-    }
+    if (renglon.caja && !Number.isInteger(nueva)) aviso('Las cajas se venden completas: escribe 1, 2, 3…', 'error');
+    else if (alcanza(renglon, nueva)) renglon.cantidad = nueva;
   } else {
     Venta.carrito.splice(i, 1);
   }
@@ -462,6 +820,16 @@ document.getElementById('cuerpo-venta').addEventListener('change', (e) => {
 });
 
 document.getElementById('cuerpo-venta').addEventListener('click', (e) => {
+  const caja = e.target.closest('[data-caja]');
+  if (caja) {
+    alternarCaja(Number(caja.dataset.caja));
+    return;
+  }
+  const coctel = e.target.closest('[data-quitar-coctel]');
+  if (coctel) {
+    quitarCoctel(Number(coctel.dataset.quitarCoctel));
+    return;
+  }
   const boton = e.target.closest('.boton-quitar');
   if (boton) {
     Venta.carrito.splice(Number(boton.dataset.indice), 1);
@@ -480,11 +848,18 @@ document.getElementById('cuerpo-venta').addEventListener('click', (e) => {
 document.addEventListener('keydown', (e) => {
   if (!['+', '-'].includes(e.key) || hayModalAbierto() || Venta.filaSeleccionada < 0) return;
   if (!document.getElementById('seccion-venta').classList.contains('activa')) return;
+  // Mientras se escribe (un código con guion, la cantidad de un renglón) el + y el - se escriben normal:
+  // solo cambian la cantidad con la caja del código vacía o fuera de los campos
+  const campo = e.target;
+  const editable = campo instanceof HTMLInputElement || campo instanceof HTMLTextAreaElement || campo instanceof HTMLSelectElement;
+  if (editable && (campo !== entradaCodigo || campo.value !== '')) return;
   const renglon = Venta.carrito[Venta.filaSeleccionada];
   if (!renglon) return;
   e.preventDefault();
   if (e.key === '+') {
-    agregarProducto(renglon.producto, 1);
+    const mas = Math.round((renglon.cantidad + 1) * 1000) / 1000;
+    if (alcanza(renglon, mas)) renglon.cantidad = mas;
+    pintarVenta();
     return;
   }
   renglon.cantidad = Math.round((renglon.cantidad - 1) * 1000) / 1000;
@@ -495,10 +870,23 @@ document.addEventListener('keydown', (e) => {
   pintarVenta();
 });
 
-// F4: borra la venta de la pestaña (si hay más tickets, la pestaña se cierra)
-function cancelarVenta() {
+// F4: borra la venta de la pestaña (si hay más tickets, la pestaña se cierra). Si tiene artículos
+// pregunta antes: F4 está junto a F3 y F5, y un toque sin querer borraba toda la venta.
+async function cancelarVenta() {
   if (ticketVacio(Venta)) {
     if (Tickets.lista.length > 1) quitarTicket(Tickets.actual);
+    entradaCodigo.focus();
+    return;
+  }
+  const borrar = await confirmar({
+    titulo: 'Cancelar la venta',
+    mensaje: `Se borra todo lo de "${nombreTicket(Venta)}": ${articulosDe(Venta)} artículo(s) por ${dinero(totalVenta())}. No se cobra nada.`,
+    boton: 'Sí, borrar la venta',
+    botonNo: 'No, seguir con la venta',
+    enfocarNo: true,
+    peligro: true,
+  });
+  if (!borrar) {
     entradaCodigo.focus();
     return;
   }
@@ -592,6 +980,10 @@ async function cargarCotizacion(id, boton) {
       avisos.push(`"${r.descripcion}" ya no está en el catálogo`);
       continue;
     }
+    if (producto.es_coctel) {
+      avisos.push(`"${r.descripcion}" es un cóctel: escanea lo que lleva y toca Cóctel (F10)`);
+      continue;
+    }
     const existencia = existenciaLocal(producto);
     const cantidad = Math.min(r.cantidad, existencia);
     if (!(cantidad > 0)) {
@@ -643,8 +1035,8 @@ function abrirBusquedaProducto() {
       .map((p, i) => {
         const existencia = existenciaLocal(p);
         return `<tr data-indice="${i}" class="${i === seleccion ? 'seleccionado' : ''}">
-          <td>${escaparHtml(p.descripcion)}${p.codigo_barras ? `<br><small>${escaparHtml(p.codigo_barras)}</small>` : ''}</td>
-          <td class="num">${dinero(p.precio_venta)}</td>
+          <td>${escaparHtml(p.descripcion)}${p.es_coctel ? ' <span class="chip ok">Cóctel</span>' : ''}${p.codigo_barras ? `<br><small>${escaparHtml(p.codigo_barras)}</small>` : ''}</td>
+          <td class="num">${dinero(p.precio_venta)}${vendeCaja(p) ? `<br><small>caja c/${p.piezas_caja}: ${dinero(p.precio_caja)}</small>` : ''}</td>
           <td class="num">${p.precio_mayoreo != null ? dinero(p.precio_mayoreo) + (p.cantidad_mayoreo ? `<br><small>desde ${p.cantidad_mayoreo}</small>` : '') : '—'}</td>
           <td class="num ${p.usa_inventario && existencia <= 0 ? 'texto-rojo' : ''}">${p.usa_inventario ? existencia : '—'}</td>
         </tr>`;
@@ -734,7 +1126,7 @@ async function abrirCobro() {
       </label>
       <label id="etiqueta-cliente" hidden>Cliente
         <select id="cobro-cliente">
-          ${clientes.map((c) => `<option value="${c.id}">${escaparHtml(c.nombre)} (debe ${dinero(c.saldo)}${c.credito_disponible != null ? `, disponible ${dinero(c.credito_disponible)}` : ''})</option>`).join('') ||
+          ${clientes.map((c) => `<option value="${c.id}" ${c.id === Venta.clienteSugerido ? 'selected' : ''}>${escaparHtml(c.nombre)} (debe ${dinero(c.saldo)}${c.credito_disponible != null ? `, disponible ${dinero(c.credito_disponible)}` : ''})</option>`).join('') ||
             '<option value="" disabled selected>No hay clientes con crédito autorizado</option>'}
         </select>
       </label>
@@ -819,11 +1211,14 @@ async function abrirCobro() {
       const respuesta = await api('/api/ventas', {
         method: 'POST',
         body: {
-          partidas: Venta.carrito.map((r) =>
-            r.producto.comun
-              ? { comun: true, descripcion: r.producto.descripcion, cantidad: r.cantidad, precio: r.producto.precio_venta }
-              : { producto_id: r.producto.id, cantidad: r.cantidad }
-          ),
+          partidas: Venta.carrito.map((r) => {
+            if (r.producto.comun) return { comun: true, descripcion: r.producto.descripcion, cantidad: r.cantidad, precio: r.producto.precio_venta };
+            const especial = r.precioManual != null ? { precio_manual: Number(r.precioManual) } : {};
+            if (r.prestamo) return { producto_id: r.producto.id, cantidad: r.cantidad, prestamo_detalle_id: r.prestamo.detalle_id, ...especial };
+            if (r.caja) return { producto_id: r.producto.id, cantidad: r.cantidad, caja: true, ...especial };
+            if (r.coctel) return { producto_id: r.producto.id, cantidad: r.cantidad, coctel: { id: r.coctel.id, grupo: r.coctel.grupo } };
+            return { producto_id: r.producto.id, cantidad: r.cantidad, ...especial };
+          }),
           forma_pago: forma.value,
           pago: forma.value === 'efectivo' ? Number(pago.value) : totalVenta(),
           pago_usd: forma.value === 'dolar' ? Number(pagoUsd.value) : null,
@@ -1040,7 +1435,9 @@ async function abrirVentasDelDia() {
       ? `Cancelada el ${venta.cancelada_fecha} por ${venta.cancelada_por_nombre || ''}: ${venta.motivo_cancelacion || ''}`
       : '';
     modal.querySelector('#hv-d-partidas').innerHTML = venta.partidas
-      .map((p) => `<tr><td class="num">${p.cantidad}</td><td>${escaparHtml(p.descripcion)}</td><td class="num">${dinero(p.importe)}</td></tr>`)
+      .map((p) => `<tr><td class="num">${p.cajas ? `${p.cajas} caja${p.cajas === 1 ? '' : 's'}` : p.cantidad}</td>
+        <td>${escaparHtml(p.descripcion)}${p.coctel ? ` <span class="chip ok">${escaparHtml(p.coctel)}</span>` : ''}${Number(p.precio_manual) === 1 ? ' <span class="chip pendiente">Precio especial</span>' : ''}</td>
+        <td class="num">${dinero(p.importe)}</td></tr>`)
       .join('');
     modal.querySelector('#hv-d-forma').textContent = NOMBRES_FORMA_PAGO[venta.forma_pago] || venta.forma_pago;
     modal.querySelector('#hv-d-pago').textContent = descripcionPago(venta);
@@ -1096,6 +1493,7 @@ document.getElementById('boton-cancelar-venta').addEventListener('click', cancel
 document.getElementById('boton-reimprimir').addEventListener('click', reimprimirUltimoTicket);
 document.getElementById('boton-ventas-dia').addEventListener('click', abrirVentasDelDia);
 document.getElementById('boton-articulo-comun').addEventListener('click', abrirArticuloComun);
+document.getElementById('boton-coctel').addEventListener('click', () => abrirCoctel());
 document.getElementById('boton-cotizaciones').addEventListener('click', abrirCotizaciones);
 
 document.getElementById('boton-abrir-caja').addEventListener('click', () => pedirApertura({ cancelable: true }));
@@ -1111,6 +1509,7 @@ document.addEventListener('keydown', (e) => {
   if (!ventaActiva || hayModalAbierto()) return;
   if (e.key === 'F3') { e.preventDefault(); abrirBusquedaProducto(); }
   if (e.key === 'Insert') { e.preventDefault(); abrirArticuloComun(); }
+  if (e.key === 'F10') { e.preventDefault(); abrirCoctel(); }
   if (e.key === 'F11') { e.preventDefault(); alternarMayoreo(); }
   if (e.key === 'F12') { e.preventDefault(); abrirCobro(); }
   if (e.key === 'F4') { e.preventDefault(); cancelarVenta(); }
@@ -1120,7 +1519,8 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     cambiarTicket((Tickets.actual + (e.shiftKey ? Tickets.lista.length - 1 : 1)) % Tickets.lista.length);
   }
-  if (e.key === 'Delete' && document.activeElement === entradaCodigo && Venta.filaSeleccionada >= 0) {
+  // Supr quita el renglón seleccionado; si se está escribiendo un código, borra la letra como siempre
+  if (e.key === 'Delete' && document.activeElement === entradaCodigo && entradaCodigo.value === '' && Venta.filaSeleccionada >= 0) {
     e.preventDefault();
     Venta.carrito.splice(Venta.filaSeleccionada, 1);
     Venta.filaSeleccionada = Math.min(Venta.filaSeleccionada, Venta.carrito.length - 1);

@@ -482,6 +482,55 @@ button { cursor: pointer; }
   font-weight: 800;
 }
 .tabla-venta tr.seleccionado .boton-quitar { color: var(--terracotta); }
+/* Venta por caja y cóctel */
+.boton-presentacion {
+  margin-left: 6px; padding: 3px 9px; border: 1px solid rgba(11, 101, 132, 0.35); border-radius: 999px;
+  background: var(--marca-tinte-suave); color: var(--sage-dark); font: inherit; font-size: 12px; font-weight: 700;
+  cursor: pointer; white-space: nowrap;
+}
+.boton-presentacion:hover { background: var(--marca-tinte); border-color: var(--sage-dark); }
+.tabla-venta td.col-precio { cursor: pointer; }
+.tabla-venta td.col-precio:hover { text-decoration: underline dotted; }
+.tabla-venta .precio-antes { display: block; font-size: 11px; color: var(--text-faint); text-decoration: line-through; }
+.tabla-venta .unidad-caja { display: block; margin-top: 2px; font-size: 11px; font-weight: 700; color: var(--text-soft); text-align: center; }
+.tabla-venta tr.fila-coctel td { background: var(--marca-tinte-suave); border-top: 2px solid rgba(11, 101, 132, 0.25); }
+.tabla-venta tr.fila-coctel td.col-importe { background: var(--sage-tint); }
+.tabla-venta tr.en-coctel td:nth-child(2) { padding-left: 26px; border-left: 3px solid rgba(11, 101, 132, 0.25); }
+.tabla-venta tr.en-coctel:not(.seleccionado) td.col-importe { background: transparent; }
+.formas-pago.opciones-coctel { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
+.opciones-coctel .forma-pago { min-height: 76px; }
+.opciones-coctel .forma-pago span { font-size: 15px; font-weight: 800; color: var(--sage-dark); }
+
+/* Préstamos de medicamento (en Clientes) */
+.tarjeta-prestamo { border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; margin: 10px 0; background: var(--surface); }
+.tarjeta-prestamo.cerrado { opacity: 0.75; }
+.tarjeta-prestamo .fila-prestamo { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 8px; }
+.tarjeta-prestamo .fila-prestamo b { font-size: 16px; color: var(--sage-dark); }
+.tarjeta-prestamo .fila-prestamo span:not(.chip) { color: var(--text-soft); font-size: 13px; }
+.tarjeta-prestamo .acciones { margin-top: 8px; justify-content: flex-end; }
+.prestamos-cerrados summary { cursor: pointer; font-weight: 700; color: var(--text-soft); margin: 10px 0; }
+
+/* Revisión semanal del inventario (como la hoja de Excel) */
+.sup-sem-rango { align-self: center; padding: 0 6px; color: var(--sage-dark); font-size: 15px; }
+.sup-sem-sin-hacer { margin: 10px 0; justify-content: flex-start; gap: 8px; flex-wrap: wrap; }
+.sup-semana-tabla { overflow-x: auto; margin-top: 10px; }
+.tabla.tabla-semana th.sem-col { text-align: center; min-width: 84px; font-size: 11px; line-height: 1.25; white-space: nowrap; }
+.tabla.tabla-semana th.sem-col b { display: block; font-size: 12.5px; color: var(--text); }
+.tabla.tabla-semana th.sem-col small { display: block; margin-top: 2px; font-weight: 600; text-transform: none; letter-spacing: 0; color: var(--text-faint); white-space: normal; }
+.tabla.tabla-semana th.sem-col.no_se_hizo { background: #fdecea; color: var(--danger); }
+.tabla.tabla-semana th.sem-col.no_se_hizo small { color: var(--danger); }
+.tabla.tabla-semana th.sem-col.pendiente { background: #fff2d6; }
+.tabla.tabla-semana .sem-producto { min-width: 220px; text-align: left; position: sticky; left: 0; z-index: 1; background: var(--surface); }
+.tabla.tabla-semana td.sem-producto small { display: block; color: var(--text-faint); font-size: 11px; }
+.tabla.tabla-semana tbody tr td.sem-celda { text-align: center; font-weight: 700; font-variant-numeric: tabular-nums; }
+.tabla.tabla-semana tbody tr td.sem-celda small { display: block; font-size: 11px; font-weight: 800; }
+.tabla.tabla-semana tbody tr td.sem-celda.cuadra { color: var(--success-dark); background: #f1faf4; }
+.tabla.tabla-semana tbody tr td.sem-celda.falta { color: var(--danger); background: #fdecea; }
+.tabla.tabla-semana tbody tr td.sem-celda.sobra { color: var(--sage-dark); background: var(--marca-tinte); }
+.tabla.tabla-semana tbody tr td.sem-celda.no-contado { color: var(--text-faint); background: #f6f8f9; }
+.tabla.tabla-semana tbody tr td.sem-celda.vacia { background: #f6f8f9; }
+.tabla.tabla-semana tfoot td { text-align: center; vertical-align: top; font-size: 12px; line-height: 1.3; }
+.tabla.tabla-semana tfoot th { font-size: 12px; text-transform: none; letter-spacing: 0; }
 
 .panel-total {
   width: 350px;
@@ -836,6 +885,9 @@ button { cursor: pointer; }
   min-width: 420px;
   width: 100%;
 }
+#vista-pendientes .tarjeta + .tarjeta {
+  margin-top: 14px;
+}
 .chip {
   display: inline-block;
   padding: 3px 8px;
@@ -898,9 +950,15 @@ button.sup-chip:hover { border-color: var(--sage); }
 .sup-config-caja { border-top: 1px solid var(--line); padding-top: 12px; display: flex; flex-direction: column; gap: 8px; }
 .sup-config-caja h4 { margin: 0; color: var(--sage-dark); font-family: 'Nunito', 'Segoe UI', sans-serif; font-weight: 800; font-size: 15px; }
 .sup-config-caja p { margin: 0; }
-.sup-config { display: flex; flex-wrap: wrap; gap: 10px 22px; }
-.sup-config label { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 13.5px; color: var(--text); }
-.sup-cuota { width: 90px; display: inline-block; }
+/* Lista del inventario de cada farmacia (la arma el jefe) */
+.sup-lista { display: flex; flex-direction: column; gap: 8px; }
+.sup-lista h4 { margin: 8px 0 0; }
+.sup-lista-fila { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.sup-lista-fila label { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 13.5px; color: var(--text); }
+.sup-lista-fila .entrada { flex: 1 1 200px; min-width: 0; width: auto; }
+.sup-lista-fila input[type="time"].entrada { flex: 0 0 160px; }
+.sup-lista > .boton { align-self: flex-start; }
+.sup-lista-tabla { max-height: 360px; overflow: auto; }
 
 /* La impresión de tickets y documentos está en css/impresion.css */
 
@@ -1023,6 +1081,7 @@ button.sup-chip:hover { border-color: var(--sage); }
 .lista-respaldos { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .lista-respaldos li { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 6px 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); }
 .lista-respaldos small { color: var(--text-soft); margin-left: 6px; }
+.subtitulo-respaldos { margin: 18px 0 4px; padding-top: 12px; border-top: 1px solid var(--line); font-size: 14px; }
 .enlace-programa { display: block; margin-top: 14px; text-align: center; color: var(--text-soft); font-size: 13px; background: none; border: 0; cursor: pointer; text-decoration: underline; }
 .celular-vinculo { display: flex; gap: 18px; align-items: center; margin: 14px 0 4px; padding: 14px; border: 1px solid var(--line); border-radius: var(--radius-md); background: #FAFCFD; }
 .celular-vinculo .qr-celular svg { width: 200px; height: 200px; }

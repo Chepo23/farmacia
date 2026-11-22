@@ -3,6 +3,7 @@ const db = require('../db');
 const catalogo = require('../catalogo');
 const inventario = require('../inventario');
 const cotizaciones = require('../cotizaciones');
+const { pendienteDe } = require('./prestamos');
 const bitacora = require('../bitacora');
 const { manejar, ErrorApp } = require('../central');
 const { aperturaVigente } = require('../caja');
@@ -12,6 +13,12 @@ const router = express.Router();
 const FORMAS_PAGO = ['efectivo', 'tarjeta', 'credito', 'dolar', 'mixto'];
 const redondear = (n) => Math.round((Number(n) || 0) * 100) / 100;
 const redondearCantidad = (n) => Math.round((Number(n) || 0) * 1000) / 1000;
+const pesos = (n) => `$${redondear(n).toFixed(2)}`;
+const conPrecioManual = (p) => p.precio_manual !== undefined && p.precio_manual !== null && p.precio_manual !== '';
+const abajoDelCosto = (descripcion, costo) => ({
+  error: `"${descripcion}": no se puede vender abajo del costo (${pesos(costo)})`,
+  codigo: 'ABAJO_DEL_COSTO',
+});
 
 const AVISO_SIN_CONEXION =
   'Se vendió sin conexión con la central: el descuento de inventario se subirá solo en cuanto vuelva el internet.';
@@ -58,8 +65,11 @@ function cargarVenta(id) {
     )
     .all(venta.id);
   venta.articulos = redondearCantidad(venta.partidas.reduce((t, p) => t + p.cantidad, 0));
+  // Lo que se ahorró: por mayoreo o cotización, o lo que se descontó al cambiar el precio en la venta
   venta.ahorro = redondear(
-    venta.partidas.reduce((t, p) => t + Math.max(0, ((p.precio_lista ?? p.precio_unitario) - p.precio_unitario) * p.cantidad), 0)
+    venta.partidas.reduce((t, p) => t + Math.max(0, Number(p.precio_manual) === 1
+      ? Number(p.descuento) || 0
+      : ((p.precio_lista ?? p.precio_unitario) - p.precio_unitario) * p.cantidad), 0)
   );
   if (venta.cliente_id && venta.forma_pago === 'credito') venta.saldo_cliente = saldoCliente(venta.cliente_id);
   return venta;
@@ -98,17 +108,35 @@ router.post('/', manejar(async (req, res) => {
     return res.status(400).json({ error: 'Registra la apertura de caja antes de vender', codigo: 'SIN_APERTURA' });
   }
 
-  // Cantidades válidas y total por producto (para el precio de mayoreo por cantidad)
+  // Cantidades válidas y total de piezas sueltas por producto (para el precio de mayoreo por cantidad).
+  // caja: se vende la caja completa (cantidad = cajas). coctel: { id, grupo } = ese renglón va en un
+  // cóctel (las ampolletas de un mismo grupo se cobran juntas al precio del cóctel).
   const cantidadPorProducto = new Map();
+  const ids = new Set();
   for (const p of partidas) {
     const cantidad = Number(p.cantidad);
     if (!Number.isFinite(cantidad) || !(cantidad > 0)) return res.status(400).json({ error: 'Cantidad no válida' });
+    if (p.caja && !Number.isInteger(cantidad)) return res.status(400).json({ error: 'Las cajas se venden completas' });
+    if (p.coctel && (p.comun || p.caja)) return res.status(400).json({ error: 'En un cóctel solo van productos sueltos del catálogo' });
+    if (p.coctel && !(Number(p.coctel.id) > 0 && Number.isInteger(Number(p.coctel.grupo)))) {
+      return res.status(400).json({ error: 'Cóctel no válido' });
+    }
+    if (p.prestamo_detalle_id != null && (p.comun || p.caja || p.coctel)) {
+      return res.status(400).json({ error: 'Lo de un préstamo se cobra por pieza' });
+    }
+    // Precio cambiado solo en esta venta (doble clic en el precio)
+    if (conPrecioManual(p)) {
+      if (p.comun || p.coctel) return res.status(400).json({ error: 'Ese renglón no lleva un precio especial' });
+      if (!Number.isFinite(Number(p.precio_manual)) || !(Number(p.precio_manual) > 0)) return res.status(400).json({ error: 'Precio no válido' });
+    }
     if (!p.comun) {
       const id = Number(p.producto_id);
-      cantidadPorProducto.set(id, (cantidadPorProducto.get(id) || 0) + cantidad);
+      ids.add(id);
+      if (!p.caja && !p.coctel && p.prestamo_detalle_id == null) cantidadPorProducto.set(id, (cantidadPorProducto.get(id) || 0) + cantidad);
     }
+    if (p.coctel) ids.add(Number(p.coctel.id));
   }
-  const productos = await catalogo.porIds([...cantidadPorProducto.keys()]);
+  const productos = await catalogo.porIds([...ids]);
 
   // Cotización: mientras esté vigente se respeta su precio (o el de hoy, si es más bajo), siempre
   // que no se lleven más piezas de las cotizadas
@@ -117,7 +145,6 @@ router.post('/', manejar(async (req, res) => {
     cotizacion = await conCotizacion(() => cotizaciones.paraVenta(cotizacion_id, req.usuario));
   }
 
-  let total = 0;
   const renglones = [];
   for (const p of partidas) {
     const cantidad = redondearCantidad(p.cantidad);
@@ -130,7 +157,6 @@ router.post('/', manejar(async (req, res) => {
         return res.status(400).json({ error: 'Precio del artículo común no válido' });
       }
       const importe = redondear(precio * cantidad);
-      total += importe;
       renglones.push({
         producto_id: catalogo.ID_ARTICULO_COMUN,
         descripcion,
@@ -148,6 +174,68 @@ router.post('/', manejar(async (req, res) => {
     if (!producto) {
       return res.status(400).json({ error: `El producto ${p.producto_id} ya no está disponible en el catálogo` });
     }
+    if (producto.es_coctel) {
+      return res.status(400).json({ error: 'Para cobrar un cóctel escanea las ampolletas que se usaron y toca Cóctel' });
+    }
+    // Caja completa: su precio, y se descuentan todas sus piezas (el inventario va en piezas)
+    if (p.caja) {
+      if (!(producto.piezas_caja >= 2 && producto.precio_caja > 0)) {
+        return res.status(400).json({ error: `"${producto.descripcion}" no se vende por caja` });
+      }
+      const piezas = redondearCantidad(cantidad * producto.piezas_caja);
+      const porPieza = redondear(producto.precio_caja / producto.piezas_caja);
+      const manual = conPrecioManual(p);
+      const precioCaja = manual ? redondear(p.precio_manual) : producto.precio_caja;
+      const costoCaja = redondear((Number(producto.precio_costo) || 0) * producto.piezas_caja);
+      if (manual && costoCaja > 0 && precioCaja + 0.005 < costoCaja) {
+        return res.status(400).json(abajoDelCosto(`${producto.descripcion} (caja)`, costoCaja));
+      }
+      renglones.push({
+        producto_id: producto.id,
+        descripcion: `${producto.descripcion} (caja c/${producto.piezas_caja})`,
+        cantidad: piezas,
+        precio_unitario: manual ? redondear(precioCaja / producto.piezas_caja) : porPieza,
+        precio_lista: porPieza,
+        costo_unitario: producto.precio_costo,
+        importe: redondear(cantidad * precioCaja),
+        usa_inventario: producto.usa_inventario ? 1 : 0,
+        cajas: cantidad,
+        precio_manual: manual ? 1 : 0,
+        descuento: manual ? redondear((producto.precio_caja - precioCaja) * cantidad) : 0,
+        cambio_precio: manual ? { normal: redondear(producto.precio_caja), cobrado: precioCaja, unidad: 'caja' } : null,
+      });
+      continue;
+    }
+    // En un cóctel cada ampolleta entra a su precio normal; después se reparte el precio del cóctel
+    if (p.coctel) {
+      renglones.push({
+        producto_id: producto.id,
+        descripcion: producto.descripcion,
+        cantidad,
+        precio_unitario: producto.precio_venta,
+        precio_lista: producto.precio_venta,
+        costo_unitario: producto.precio_costo,
+        importe: redondear(producto.precio_venta * cantidad),
+        usa_inventario: producto.usa_inventario ? 1 : 0,
+        coctel_id: Number(p.coctel.id),
+        coctel_grupo: Number(p.coctel.grupo),
+      });
+      continue;
+    }
+    // Lo que se llevaron prestado y ahora pagan: ya salió del inventario al prestarlo
+    let prestamo = null;
+    if (p.prestamo_detalle_id != null) {
+      const d = db.prepare(
+        `SELECT d.*, pr.sucursal_id, pr.folio FROM prestamo_detalle d JOIN prestamos pr ON pr.id = d.prestamo_id WHERE d.id = ?`
+      ).get(Number(p.prestamo_detalle_id));
+      if (!d || Number(d.sucursal_id) !== Number(sucursalId) || Number(d.producto_id) !== Number(producto.id)) {
+        return res.status(400).json({ error: `"${producto.descripcion}" ya no está en ese préstamo` });
+      }
+      if (cantidad > pendienteDe(d) + 0.0005) {
+        return res.status(400).json({ error: `Del préstamo P-${d.folio} solo faltan ${pendienteDe(d)} de "${producto.descripcion}"` });
+      }
+      prestamo = { detalle_id: Number(d.id), prestamo_id: Number(d.prestamo_id), folio: d.folio };
+    }
     // Mayoreo: con F11, o automático al llegar a la cantidad de mayoreo del producto
     const totalProducto = cantidadPorProducto.get(producto.id) || cantidad;
     const aplicaMayoreo = producto.precio_mayoreo != null
@@ -155,8 +243,15 @@ router.post('/', manejar(async (req, res) => {
     let precio = aplicaMayoreo ? producto.precio_mayoreo : producto.precio_venta;
     const cotizado = cotizacion && cotizacion.vigente ? cotizacion.precios.get(producto.id) : null;
     if (cotizado && totalProducto <= cotizado.cantidad + 1e-9) precio = Math.min(precio, cotizado.precio);
+    const manual = conPrecioManual(p);
+    const normal = precio;
+    if (manual) {
+      precio = redondear(p.precio_manual);
+      if (Number(producto.precio_costo) > 0 && precio + 0.005 < Number(producto.precio_costo)) {
+        return res.status(400).json(abajoDelCosto(producto.descripcion, producto.precio_costo));
+      }
+    }
     const importe = redondear(precio * cantidad);
-    total += importe;
     renglones.push({
       producto_id: producto.id,
       descripcion: producto.descripcion,
@@ -165,10 +260,44 @@ router.post('/', manejar(async (req, res) => {
       precio_lista: producto.precio_venta,
       costo_unitario: producto.precio_costo,
       importe,
-      usa_inventario: producto.usa_inventario ? 1 : 0,
+      usa_inventario: producto.usa_inventario && !prestamo ? 1 : 0,
+      prestamo,
+      precio_manual: manual ? 1 : 0,
+      descuento: manual ? redondear((normal - precio) * cantidad) : 0,
+      cambio_precio: manual ? { normal: redondear(normal), cobrado: precio, unidad: 'pieza' } : null,
     });
   }
-  total = redondear(total);
+
+  // Cócteles: las ampolletas (y la jeringa) de un grupo se cobran juntas al precio del cóctel, repartido
+  // entre ellas según su precio normal. El inventario descuenta exactamente lo que se usó.
+  const grupos = new Map();
+  for (const r of renglones) {
+    if (!r.coctel_grupo && r.coctel_grupo !== 0) continue;
+    if (!grupos.has(r.coctel_grupo)) grupos.set(r.coctel_grupo, { coctelId: r.coctel_id, renglones: [] });
+    const g = grupos.get(r.coctel_grupo);
+    if (g.coctelId !== r.coctel_id) return res.status(400).json({ error: 'Un cóctel tiene renglones de otro cóctel' });
+    g.renglones.push(r);
+  }
+  for (const g of grupos.values()) {
+    const coctel = productos.get(g.coctelId);
+    if (!coctel || !coctel.es_coctel) return res.status(400).json({ error: 'Ese cóctel ya no está disponible' });
+    if (g.renglones.length < 2) return res.status(400).json({ error: 'Un cóctel lleva por lo menos dos productos' });
+    const precioCoctel = redondear(coctel.precio_venta);
+    const normal = g.renglones.reduce((t, r) => t + r.importe, 0);
+    let repartido = 0;
+    g.renglones.forEach((r, i) => {
+      const ultimo = i === g.renglones.length - 1;
+      const parte = ultimo
+        ? redondear(precioCoctel - repartido)
+        : redondear(normal > 0 ? (precioCoctel * r.importe) / normal : precioCoctel / g.renglones.length);
+      repartido = redondear(repartido + parte);
+      r.importe = parte;
+      r.precio_unitario = redondear(parte / r.cantidad);
+      r.precio_lista = r.precio_unitario;
+      r.coctel = coctel.descripcion;
+    });
+  }
+  const total = redondear(renglones.reduce((t, r) => t + r.importe, 0));
 
   // Cálculo del pago según la forma elegida
   let pagoNum = Number(pago) || 0;
@@ -245,12 +374,26 @@ router.post('/', manejar(async (req, res) => {
         ).lastInsertRowid;
       const insDetalle = db.prepare(
         `INSERT INTO venta_detalle (venta_id, producto_id, descripcion, cantidad, precio_unitario, costo_unitario,
-           importe, descuenta_inventario, precio_lista)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           importe, descuenta_inventario, precio_lista, coctel, coctel_grupo, cajas, precio_manual, descuento, prestamo_detalle_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      );
+      const cobrarPrestamo = db.prepare(
+        'UPDATE prestamo_detalle SET cobrado = cobrado + @cantidad WHERE id = @id AND cantidad - devuelto - cobrado >= @cantidad - 0.0005'
+      );
+      const anotarCobro = db.prepare(
+        "INSERT INTO prestamo_movimientos (prestamo_id, detalle_id, tipo, cantidad, venta_id, usuario_id) VALUES (?, ?, 'cobro', ?, ?, ?)"
       );
       for (const r of renglones) {
         insDetalle.run(id, r.producto_id, r.descripcion, r.cantidad, r.precio_unitario, r.costo_unitario, r.importe,
-          r.usa_inventario, r.precio_lista);
+          r.usa_inventario, r.precio_lista, r.coctel || '', r.coctel ? r.coctel_grupo : null, r.cajas ?? null, r.precio_manual || 0,
+          r.descuento || 0, r.prestamo ? r.prestamo.detalle_id : null);
+        if (r.prestamo) {
+          if (!cobrarPrestamo.run({ id: r.prestamo.detalle_id, cantidad: r.cantidad }).changes) {
+            throw new ErrorApp(`El préstamo P-${r.prestamo.folio} cambió (¿ya lo regresaron o lo cobraron?): vuelve a cargarlo`);
+          }
+          anotarCobro.run(r.prestamo.prestamo_id, r.prestamo.detalle_id, r.cantidad, id, req.usuario.id);
+          db.prepare('UPDATE prestamos SET subir = 1 WHERE id = ?').run(r.prestamo.prestamo_id);
+        }
       }
       return { ventaId: id, folio: siguiente };
     })();
@@ -289,6 +432,28 @@ router.post('/', manejar(async (req, res) => {
     if (cotizacion) await cotizaciones.liberar(cotizacion.id);
     throw error;
   }
+  // Los precios cambiados en la venta quedan en el registro de cambios (el jefe los ve)
+  const cambiados = renglones.filter((r) => r.cambio_precio);
+  if (cambiados.length) {
+    const cajasDe = (r) => (r.cajas ? r.cajas : r.cantidad);
+    const descuento = redondear(cambiados.reduce((t, r) => t + r.descuento, 0));
+    bitacora.registrar({
+      usuario: req.usuario,
+      sucursal_id: sucursalId,
+      tipo: 'precio_en_venta',
+      descripcion: `Folio ${folio}: ${cambiados.map((r) => `${r.descripcion} ${pesos(r.cambio_precio.normal)} → ${pesos(r.cambio_precio.cobrado)}`
+        + `${r.cambio_precio.unidad === 'caja' ? ' la caja' : ''}${cajasDe(r) !== 1 ? ` (${cajasDe(r)})` : ''}`).join(', ')}`
+        + `${descuento > 0 ? `; descuento ${pesos(descuento)}` : descuento < 0 ? `; ${pesos(-descuento)} más caro` : ''}`,
+      detalle: {
+        venta_id: ventaId,
+        folio,
+        descuento,
+        renglones: cambiados.map((r) => ({ producto: r.descripcion, cantidad: cajasDe(r), ...r.cambio_precio })),
+      },
+      alerta: descuento > 0.005,
+    });
+  }
+
   if (cotizacion) {
     // La venta ya quedó: si no se puede anotar el folio, la cotización igual queda como vendida
     await cotizaciones.confirmarVenta(cotizacion.id, folio).catch((error) => {
@@ -376,6 +541,16 @@ router.post('/:id/cancelar', manejar(async (req, res) => {
       "UPDATE ventas SET cancelada = 0, cancelada_por = NULL, cancelada_fecha = NULL, motivo_cancelacion = '' WHERE id = ?"
     ).run(venta.id);
     throw error;
+  }
+  const deUnPrestamo = db.prepare('SELECT cantidad, prestamo_detalle_id FROM venta_detalle WHERE venta_id = ? AND prestamo_detalle_id IS NOT NULL').all(venta.id);
+  if (deUnPrestamo.length) {
+    db.transaction(() => {
+      for (const l of deUnPrestamo) {
+        db.prepare('UPDATE prestamo_detalle SET cobrado = MAX(0, cobrado - ?) WHERE id = ?').run(l.cantidad, l.prestamo_detalle_id);
+        db.prepare("UPDATE prestamo_movimientos SET anulado = 1 WHERE venta_id = ? AND detalle_id = ? AND tipo = 'cobro'").run(venta.id, l.prestamo_detalle_id);
+        db.prepare('UPDATE prestamos SET subir = 1 WHERE id = (SELECT prestamo_id FROM prestamo_detalle WHERE id = ?)').run(l.prestamo_detalle_id);
+      }
+    })();
   }
   bitacora.registrar({
     usuario: req.usuario, sucursal_id: venta.sucursal_id, tipo: 'venta_cancelada',

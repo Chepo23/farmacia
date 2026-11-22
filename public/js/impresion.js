@@ -223,14 +223,46 @@ const Impresion = (() => {
       + (v.saldo_cliente != null ? fila('Saldo del cliente', dinero(v.saldo_cliente), 't-destacado') : '');
   }
 
-  function ticketVenta(v) {
-    const partidas = (v.partidas || []).map((p) => {
-      const conMayoreo = p.precio_lista != null && Number(p.precio_lista) > Number(p.precio_unitario) + 0.001;
+  // Renglones del ticket: un cóctel sale en una línea con su precio y lo que llevó; una caja, por cajas
+  function partidasTicket(lista) {
+    const filas = [];
+    for (let k = 0; k < lista.length; k++) {
+      const p = lista[k];
+      if (p.coctel) {
+        const mismo = (x) => x.coctel === p.coctel && (x.coctel_grupo ?? null) === (p.coctel_grupo ?? null);
+        const grupo = [p];
+        while (k + 1 < lista.length && mismo(lista[k + 1])) grupo.push(lista[++k]);
+        const importe = grupo.reduce((t, x) => t + Number(x.importe), 0);
+        const lleva = grupo.map((x) => `${Number(x.cantidad) !== 1 ? `${cantidad(x.cantidad)} ` : ''}${escaparHtml(x.descripcion)}`).join(', ');
+        filas.push(`<tr><td class="t-cant">1</td><td>${escaparHtml(p.coctel)}</td><td class="num">${dinero(importe)}</td></tr>`
+          + `<tr class="t-precio"><td></td><td colspan="2">Incluye: ${lleva}</td></tr>`);
+        continue;
+      }
+      if (p.cajas) {
+        const cajas = Number(p.cajas);
+        const porCaja = Number(p.importe) / cajas;
+        const normalCaja = porCaja + (Number(p.descuento) || 0) / cajas;
+        const especial = Number(p.precio_manual) === 1 && normalCaja > porCaja + 0.005;
+        filas.push(`<tr><td class="t-cant">${cantidad(cajas)}</td><td>${escaparHtml(p.descripcion)}</td><td class="num">${dinero(p.importe)}</td></tr>`
+          + (cajas !== 1 || especial
+            ? `<tr class="t-precio"><td></td><td colspan="2">${cantidad(cajas)} caja(s) x ${dinero(porCaja)}${especial ? ` (precio especial, antes ${dinero(normalCaja)})` : ''}</td></tr>`
+            : ''));
+        continue;
+      }
+      const manual = Number(p.precio_manual) === 1;
+      // Precio de antes: el normal (con mayoreo si aplicaba) si se cambió en la venta; si no, el de lista
+      const antes = manual ? Number(p.precio_unitario) + (Number(p.descuento) || 0) / (Number(p.cantidad) || 1) : Number(p.precio_lista);
+      const conMayoreo = p.precio_lista != null && antes > Number(p.precio_unitario) + 0.001;
       const detalle = Number(p.cantidad) !== 1 || conMayoreo
-        ? `<tr class="t-precio"><td></td><td colspan="2">${cantidad(p.cantidad)} x ${dinero(p.precio_unitario)}${conMayoreo ? ` (mayoreo, antes ${dinero(p.precio_lista)})` : ''}</td></tr>`
+        ? `<tr class="t-precio"><td></td><td colspan="2">${cantidad(p.cantidad)} x ${dinero(p.precio_unitario)}${conMayoreo ? ` (${manual ? 'precio especial' : 'mayoreo'}, antes ${dinero(antes)})` : ''}</td></tr>`
         : '';
-      return `<tr><td class="t-cant">${cantidad(p.cantidad)}</td><td>${escaparHtml(p.descripcion)}</td><td class="num">${dinero(p.importe)}</td></tr>${detalle}`;
-    }).join('');
+      filas.push(`<tr><td class="t-cant">${cantidad(p.cantidad)}</td><td>${escaparHtml(p.descripcion)}</td><td class="num">${dinero(p.importe)}</td></tr>${detalle}`);
+    }
+    return filas.join('');
+  }
+
+  function ticketVenta(v) {
+    const partidas = partidasTicket(v.partidas || []);
     return `${encabezadoTicket(v)}
       <div class="t-titulo">TICKET DE VENTA</div>
       ${v.cancelada ? `<div class="t-cancelada">VENTA CANCELADA</div>` : ''}
@@ -420,6 +452,7 @@ const Impresion = (() => {
         ${fila('<b>Utilidad bruta</b>', `<b>${dinero(e.utilidad_bruta)}</b>`)}
         ${fila('Margen sobre la venta', `${Number(e.margen).toFixed(1)}%`)}
         ${e.vendido_sin_costo ? `<div class="t-aclaracion">No cuenta ${dinero(e.vendido_sin_costo)} vendidos sin costo registrado</div>` : ''}
+        ${e.ventas_precio_especial ? fila(`Descuentos (${e.ventas_precio_especial} venta(s))`, dinero(e.descuentos || 0)) : ''}
         ${fila('Ticket promedio', dinero(e.ticket_promedio))}
         ${fila('Venta más alta', dinero(e.venta_mayor))}
         ${fila('Artículos vendidos', piezas(e.piezas))}

@@ -1,6 +1,7 @@
 // Respaldos automáticos de la base de esta computadora. Ventas, clientes, crédito y cortes viven
 // solo aquí (cada farmacia tiene sus estadísticas), así que si el disco falla se pierden: cada día
 // se guarda una copia y, si se configuró, otra en una carpeta extra (por ejemplo de OneDrive).
+// En la misma revisión diaria se guarda también una copia de la base central (ver copia-central.js).
 //
 //   FARMACIA_RESPALDOS_DIR    carpeta de los respaldos (por defecto, "respaldos" junto a la base)
 //   FARMACIA_RESPALDOS_EXTRA  carpeta adicional para una segunda copia (opcional)
@@ -9,6 +10,7 @@
 const fs = require('fs');
 const path = require('path');
 const db = require('./db');
+const copiaCentral = require('./copia-central');
 
 const CONSERVAR_DIARIOS = Math.max(3, Number(process.env.FARMACIA_RESPALDOS_DIAS) || 30);
 const CONSERVAR_MANUALES = 20;
@@ -113,17 +115,21 @@ async function respaldar({ manual = false } = {}) {
   }
 }
 
-// El respaldo del día se hace una vez (al abrir el sistema o en la primera revisión del día)
+// El respaldo del día se hace una vez (al abrir el sistema o en la primera revisión del día);
+// después, la copia del día de la central (si todavía no se hizo y hay internet)
 async function revisar() {
   if (process.env.FARMACIA_RESPALDOS === '0') return null;
   const hoy = fechaLocal();
-  if (listar().some((r) => r.fecha === hoy && !r.manual)) return null;
-  try {
-    return await respaldar();
-  } catch (error) {
-    console.error(estado.error || error.message);
-    return null;
+  let resultado = null;
+  if (!listar().some((r) => r.fecha === hoy && !r.manual)) {
+    try {
+      resultado = await respaldar();
+    } catch (error) {
+      console.error(estado.error || error.message);
+    }
   }
+  await copiaCentral.revisar();
+  return resultado;
 }
 
 function resumen() {
@@ -138,6 +144,7 @@ function resumen() {
     respaldos: lista.slice(0, 40),
     error: estado.error,
     error_extra: estado.errorExtra,
+    central: copiaCentral.resumen(),
   };
 }
 
@@ -150,4 +157,4 @@ function iniciar() {
   temporizador.unref();
 }
 
-module.exports = { iniciar, respaldar, revisar, resumen, listar, carpeta, PATRON };
+module.exports = { iniciar, respaldar, revisar, resumen, listar, carpeta, carpetaExtra, PATRON };

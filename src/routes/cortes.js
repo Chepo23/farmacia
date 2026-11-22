@@ -66,7 +66,9 @@ function estadisticasVentas({ corteId = null, sucursalId = null }) {
               COALESCE(SUM(d.cantidad), 0) AS piezas,
               COALESCE(SUM(CASE WHEN d.costo_unitario > 0 THEN d.importe ELSE 0 END), 0) AS vendido_con_costo,
               COALESCE(SUM(CASE WHEN d.costo_unitario > 0 THEN d.costo_unitario * d.cantidad ELSE 0 END), 0) AS costo,
-              COALESCE(SUM(CASE WHEN d.costo_unitario > 0 THEN 0 ELSE d.importe END), 0) AS sin_costo
+              COALESCE(SUM(CASE WHEN d.costo_unitario > 0 THEN 0 ELSE d.importe END), 0) AS sin_costo,
+              COALESCE(SUM(CASE WHEN d.precio_manual = 1 AND d.descuento > 0 THEN d.descuento ELSE 0 END), 0) AS descuentos,
+              COUNT(DISTINCT CASE WHEN d.precio_manual = 1 THEN d.venta_id END) AS ventas_precio_especial
        FROM venta_detalle d JOIN ventas v ON v.id = d.venta_id
        WHERE ${filtro} AND v.cancelada = 0`
     )
@@ -91,6 +93,8 @@ function estadisticasVentas({ corteId = null, sucursalId = null }) {
       utilidad_bruta: redondear(utilidad),
       margen: renglones.vendido_con_costo > 0 ? Math.round((utilidad / renglones.vendido_con_costo) * 1000) / 10 : 0,
       vendido_sin_costo: redondear(renglones.sin_costo),
+      descuentos: redondear(renglones.descuentos),
+      ventas_precio_especial: renglones.ventas_precio_especial,
       ticket_promedio: ventas.n ? redondear(ventas.total / ventas.n) : 0,
       venta_mayor: redondear(ventas.mayor),
       piezas: Math.round(renglones.piezas * 1000) / 1000,

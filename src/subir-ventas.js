@@ -125,7 +125,7 @@ function ventasParaSubir(caja, ids) {
         updated_at: new Date().toISOString(),
       },
       detalle: lineas.map((d) => ({
-        sucursal_id: v.sucursal_id, fecha, producto_id: d.producto_id, descripcion: d.descripcion, departamento: d.departamento,
+        sucursal_id: v.sucursal_id, fecha, producto_id: d.producto_id, descripcion: d.coctel ? `${d.descripcion} (${d.coctel})` : d.descripcion, departamento: d.departamento,
         cantidad: d.cantidad, precio_unitario: r2(d.precio_unitario), precio_lista: d.precio_lista == null ? null : r2(d.precio_lista),
         costo_unitario: r2(d.costo_unitario), importe: r2(d.importe),
       })),
@@ -167,8 +167,32 @@ function cortesParaSubir(caja, ids) {
   });
 }
 
-const LOTES = { clientes: 200, ventas: 100, abonos: 200, cortes: 20 };
-const ARMAR = { clientes: clientesParaSubir, ventas: ventasParaSubir, abonos: abonosParaSubir, cortes: cortesParaSubir };
+// Préstamos a otras farmacias: lo que falta que regresen o paguen
+function prestamosParaSubir(caja, ids) {
+  const detalle = db.prepare(`SELECT * FROM prestamo_detalle WHERE prestamo_id IN (${enLista(ids)}) ORDER BY id`).all(...ids);
+  return db.prepare(
+    `SELECT p.*, c.nombre AS cliente_nombre FROM prestamos p LEFT JOIN clientes c ON c.id = p.cliente_id WHERE p.id IN (${enLista(ids)})`
+  ).all(...ids).map((p) => {
+    const lineas = detalle.filter((d) => d.prestamo_id === p.id).map((d) => ({
+      producto_id: d.producto_id, descripcion: d.descripcion, cantidad: d.cantidad, devuelto: d.devuelto, cobrado: d.cobrado,
+      pendiente: Math.round((d.cantidad - d.devuelto - d.cobrado) * 1000) / 1000, costo: r2(d.costo),
+    }));
+    const piezas = Math.round(lineas.reduce((t, d) => t + d.pendiente, 0) * 1000) / 1000;
+    return {
+      id: p.id,
+      sucursal_id: p.sucursal_id,
+      fila: {
+        clave: `${caja.clave}:${p.id}`, caja_id: caja.id, sucursal_id: p.sucursal_id, prestamo_local_id: p.id, folio: p.folio,
+        cliente_clave: `${caja.clave}:${p.cliente_id}`, cliente_nombre: p.cliente_nombre || '', usuario_id: p.usuario_id,
+        fecha: aIso(p.fecha), nota: p.nota || '', estado: piezas > 0.0005 ? 'pendiente' : 'cerrado', piezas_pendientes: piezas,
+        valor_pendiente: r2(lineas.reduce((t, d) => t + d.pendiente * d.costo, 0)), detalle: lineas, updated_at: new Date().toISOString(),
+      },
+    };
+  });
+}
+
+const LOTES = { clientes: 200, ventas: 100, abonos: 200, cortes: 20, prestamos: 100 };
+const ARMAR = { clientes: clientesParaSubir, ventas: ventasParaSubir, abonos: abonosParaSubir, cortes: cortesParaSubir, prestamos: prestamosParaSubir };
 
 async function subirLote(tabla, caja, sucursalesCentral) {
   const ids = apartar(tabla, LOTES[tabla]);
@@ -230,8 +254,9 @@ async function subir() {
       const { data: sucursales } = await consultar(sb().from('sucursales').select('id'));
       const enCentral = new Set((sucursales || []).map((s) => Number(s.id)));
       const caja = await cajaCentral(enCentral.has(sucursal) ? sucursal : [...enCentral][0]);
-      // Primero los clientes (las ventas los mencionan) y al final los cortes
-      for (const tabla of ['clientes', 'ventas', 'abonos', 'cortes']) {
+      // Primero los clientes (las ventas los mencionan), luego los cortes y al final los préstamos (si la
+      // central todavía no tiene su tabla, lo demás ya se subió)
+      for (const tabla of ['clientes', 'ventas', 'abonos', 'cortes', 'prestamos']) {
         for (let vuelta = 0; vuelta < 50; vuelta += 1) {
           const n = await subirLote(tabla, caja, enCentral);
           subidos += n;

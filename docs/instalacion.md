@@ -6,7 +6,8 @@ Windows.
 - Icono **Farmacia** en el escritorio; abre en **pantalla completa**, sin barra del navegador ni de Windows.
 - Arranca solo al encender la computadora.
 - Imprime directo en la impresora de tickets de esa computadora, sin la ventana de "Imprimir".
-- Guarda un respaldo diario de los datos de esa computadora (ventas, clientes, crédito y cortes).
+- Guarda un respaldo diario de los datos de esa computadora (ventas, clientes, crédito y cortes) y una
+  **copia diaria de la base central** (inventario de todas las farmacias, conteos, apoyos, ventas…).
 
 **Requisitos:** Windows 10 u 11 de 64 bits.
 
@@ -14,7 +15,7 @@ Windows.
 
 ## 1. Instalar
 
-1. Busca el instalador **`Farmacia-Instalador-1.0.8.exe`** en la carpeta `dist-escritorio` del sistema.
+1. Busca el instalador **`Farmacia-Instalador-1.0.13.exe`** en la carpeta `dist-escritorio` del sistema.
    Como está en OneDrive, en otra computadora puedes descargarlo desde OneDrive, o pasarlo con una USB.
 2. Ábrelo. La primera vez Windows puede mostrar **"Windows protegió su PC"** (el programa no tiene
    una firma digital de pago): toca **Más información → Ejecutar de todas formas**.
@@ -77,6 +78,12 @@ conexión reinicia el sistema, así que termina primero la venta.
   - y en la carpeta extra, si se eligió una.
 - En **Administración → Respaldos de esta computadora** se ve el último respaldo y hay botones para
   **Respaldar ahora** y **Descargar**.
+- **Copia de la central:** una vez al día (al abrir el sistema, o en cuanto haya internet) cada
+  computadora guarda también una copia de la base central en `%APPDATA%\Farmacia\datos\respaldos\central`
+  (`central-AAAA-MM-DD.db.gz`, se conservan 30; también va a la carpeta extra si se eligió una). Solo baja
+  lo que cambió desde la copia anterior, para no gastar el límite de la central. No lleva contraseñas.
+  En la misma pantalla se ve la última copia, hay botón **Copiar la central ahora** y se puede descargar.
+  Volver a una copia lo hace el técnico con `scripts/restaurar-central.js` (ver [jefe.md](jefe.md)).
 - **Para recuperar un respaldo:** Configuración → Datos → **Elegir solo el archivo farmacia.db…** →
   elige el respaldo → **Guardar**. Los datos que había se guardan aparte con otro nombre; no se pierden.
 - Desinstalar el programa **no** borra los datos.
@@ -100,6 +107,27 @@ conexión reinicia el sistema, así que termina primero la venta.
 > jefe. Versión 1.0.8: cada computadora sube sola sus ventas, cortes, créditos y abonos a la central y el
 > jefe ve todas las farmacias (Inicio, Reportes, Cortes y Créditos). Antes de instalarlas hay que
 > actualizar la base central y la función del celular. Todo se explica en [jefe.md](jefe.md).
+> Versión 1.0.9: corrige el teclado después de cobrar (se "comían" letras en los buscadores y un cobro
+> con Enter, F1 o F2 podía guardar el pago anterior o repetirse), el doble clic que guardaba dos veces,
+> el guion, + y Supr en la caja del código, y el "día" cerca de la medianoche (usa la hora de la computadora).
+> **F4** (cancelar la venta) ahora pregunta antes de borrar; un Enter perdido no la borra.
+> Versión 1.0.10: el inventario se hace con la **lista que arma el jefe** para cada farmacia, dos veces al
+> día (turno de la mañana y de la tarde), más **inventarios completos** (todo o un departamento) cuando el
+> jefe los pide; en Productos se puede filtrar por departamento y **dar de baja varios a la vez** (solo la
+> central). Necesita actualizar la base central y la función del celular (ver [jefe.md](jefe.md)).
+> Versión 1.0.11: **inyecciones**. Lo que llega en caja y se vende suelto (como ampolletas sin código)
+> se cobra suelto o por **caja completa** con su precio, y los **cócteles** se cobran con **Cóctel (F10)**:
+> se escanea lo que se usó (de la marca que sea) y el inventario descuenta exactamente eso. Necesita
+> actualizar la base central y la función del celular. Guía: [inyecciones.md](inyecciones.md).
+> Versión 1.0.12: el inventario de cada turno **se ajusta solo al terminar** y el jefe lo revisa en la
+> **Revisión semanal** (la hoja de la semana, como el Excel de antes); **doble clic en el precio** de la
+> venta para cambiarlo solo en esa venta (nunca abajo del costo); **préstamos** de medicamento a otras
+> farmacias en **Clientes → Préstamos**. Necesita actualizar la base central y la función del celular
+> (ver [jefe.md](jefe.md)).
+> Versión 1.0.13: **apoyos desde cualquier farmacia** (una sucursal le manda a la central o a otra
+> sucursal; en *Pendientes* se ven los apoyos en camino; en la central también reciben con el celular los
+> administradores) y **copia diaria de la central** en cada computadora (sección 4). No necesita cambios en
+> la base central ni en la función del celular; sí hay que subir otra vez la app del celular.
 
 - **Salir** (arriba a la derecha) pregunta qué hacer: **Cerrar el sistema** (guarda el respaldo y
   cierra el programa) o **Cambiar de usuario**. En el inicio de sesión está **Cerrar el programa**.

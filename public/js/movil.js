@@ -60,11 +60,11 @@ function fechaCorta(texto) {
 const esAdminCentral = () => M.usuario && M.usuario.rol === 'admin' && Number(M.usuario.es_central) === 1;
 const esJefe = () => esAdminCentral() && Number(M.usuario.jefe) === 1;
 // Pestañas de abajo. El jefe: Inicio, Consultar, Movimientos, Cotizar y Más (recibir y contar van en Más).
-// El administrador de la central consulta y cotiza; las sucursales, todo lo de inventario.
+// El administrador de la central consulta, cotiza y recibe apoyos; las sucursales, todo lo de inventario.
 // Los administradores también ven los movimientos de su sucursal.
 function vistasEnBarra() {
   if (esJefe()) return ['inicio', 'consultar', 'movimientos', 'cotizar', 'mas'];
-  const base = esAdminCentral() ? ['consultar', 'cotizar'] : ['consultar', 'recibir', 'contar', 'apoyos'];
+  const base = esAdminCentral() ? ['consultar', 'cotizar', 'apoyos'] : ['consultar', 'recibir', 'contar', 'apoyos'];
   return M.usuario && M.usuario.rol === 'admin' ? [...base, 'movimientos'] : base;
 }
 const vistasPermitidas = () => (esJefe() ? [...vistasEnBarra(), 'recibir', 'contar'] : vistasEnBarra());
@@ -87,7 +87,43 @@ function aviso(texto, tipo = '') {
   temporizadorAviso = setTimeout(() => { el.hidden = true; }, tipo === 'error' ? 5000 : 3000);
 }
 
+// Contra el doble toque: el botón cuyo toque manda guardar algo (POST, PUT, DELETE) queda desactivado
+// hasta que la central contesta (y medio segundo más), para que no se registre dos veces.
+let botonDelToque = null;
+document.addEventListener('click', (e) => {
+  botonDelToque = e.target instanceof Element ? e.target.closest('button') : null;
+  setTimeout(() => { botonDelToque = null; }, 0);
+}, true);
+
+function apartarBoton(opciones) {
+  const escribe = String(opciones.method || 'GET').toUpperCase() !== 'GET';
+  const boton = escribe && botonDelToque && !botonDelToque.disabled ? botonDelToque : null;
+  if (!boton) return () => {};
+  boton.disabled = true;
+  boton.dataset.guardando = '1';
+  const liberar = () => {
+    if (boton.dataset.guardando !== '1') return;
+    delete boton.dataset.guardando;
+    boton.disabled = false;
+  };
+  // Si se guardó, medio segundo más (el segundo clic de un doble clic); si hubo error, de inmediato
+  // para que se pueda corregir y volver a intentar
+  return (guardado) => (guardado ? setTimeout(liberar, 500) : liberar());
+}
+
 async function api(ruta, opciones = {}) {
+  const liberarBoton = apartarBoton(opciones);
+  let guardado = false;
+  try {
+    const datos = await pedirAlServidor(ruta, opciones);
+    guardado = true;
+    return datos;
+  } finally {
+    liberarBoton(guardado);
+  }
+}
+
+async function pedirAlServidor(ruta, opciones = {}) {
   const cabeceras = { 'Content-Type': 'application/json' };
   if (NUBE) {
     if (!M.token) {
@@ -166,8 +202,17 @@ function cargarBorradores() {
 let alCerrarHoja = null;
 let ignorarPop = false;
 
+// La hoja se arma en un elemento nuevo cada vez: si se reusara, el Enter (u otro atajo) de una hoja
+// anterior seguiría activo en la siguiente y, por ejemplo, la cerraba como si fuera "Cancelar".
+function hojaNueva() {
+  const anterior = $('m-hoja');
+  const nueva = anterior.cloneNode(false);
+  anterior.replaceWith(nueva);
+  return nueva;
+}
+
 function abrirHoja(html) {
-  const hoja = $('m-hoja');
+  const hoja = hojaNueva();
   hoja.innerHTML = html;
   const fondo = $('m-fondo-hoja');
   if (fondo.hidden) history.pushState({ capa: 'hoja' }, '');
@@ -181,7 +226,7 @@ function cerrarHoja({ desdeHistorial = false } = {}) {
   const fondo = $('m-fondo-hoja');
   if (fondo.hidden) return;
   fondo.hidden = true;
-  $('m-hoja').innerHTML = '';
+  hojaNueva();
   const alCerrar = alCerrarHoja;
   alCerrarHoja = null;
   if (!desdeHistorial && history.state && history.state.capa === 'hoja') {
@@ -336,7 +381,7 @@ function elegirDeResultados(resultados) {
 async function usarProducto(producto) {
   if (M.vista === 'recibir') {
     if ($('rec-preguntar').checked) {
-      const r = await pedirCantidad({ titulo: producto.descripcion, mensaje: '¿Cuántas piezas llegaron?', boton: 'Agregar' });
+      const r = await pedirCantidad({ titulo: escaparHtml(producto.descripcion), mensaje: preguntaRecepcion(producto), boton: 'Agregar' });
       if (r) agregarRecepcion(producto, r.cantidad);
     } else {
       agregarRecepcion(producto, 1);
@@ -472,6 +517,12 @@ function pintarRecientes() {
     </ul>` : '';
 }
 
+// Lo que llega en caja y se vende suelto (como ampolletas sin código): cuántas piezas trae la caja
+const piezasPorCaja = (producto) => (Number(producto && producto.piezas_caja) >= 2 ? Number(producto.piezas_caja) : 1);
+const preguntaRecepcion = (producto) => (piezasPorCaja(producto) > 1
+  ? `¿Cuántas cajas llegaron? Cada caja trae ${cantidadTexto(piezasPorCaja(producto))} piezas.`
+  : '¿Cuántas piezas llegaron?');
+
 function mostrarProducto(p) {
   M.producto = p;
   recordar(p);
@@ -486,21 +537,24 @@ function mostrarProducto(p) {
       <div class="m-precios">
         <div class="m-precio"><small>Precio</small><b>${dinero(p.precio_venta)}</b></div>
         ${p.precio_mayoreo != null ? `<div class="m-precio secundario"><small>Mayoreo${p.cantidad_mayoreo ? ` desde ${cantidadTexto(p.cantidad_mayoreo)}` : ''}</small><b>${dinero(p.precio_mayoreo)}</b></div>` : ''}
+        ${piezasPorCaja(p) > 1 && Number(p.precio_caja) > 0 ? `<div class="m-precio secundario"><small>Caja c/${cantidadTexto(piezasPorCaja(p))}</small><b>${dinero(p.precio_caja)}</b></div>` : ''}
         <div class="m-precio secundario"><small>Costo</small><b>${dinero(p.precio_costo)}</b></div>
       </div>
       ${p.usa_inventario ? `<div class="m-existencias">${existencias.map((e) => `
         <div class="m-existencia ${e.sucursal_id === M.sucursalId ? 'propia' : ''} ${(e.minimo > 0 && e.existencia <= e.minimo) || e.existencia < 0 ? 'bajo' : ''}">
           <span>${escaparHtml(e.sucursal)}${e.minimo > 0 ? `<small>mín. ${cantidadTexto(e.minimo)}</small>` : ''}</span>
           <b>${cantidadTexto(e.existencia)}</b>
-        </div>`).join('')}</div>` : '<div class="m-explicacion">Este producto no controla inventario.</div>'}
+        </div>`).join('')}</div>` : `<div class="m-explicacion">${p.es_coctel
+          ? 'Es un cóctel: en la caja se escanea lo que lleva (ampolletas, jeringa y aguja) y se cobra con Cóctel (F10). El inventario descuenta lo que se usó.'
+          : 'Este producto no controla inventario.'}</div>`}
+      ${piezasPorCaja(p) > 1 && p.usa_inventario ? `<div class="m-explicacion">Se vende suelto: el inventario va en piezas (la caja trae ${cantidadTexto(piezasPorCaja(p))}).</div>` : ''}
       ${p.usa_inventario ? '<div id="consulta-movimientos" class="m-movimientos"><div class="m-cargando">Cargando los últimos movimientos…</div></div>' : ''}
       <div class="m-acciones">
         ${esAdminCentral() ? `
           <button class="m-accion principal ancha" data-accion="cotizar"><svg class="icono"><use href="#i-cotizar"/></svg>Agregar a cotización</button>
           <button class="m-accion" data-accion="historial"><svg class="icono"><use href="#i-historial"/></svg>Historial</button>
           <button class="m-accion" data-accion="precio"><svg class="icono"><use href="#i-precio"/></svg>Cambiar precio</button>
-          ${esJefe() && p.usa_inventario ? `<button class="m-accion ancha" data-accion="importante" id="consulta-importante" disabled>
-            <svg class="icono"><use href="#i-estrella"/></svg><span>Importante para el inventario del día…</span></button>` : ''}` : `
+          ${esJefe() && p.usa_inventario ? '<div id="consulta-listas" class="m-chips m-listas-producto"><small>Buscando en las listas del inventario…</small></div>' : ''}` : `
           ${p.usa_inventario ? `
             <button class="m-accion principal" data-accion="entrada">Entrada</button>
             <button class="m-accion" data-accion="salida">Merma / salida</button>
@@ -511,7 +565,7 @@ function mostrarProducto(p) {
     </div>`;
   window.scrollTo({ top: 0, behavior: 'smooth' });
   if (p.usa_inventario) pintarMovimientos(p);
-  if (esJefe() && p.usa_inventario) pintarImportante(p);
+  if (esJefe() && p.usa_inventario) pintarListasProducto(p);
 }
 
 const NOMBRES_MOVIMIENTO = { entrada: 'Entrada', salida: 'Salida', venta: 'Venta', ajuste: 'Ajuste' };
@@ -548,9 +602,9 @@ async function moverInventario(tipo) {
   const p = M.producto;
   const actual = existenciaEn(p);
   const textos = {
-    entrada: { titulo: 'Entrada de mercancía', mensaje: `¿Cuántas piezas llegaron? Hay ${cantidadTexto(actual)} en ${nombreSucursal()}.`, boton: 'Sumar', nota: 'Proveedor o factura (opcional)' },
+    entrada: { titulo: 'Entrada de mercancía', mensaje: `¿Cuántas piezas llegaron? Hay ${cantidadTexto(actual)} en ${escaparHtml(nombreSucursal())}.`, boton: 'Sumar', nota: 'Proveedor o factura (opcional)' },
     salida: { titulo: 'Merma o salida', mensaje: `¿Cuántas piezas salen (caducadas, dañadas)? Hay ${cantidadTexto(actual)}.`, boton: 'Restar', nota: 'Motivo (opcional)' },
-    ajuste: { titulo: 'Ajustar existencia', mensaje: `¿Cuántas piezas hay realmente en ${nombreSucursal()}? El sistema dice ${cantidadTexto(actual)}.`, boton: 'Ajustar', nota: 'Nota (opcional)' },
+    ajuste: { titulo: 'Ajustar existencia', mensaje: `¿Cuántas piezas hay realmente en ${escaparHtml(nombreSucursal())}? El sistema dice ${cantidadTexto(actual)}.`, boton: 'Ajustar', nota: 'Nota (opcional)' },
   }[tipo];
   const r = await pedirCantidad({
     titulo: textos.titulo, mensaje: textos.mensaje, valor: tipo === 'ajuste' ? actual : 1,
@@ -574,7 +628,7 @@ async function cambiarMinimo() {
   const actual = (p.existencias || []).find((e) => e.sucursal_id === M.sucursalId)?.minimo || 0;
   const r = await pedirCantidad({
     titulo: 'Mínimo para avisar',
-    mensaje: `Cuando haya esta cantidad o menos en ${nombreSucursal()}, el producto aparece en "bajo mínimo" y en las sugerencias de pedido.`,
+    mensaje: `Cuando haya esta cantidad o menos en ${escaparHtml(nombreSucursal())}, el producto aparece en "bajo mínimo" y en las sugerencias de pedido.`,
     valor: actual, boton: 'Guardar', permitirCero: true,
   });
   if (!r) return;
@@ -626,6 +680,11 @@ function cambiarPrecio() {
       <label>Mayoreo <input id="precio-mayoreo" type="number" inputmode="decimal" step="0.01" min="0" value="${p.precio_mayoreo ?? ''}" placeholder="Sin mayoreo"></label>
       <label>Desde (piezas) <input id="precio-cantidad" type="number" inputmode="decimal" step="any" min="0" value="${p.cantidad_mayoreo ?? ''}" placeholder="Solo con F11"></label>
     </div>
+    ${p.es_coctel ? '' : `<p class="m-explicacion">Si llega en caja y se vende suelto (como ampolletas sin código): cuántas piezas trae la caja y el precio de la caja completa. El precio de venta de arriba es el de la pieza y la existencia va en piezas (si estaba en cajas, corrígela).</p>
+    <div class="m-fila">
+      <label>Piezas por caja <input id="precio-piezas-caja" type="number" inputmode="numeric" step="1" min="2" value="${p.piezas_caja ?? ''}" placeholder="No"></label>
+      <label>Precio de la caja <input id="precio-caja" type="number" inputmode="decimal" step="0.01" min="0" value="${p.precio_caja ?? ''}" placeholder="—"></label>
+    </div>`}
     <div id="hoja-error" class="m-error" hidden></div>
     <div class="m-botones">
       <button class="m-boton secundario" data-r="no">Cancelar</button>
@@ -647,6 +706,10 @@ function cambiarPrecio() {
           precio_costo: hoja.querySelector('#precio-costo').value,
           precio_mayoreo: hoja.querySelector('#precio-mayoreo').value,
           cantidad_mayoreo: hoja.querySelector('#precio-cantidad').value,
+          ...(p.es_coctel ? {} : {
+            piezas_caja: hoja.querySelector('#precio-piezas-caja').value,
+            precio_caja: hoja.querySelector('#precio-caja').value,
+          }),
         },
       });
       cerrarHoja();
@@ -660,6 +723,11 @@ function cambiarPrecio() {
 }
 
 $('consulta-resultado').addEventListener('click', (e) => {
+  const lista = e.target.closest('button[data-lista-producto]');
+  if (lista && M.producto) {
+    cambiarListaDeProducto(lista);
+    return;
+  }
   const boton = e.target.closest('button[data-accion]');
   if (!boton || !M.producto) return;
   const accion = boton.dataset.accion;
@@ -668,7 +736,6 @@ $('consulta-resultado').addEventListener('click', (e) => {
   if (accion === 'historial') verHistorial();
   if (accion === 'precio') cambiarPrecio();
   if (accion === 'cotizar') agregarACotizacionDesdeConsulta();
-  if (accion === 'importante') cambiarImportante(boton);
 });
 
 $('consulta-recientes').addEventListener('click', async (e) => {
@@ -682,34 +749,46 @@ $('consulta-recientes').addEventListener('click', async (e) => {
 });
 
 // ---------- Recibir mercancía ----------
+// Lo que llega en caja con piezas sin código (como ampolletas): el inventario va en piezas, así que
+// cada caja escaneada suma todas sus piezas
 function agregarRecepcion(producto, cantidad) {
+  const paso = piezasPorCaja(producto);
+  const piezas = redondear(cantidad * paso);
   let renglon = M.recepcion.renglones.find((r) => r.producto_id === producto.id);
   if (renglon) {
-    renglon.cantidad = redondear(renglon.cantidad + cantidad);
+    renglon.cantidad = redondear(renglon.cantidad + piezas);
+    renglon.paso = paso;
     M.recepcion.renglones = [renglon, ...M.recepcion.renglones.filter((r) => r !== renglon)];
   } else {
-    renglon = { producto_id: producto.id, descripcion: producto.descripcion, codigo_barras: producto.codigo_barras, cantidad: redondear(cantidad) };
+    renglon = { producto_id: producto.id, descripcion: producto.descripcion, codigo_barras: producto.codigo_barras, cantidad: piezas, paso };
     M.recepcion.renglones.unshift(renglon);
   }
   pintarRecepcion(producto.id);
   if (Escaner.abierto()) {
-    Escaner.informar(`${escaparHtml(producto.descripcion)}<br><b>${cantidadTexto(renglon.cantidad)}</b> pieza(s)`, {
-      boton: { texto: '+1', alPulsar: () => { Escaner.sonar('ok'); agregarRecepcion(producto, 1); } },
+    Escaner.informar(`${escaparHtml(producto.descripcion)}<br><b>${cantidadTexto(renglon.cantidad)}</b> pieza(s)${paso > 1 ? ` · caja c/${cantidadTexto(paso)}` : ''}`, {
+      boton: { texto: paso > 1 ? '+1 caja' : '+1', alPulsar: () => { Escaner.sonar('ok'); agregarRecepcion(producto, 1); } },
     });
   }
   return renglon;
+}
+
+// Cajas completas de un renglón de recepción (texto), si el producto se vende suelto de una caja
+function textoCajas(r) {
+  if (!(r.paso > 1)) return '';
+  const cajas = r.cantidad / r.paso;
+  return ` · caja c/${cantidadTexto(r.paso)}${Number.isInteger(cajas) ? ` = ${cajas} caja${cajas === 1 ? '' : 's'}` : ''}`;
 }
 
 function pintarRecepcion(nuevo = null) {
   const lista = M.recepcion.renglones;
   $('rec-lista').innerHTML = lista.map((r) => `
     <li class="m-renglon ${r.producto_id === nuevo ? 'nuevo' : ''}" data-id="${r.producto_id}">
-      <div><div class="m-renglon-nombre">${escaparHtml(r.descripcion)}</div><div class="m-renglon-dato">${escaparHtml(r.codigo_barras || 'Sin código')}</div></div>
+      <div><div class="m-renglon-nombre">${escaparHtml(r.descripcion)}</div><div class="m-renglon-dato">${escaparHtml(r.codigo_barras || 'Sin código')}${textoCajas(r)}</div></div>
       <button class="m-quitar" data-accion="quitar" aria-label="Quitar"><svg class="icono"><use href="#i-x"/></svg></button>
       <div class="m-paso">
-        <button data-accion="menos" aria-label="Una menos"><svg class="icono"><use href="#i-menos"/></svg></button>
-        <input type="number" inputmode="decimal" min="0" step="any" value="${cantidadTexto(r.cantidad)}" data-accion="cantidad" aria-label="Cantidad">
-        <button data-accion="mas" aria-label="Una más"><svg class="icono"><use href="#i-mas"/></svg></button>
+        <button data-accion="menos" aria-label="${r.paso > 1 ? 'Una caja menos' : 'Una menos'}"><svg class="icono"><use href="#i-menos"/></svg></button>
+        <input type="number" inputmode="decimal" min="0" step="any" value="${cantidadTexto(r.cantidad)}" data-accion="cantidad" aria-label="Piezas">
+        <button data-accion="mas" aria-label="${r.paso > 1 ? 'Una caja más' : 'Una más'}"><svg class="icono"><use href="#i-mas"/></svg></button>
       </div>
     </li>`).join('') || '<li class="m-vacio">Todavía no hay productos. Toca <b>Escanear</b> y apunta al código de cada producto que llegó.</li>';
   const piezas = redondear(lista.reduce((t, r) => t + r.cantidad, 0));
@@ -729,9 +808,11 @@ function cambiarRenglon(lista, campo, e, pintar) {
   const renglon = lista.renglones.find((r) => r.producto_id === Number(fila.dataset.id));
   if (!renglon) return;
   const accion = e.target.closest('[data-accion]')?.dataset.accion;
+  // Al recibir, lo que viene en caja sube y baja de caja en caja
+  const paso = campo === 'cantidad' && renglon.paso > 1 ? renglon.paso : 1;
   if (accion === 'quitar') lista.renglones = lista.renglones.filter((r) => r !== renglon);
-  if (accion === 'menos') renglon[campo] = Math.max(0, redondear(renglon[campo] - 1));
-  if (accion === 'mas') renglon[campo] = redondear(renglon[campo] + 1);
+  if (accion === 'menos') renglon[campo] = Math.max(0, redondear(renglon[campo] - paso));
+  if (accion === 'mas') renglon[campo] = redondear(renglon[campo] + paso);
   if (accion === 'cantidad' && e.type === 'change') {
     const valor = Number(String(e.target.value).replace(',', '.'));
     renglon[campo] = Number.isFinite(valor) && valor >= 0 ? redondear(valor) : renglon[campo];
@@ -957,6 +1038,12 @@ function totalCotizacion() {
 }
 
 function agregarCotizacion(producto, cantidad) {
+  // El cóctel se cobra en la caja con lo que lleva (ampolletas, jeringa y aguja)
+  if (producto.es_coctel) {
+    if (Escaner.abierto()) Escaner.informar(`${escaparHtml(producto.descripcion)} es un cóctel: se cobra en la caja`, { error: true });
+    else aviso(`"${producto.descripcion}" es un cóctel: en la caja se escanea lo que lleva y se toca Cóctel`, 'error');
+    return null;
+  }
   let renglon = M.cotizacion.renglones.find((r) => r.producto_id === producto.id);
   if (renglon) {
     renglon.cantidad = redondear(renglon.cantidad + cantidad);
@@ -977,7 +1064,11 @@ function agregarCotizacion(producto, cantidad) {
 
 async function agregarACotizacionDesdeConsulta() {
   const p = M.producto;
-  const r = await pedirCantidad({ titulo: p.descripcion, mensaje: `Precio de lista ${dinero(p.precio_venta)}. ¿Cuántas piezas se cotizan?`, boton: 'Agregar' });
+  if (p.es_coctel) {
+    agregarCotizacion(p, 1); // solo avisa que el cóctel se cobra en la caja
+    return;
+  }
+  const r = await pedirCantidad({ titulo: escaparHtml(p.descripcion), mensaje: `Precio de lista ${dinero(p.precio_venta)}. ¿Cuántas piezas se cotizan?`, boton: 'Agregar' });
   if (!r) return;
   agregarCotizacion(p, r.cantidad);
   aviso(`Agregado a la cotización (${M.cotizacion.renglones.length} producto(s), ${dinero(totalCotizacion())})`, 'exito');
@@ -1215,7 +1306,7 @@ async function verCotizacion(id) {
   });
 }
 
-// ---------- Apoyos: revisar con palomitas lo que mandó la central ----------
+// ---------- Apoyos: revisar con palomitas lo que mandó otra farmacia ----------
 const claveRevision = (id) => `farmacia.movil.${M.usuario.id}.apoyo.${id}`;
 
 function leerRevision(id) {
@@ -1256,7 +1347,7 @@ function pintarApoyos() {
         <small>${a.renglones} producto(s) · ${cantidadTexto(a.piezas)} pieza(s)${enCurso ? ' · <span class="m-en-curso">revisión a medias</span>' : ''}</small></span>
       <span class="m-accion principal">Revisar</span>
     </button></li>`;
-  }).join('') || '<li class="m-vacio">No hay apoyos por recibir. Cuando la central mande uno, aparecerá aquí.</li>';
+  }).join('') || '<li class="m-vacio">No hay apoyos por recibir. Cuando otra farmacia te mande uno, aparecerá aquí.</li>';
   $('nav-apoyos').hidden = lista.length === 0;
   $('nav-apoyos').textContent = lista.length;
 }
@@ -1466,7 +1557,7 @@ $('apo-terminar').addEventListener('click', () => {
       ${d.codigos.length ? `<div><h4>Códigos que no están en el catálogo</h4><p>${d.codigos.map((c) => `<code>${escaparHtml(c)}</code>`).join(' ')}</p></div>` : ''}
     </div>
     <p>Si lo recibes así, entra al inventario solo lo que sí llegó y venía en el apoyo (<b>${cantidadTexto(d.piezas)} pieza(s)</b>).
-      Lo que sobra o no venía no se suma. Las diferencias quedan anotadas en el apoyo para que la central las revise.</p>
+      Lo que sobra o no venía no se suma. Las diferencias quedan anotadas en el apoyo para que la farmacia que lo mandó las revise.</p>
     <input id="apo-nota" type="text" maxlength="200" placeholder="Comentario (opcional)" aria-label="Comentario">
     <div class="m-botones">
       <button class="m-boton secundario" data-r="no">Seguir revisando</button>
@@ -1561,7 +1652,7 @@ async function manejarEscaneo(codigo) {
   }
   if (M.vista === 'recibir' && $('rec-preguntar').checked) {
     Escaner.pausar(true);
-    const r = await pedirCantidad({ titulo: producto.descripcion, mensaje: '¿Cuántas piezas llegaron?', boton: 'Agregar' });
+    const r = await pedirCantidad({ titulo: escaparHtml(producto.descripcion), mensaje: preguntaRecepcion(producto), boton: 'Agregar' });
     if (r) agregarRecepcion(producto, r.cantidad);
     Escaner.pausar(false);
     return true;
@@ -1782,7 +1873,8 @@ async function iniciar() {
   if (esAdminCentral()) {
     $('consulta-ayuda').textContent = 'También ves los últimos movimientos, cambias el precio y lo agregas a una cotización.';
     if (esJefe() && M.vista !== 'inicio') revisarPorAutorizar();
-  } else if (M.vista !== 'apoyos') {
+  }
+  if (!esJefe() && M.vista !== 'apoyos') {
     cargarApoyos({ silencioso: true }); // para el aviso de la pestaña
   }
   pintarAvisoInstalar();
@@ -1791,7 +1883,7 @@ async function iniciar() {
     revisarSincronizacion();
     setInterval(revisarSincronizacion, 30000);
     // Aviso de apoyos que van llegando
-    if (!esAdminCentral()) setInterval(() => { if (!M.revision) cargarApoyos({ silencioso: true }); }, 120000);
+    if (!esJefe()) setInterval(() => { if (!M.revision) cargarApoyos({ silencioso: true }); }, 120000);
     // Aviso de los inventarios del día que falta autorizar
     if (esJefe()) setInterval(revisarPorAutorizar, 300000);
   }

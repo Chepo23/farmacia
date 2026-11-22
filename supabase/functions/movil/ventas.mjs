@@ -252,7 +252,18 @@ export function crearVentasCentral({ sb, consultar, ErrorApp, fechas }) {
       if (sucursal) c = c.eq('sucursal_id', sucursal);
       return c.order('saldo', { ascending: false }).order('id');
     });
-    const n = await nombres({ sucursales: filas.map((c) => c.sucursal_id) });
+    // Préstamos a otras farmacias que falta que regresen o paguen (sin la tabla en la central, no salen)
+    let prestamos = null;
+    try {
+      prestamos = await todas(() => {
+        let p = sb().from('prestamos').select('id,sucursal_id,folio,cliente_nombre,fecha,nota,piezas_pendientes,valor_pendiente,detalle').eq('estado', 'pendiente');
+        if (sucursal) p = p.eq('sucursal_id', sucursal);
+        return p.order('fecha').order('id');
+      });
+    } catch {
+      prestamos = null;
+    }
+    const n = await nombres({ sucursales: [...filas.map((c) => c.sucursal_id), ...(prestamos || []).map((p) => p.sucursal_id)] });
     const porSucursal = new Map();
     for (const c of filas) {
       const k = Number(c.sucursal_id);
@@ -269,6 +280,15 @@ export function crearVentasCentral({ sb, consultar, ErrorApp, fechas }) {
         saldo: r2(c.saldo), limite_credito: r2(c.limite_credito), excedido: Number(c.limite_credito) > 0 && Number(c.saldo) > Number(c.limite_credito) + 0.005,
         ultima_compra: c.ultima_compra, ultimo_abono: c.ultimo_abono,
       })),
+      prestamos: prestamos == null ? null : prestamos.map((p) => {
+        const detalle = typeof p.detalle === 'string' ? JSON.parse(p.detalle || '[]') : (p.detalle || []);
+        return {
+          id: Number(p.id), sucursal_id: Number(p.sucursal_id), sucursal: n.sucursal(p.sucursal_id), folio: p.folio, farmacia: p.cliente_nombre,
+          fecha: p.fecha, nota: p.nota || '', piezas: r2(p.piezas_pendientes), valor: r2(p.valor_pendiente),
+          productos: detalle.filter((d) => Number(d.pendiente) > 0.0005).map((d) => ({ descripcion: d.descripcion, pendiente: Number(d.pendiente) })),
+        };
+      }),
+      valor_prestado: prestamos == null ? 0 : r2(prestamos.reduce((t, p) => t + Number(p.valor_pendiente), 0)),
     };
   }
 

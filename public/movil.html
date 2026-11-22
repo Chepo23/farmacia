@@ -139,20 +139,21 @@
       <button id="rec-vaciar" class="m-boton secundario">Vaciar lista</button>
     </section>
 
-    <!-- Contar: el inventario del día (lista corta, a ciegas) y el conteo libre de un estante -->
+    <!-- Contar: el inventario del turno (la lista del jefe, a ciegas), el inventario completo y el conteo libre de un estante -->
     <section id="vista-contar" class="m-vista" hidden>
       <div id="dia-tarjeta"></div>
       <div id="dia-vista" class="m-vista" hidden>
         <div class="m-apoyo-cabecera">
           <button id="dia-volver" class="m-icono-boton claro" aria-label="Volver"><svg class="icono"><use href="#i-atras"/></svg></button>
-          <div><b>Inventario del día</b><small id="dia-subtitulo"></small></div>
+          <div><b id="dia-titulo">Inventario</b><small id="dia-subtitulo"></small></div>
         </div>
         <div class="m-progreso" aria-hidden="true"><span id="dia-barra"></span></div>
         <div class="m-resumen"><span><b id="dia-contados">0</b> de <b id="dia-total">0</b> contados</span><span><b id="dia-cuadran">0</b> cuadran</span></div>
         <div class="m-explicacion">Escanea cada producto de la lista y escribe <b>cuántas piezas hay</b> (estante y bodega).
           Aquí no se ve lo que dice el sistema. Si no cuadra te pedirá contarlo otra vez y, si sigue sin cuadrar, el motivo.</div>
+        <select id="dia-departamento" class="m-campo" aria-label="Departamento" hidden></select>
         <ul id="dia-lista" class="m-lista"></ul>
-        <button id="dia-terminar" class="m-boton principal con-icono"><svg class="icono"><use href="#i-check"/></svg>Terminar el inventario del día</button>
+        <button id="dia-terminar" class="m-boton principal con-icono"><svg class="icono"><use href="#i-check"/></svg><span id="dia-terminar-texto">Terminar el inventario</span></button>
       </div>
       <div id="con-libre" class="m-vista">
         <div class="m-titulo-seccion">Conteo libre (un estante o un producto)</div>
@@ -194,11 +195,12 @@
         <button data-mas="cortes"><svg class="icono"><use href="#i-lista"/></svg><span><b>Cortes de caja</b><small>De cada farmacia, con lo que faltó o sobró</small></span></button>
         <button data-mas="creditos"><svg class="icono"><use href="#i-historial"/></svg><span><b>Créditos de clientes</b><small>Quién debe y cuánto en cada farmacia</small></span></button>
         <button data-mas="inventario"><svg class="icono"><use href="#i-caja"/></svg><span><b>Inventario de las sucursales</b><small>Valor, bajo mínimo, agotados, negativos y sin movimiento</small></span></button>
-        <button data-mas="conteos"><svg class="icono"><use href="#i-contar"/></svg><span><b>Inventario del día</b><small>Avance, exactitud y diferencias por autorizar</small></span><span id="mas-globo-conteos" class="m-globo" hidden></span></button>
+        <button data-mas="semana"><svg class="icono"><use href="#i-lista"/></svg><span><b>Revisión semanal</b><small>Cada turno de la semana: qué faltó, quién contó y quién cobró</small></span></button>
+        <button data-mas="conteos"><svg class="icono"><use href="#i-contar"/></svg><span><b>Inventarios</b><small>Mañana, tarde y completos: avance y diferencias</small></span><span id="mas-globo-conteos" class="m-globo" hidden></span></button>
         <button data-mas="cambios"><svg class="icono"><use href="#i-historial"/></svg><span><b>Registro de cambios</b><small>Precios, altas, usuarios, cancelaciones, cortes y efectivo</small></span></button>
-        <button data-mas="config"><svg class="icono"><use href="#i-ajustes"/></svg><span><b>Productos por día</b><small>Cuántos productos cuenta cada sucursal</small></span></button>
+        <button data-mas="lista"><svg class="icono"><use href="#i-ajustes"/></svg><span><b>Lista del inventario</b><small>Qué productos cuenta cada farmacia, turnos e inventario completo</small></span></button>
         <button data-mas="recibir"><svg class="icono"><use href="#i-recibir"/></svg><span><b>Recibir mercancía</b><small>Entrada de lo que llegó</small></span></button>
-        <button data-mas="contar"><svg class="icono"><use href="#i-contar"/></svg><span><b>Contar</b><small>Inventario del día o un estante</small></span></button>
+        <button data-mas="contar"><svg class="icono"><use href="#i-contar"/></svg><span><b>Contar</b><small>Inventario del turno o un estante</small></span></button>
       </div>
       <div id="mas-detalle" class="m-vista" hidden>
         <div class="m-apoyo-cabecera">
@@ -225,10 +227,10 @@
       <ul id="cot-enviadas" class="m-lista"></ul>
     </section>
 
-    <!-- Apoyos: revisar con el celular lo que mandó la central -->
+    <!-- Apoyos: revisar con el celular lo que mandó otra farmacia -->
     <section id="vista-apoyos" class="m-vista" hidden>
       <div id="apo-inicio" class="m-vista">
-        <div class="m-explicacion">Aquí aparecen los apoyos que la central mandó a tu farmacia. Cuando llegue la mercancía,
+        <div class="m-explicacion">Aquí aparecen los apoyos que otra farmacia mandó a la tuya. Cuando llegue la mercancía,
           ábrelo y <b>escanea cada pieza</b>: se va palomeando lo que llegó. Al final te dice si el apoyo llegó completo.</div>
         <ul id="apo-lista" class="m-lista"></ul>
         <button id="apo-actualizar" class="m-boton secundario">Actualizar</button>

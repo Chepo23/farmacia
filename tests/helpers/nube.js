@@ -41,6 +41,9 @@ async function crearNube(central, { origenesPermitidos = ['*'] } = {}) {
   const manejar = crearManejador({
     supabase,
     origenesPermitidos,
+    // La misma hora que las computadoras de prueba (la de esta máquina), como en producción con
+    // FARMACIA_ZONA_HORARIA = la zona de las farmacias
+    zona: Intl.DateTimeFormat().resolvedOptions().timeZone,
     registrar: (...partes) => errores.push(partes.map((p) => (p && p.stack) || String(p)).join(' ')),
   });
 

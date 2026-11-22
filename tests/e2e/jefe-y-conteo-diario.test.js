@@ -1,6 +1,7 @@
 'use strict';
-// Cuenta de jefe, movimientos como en Eleventa, registro de cambios, inventario de las sucursales e
-// inventario del día (a ciegas, con recuento, motivo y autorización de un jefe que no contó).
+// Cuenta de jefe, movimientos como en Eleventa, registro de cambios, inventario de las sucursales y el
+// inventario: la lista de cada farmacia (la arma el jefe), los turnos de mañana y tarde, el inventario
+// completo, todo a ciegas con recuento, motivo y autorización de un jefe que no contó.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { escenarioCentral, entrar, abrirCaja } = require('../helpers/escenario');
@@ -119,7 +120,7 @@ test('jefe: cuenta, movimientos, cambios e inventario del día', async (t) => {
     assert.equal((await norte.get('/api/bitacora')).status, 403);
   });
 
-  await t.test('inventario del día: a ciegas, recuento, motivo y autorización del jefe', async () => {
+  await t.test('la lista del inventario la arma el jefe: productos, departamentos y copias', async () => {
     ibuprofeno = (await norte.post('/api/productos', {
       codigo_barras: '7501000000202', descripcion: 'Ibuprofeno 400 mg', departamento: 'Analgésicos', precio_costo: 12, precio_venta: 30, existencia_inicial: 10,
     })).body.id;
@@ -127,14 +128,44 @@ test('jefe: cuenta, movimientos, cambios e inventario del día', async (t) => {
       codigo_barras: '7501000000303', descripcion: 'Vitamina C', departamento: 'Vitaminas', precio_costo: 20, precio_venta: 45, existencia_inicial: 6,
     })).body.id;
     assert.equal(stock(central, paracetamol, 2), 5);
+    // El turno de la tarde empieza a las 00:00: en esta prueba siempre es la tarde
+    for (const sucursal_id of [1, 2, 3]) {
+      const r = await jefa.put('/api/conteos/config', { sucursal_id, hora_tarde: '00:00' });
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+    }
 
+    const sinLista = (await norte.get('/api/conteos/hoy')).body;
+    assert.equal(sinLista.sin_lista, true, 'sin lista no hay conteo');
+    assert.equal((await norte.post('/api/conteos/lista', { sucursal_id: 2, producto_ids: [paracetamol] })).status, 403, 'solo el jefe arma la lista');
+    let lista = (await jefa.post('/api/conteos/lista', { sucursal_id: 2, departamento: 'Analgésicos' })).body;
+    assert.equal(lista.agregados, 1, 'un departamento completo');
+    lista = (await jefa.post('/api/conteos/lista', { sucursal_id: 2, producto_ids: [paracetamol, vitamina, ibuprofeno] })).body;
+    assert.deepEqual([lista.agregados, lista.ya_estaban, lista.total], [2, 1, 3]);
+    assert.deepEqual(lista.productos.map((p) => p.descripcion), ['Ibuprofeno 400 mg', 'Vitamina C', 'Paracetamol 500 mg'], 'por departamento; sin departamento al final');
+    // Copiar la lista de Norte a Sur y quitarle dos
+    assert.equal((await jefa.post('/api/conteos/lista', { sucursal_id: 3, copiar_de: 2 })).body.total, 3);
+    const sur = (await jefa.post('/api/conteos/lista/quitar', { sucursal_id: 3, producto_ids: [paracetamol, vitamina] })).body;
+    assert.deepEqual(sur.productos.map((p) => p.producto_id), [ibuprofeno]);
+    // El interruptor al consultar un producto
+    const listas = (await jefa.get(`/api/conteos/lista/producto/${paracetamol}`)).body;
+    assert.deepEqual(listas.sucursales.map((s) => [s.sucursal_id, s.en_lista]), [[1, false], [2, true], [3, false]]);
+    const conCentral = (await jefa.post('/api/conteos/lista/producto', { producto_id: paracetamol, sucursal_id: 1, en_lista: true })).body;
+    assert.equal(conCentral.sucursales.find((s) => s.sucursal_id === 1).en_lista, true);
+    const config = (await jefa.get('/api/conteos/config')).body;
+    assert.deepEqual(config.map((c) => [c.sucursal_id, c.hora_tarde, c.productos_en_lista]), [[1, '00:00', 1], [2, '00:00', 3], [3, '00:00', 1]]);
+    assert.equal((await jefa.put('/api/conteos/config', { sucursal_id: 2, hora_tarde: '25:00' })).status, 400);
+    assert.equal((await norte.get('/api/conteos/lista?sucursal_id=2')).status, 403);
+    const registro = await esperarCambios(jefa, (l) => l.some((c) => c.tipo === 'conteo_lista' && /Sucursal Sur: 3 producto/.test(c.descripcion)));
+    assert.ok(registro.some((c) => c.tipo === 'conteo_config' && /empieza a las 00:00/.test(c.descripcion)));
+  });
+
+  await t.test('inventario de la tarde: a ciegas, recuento, motivo y la existencia se ajusta sola al terminar', async () => {
     const hoy = await norte.get('/api/conteos/hoy');
     assert.equal(hoy.status, 200, JSON.stringify(hoy.body));
     const lista = hoy.body;
-    assert.equal(lista.estado, 'abierto');
-    assert.equal(lista.productos, 3);
+    assert.deepEqual([lista.turno, lista.titulo, lista.estado, lista.productos], ['tarde', 'Inventario de la tarde', 'abierto', 3]);
     assert.ok(lista.renglones.every((r) => r.existencia_sistema === undefined && r.diferencia === undefined), 'quien cuenta no ve el sistema');
-    assert.equal((await norte.get('/api/conteos/hoy')).body.id, lista.id, 'la lista del día es una sola');
+    assert.equal((await norte.get('/api/conteos/hoy')).body.id, lista.id, 'un solo conteo por turno');
     const renglon = (id) => lista.renglones.find((r) => r.producto_id === id);
     const contar = (id, contado) => norte.post(`/api/conteos/${lista.id}/contar`, { renglon_id: renglon(id).id, contado });
 
@@ -153,59 +184,111 @@ test('jefe: cuenta, movimientos, cambios e inventario del día', async (t) => {
     await contar(vitamina, 9);
     await contar(vitamina, 9);
     await norte.post(`/api/conteos/${lista.id}/motivo`, { renglon_id: renglon(vitamina).id, motivo: 'Sobrante' });
-    const fin = await norte.post(`/api/conteos/${lista.id}/terminar`, {});
-    assert.equal(fin.status, 200, JSON.stringify(fin.body));
-    assert.equal(fin.body.estado, 'por_autorizar');
-    assert.equal(fin.body.exactitud, 33);
-    assert.equal((await contar(paracetamol, 1)).body.codigo, 'CONTEO_CERRADO');
-
-    // Se vende una vitamina después de contar: el ajuste respeta esa venta
+    // Se vende una vitamina después de contarla y antes de terminar: el ajuste respeta esa venta
     await abrirCaja(norte);
     assert.equal((await norte.post('/api/ventas', { partidas: [{ producto_id: vitamina, cantidad: 1 }], forma_pago: 'efectivo', pago: 100 })).status, 200);
 
-    assert.equal((await norte.post(`/api/conteos/${lista.id}/autorizar`, { aprobar: [renglon(ibuprofeno).id] })).status, 403);
-    const porAutorizar = (await jefa.get('/api/conteos?estado=por_autorizar')).body;
-    assert.deepEqual(porAutorizar.map((c) => [c.sucursal, c.por_autorizar, c.faltante, c.sobrante]), [['Sucursal Norte', 2, 24, 60]]);
-    const detalle = (await jefa.get(`/api/conteos/${lista.id}`)).body;
-    const ibu = detalle.renglones.find((x) => x.producto_id === ibuprofeno);
-    assert.deepEqual([ibu.existencia_sistema, ibu.primer_conteo, ibu.contado, ibu.diferencia, ibu.valor, ibu.motivo, ibu.contador],
-      [10, 7, 8, -2, -24, 'Caducado', 'Cajero Norte']);
-    const vit = detalle.renglones.find((x) => x.producto_id === vitamina);
-    const autorizado = await jefa.post(`/api/conteos/${lista.id}/autorizar`, { aprobar: [ibu.id, vit.id] });
-    assert.equal(autorizado.status, 200, JSON.stringify(autorizado.body));
-    assert.equal(autorizado.body.estado, 'cerrado');
+    const fin = await norte.post(`/api/conteos/${lista.id}/terminar`, {});
+    assert.equal(fin.status, 200, JSON.stringify(fin.body));
+    assert.equal(fin.body.estado, 'cerrado', 'ya no espera a que el jefe autorice');
+    assert.equal(fin.body.exactitud, 33);
+    assert.equal((await contar(paracetamol, 1)).body.codigo, 'CONTEO_CERRADO');
+    // Al terminar, la existencia queda en lo que de verdad hay (el siguiente turno empieza de ahí)
     assert.equal(stock(central, ibuprofeno, 2), 8);
     assert.equal(stock(central, vitamina, 2), 8, '6 − 1 vendida + 3 que sobraban');
+
+    assert.equal((await norte.post(`/api/conteos/${lista.id}/autorizar`, { aprobar: [renglon(ibuprofeno).id] })).status, 403);
+    assert.equal((await jefa.post(`/api/conteos/${lista.id}/autorizar`, { aprobar: [renglon(ibuprofeno).id] })).status, 400, 'no hay nada que autorizar');
+    assert.deepEqual((await jefa.get('/api/conteos?estado=por_autorizar')).body, []);
+    const detalle = (await jefa.get(`/api/conteos/${lista.id}`)).body;
+    assert.deepEqual([detalle.faltante, detalle.sobrante, detalle.piezas_faltan, detalle.piezas_sobran, detalle.por_autorizar], [24, 60, 2, 3, 0]);
+    const ibu = detalle.renglones.find((x) => x.producto_id === ibuprofeno);
+    assert.deepEqual([ibu.existencia_sistema, ibu.primer_conteo, ibu.contado, ibu.diferencia, ibu.valor, ibu.motivo, ibu.contador, ibu.razon, ibu.decision],
+      [10, 7, 8, -2, -24, 'Caducado', 'Cajero Norte', 'lista', 'aprobado']);
     const delConteo = (await jefa.get('/api/movimientos?tipo=conteo')).body.movimientos;
     assert.equal(delConteo.length, 2);
-    assert.match(delConteo.find((m) => m.producto_id === ibuprofeno).nota, /^Inventario del día .*: el sistema tenía 10 y se contaron 8 \(Caducado\)$/);
-    assert.equal((await jefa.post(`/api/conteos/${lista.id}/autorizar`, { aprobar: [ibu.id] })).status, 400, 'no se aplica dos veces');
-    const registro = await esperarCambios(jefa, (lista) => lista.some((c) => c.tipo === 'conteo_autorizado') && lista.some((c) => c.tipo === 'conteo_terminado'));
-    assert.match(registro.find((c) => c.tipo === 'conteo_terminado').descripcion, /1 de 3 productos cuadraron/);
+    const movIbu = delConteo.find((m) => m.producto_id === ibuprofeno);
+    assert.match(movIbu.nota, /^Inventario de la tarde .*: el sistema tenía 10 y se contaron 8 \(Caducado\)$/);
+    assert.equal(movIbu.usuario, 'Cajero Norte', 'el ajuste queda a nombre de quien contó');
+    const registro = await esperarCambios(jefa, (l) => l.some((c) => c.tipo === 'conteo_terminado'));
+    const terminado = registro.find((c) => c.tipo === 'conteo_terminado');
+    assert.match(terminado.descripcion,
+      /inventario de la tarde\): 1 de 3 productos cuadraron; faltan 2 pieza\(s\) \(\$24\.00\); sobran 3 pieza\(s\) \(\$60\.00\); se ajustó la existencia/);
+    assert.equal(terminado.alerta, true, 'el jefe se entera el mismo día si faltó algo');
   });
 
-  await t.test('el jefe no autoriza lo que él contó; lo rechazado no toca el inventario', async () => {
+  await t.test('lo que cuenta el jefe también se ajusta solo; lo que quedó por autorizar (versión anterior) se sigue revisando', async () => {
     const lista = (await jefa.get('/api/conteos/hoy')).body;
-    assert.deepEqual(lista.renglones.map((r) => r.producto_id), [paracetamol], 'la central solo tiene paracetamol');
+    assert.deepEqual(lista.renglones.map((r) => r.producto_id), [paracetamol], 'la lista de la central solo tiene paracetamol');
     const r = lista.renglones[0];
     assert.equal(r.existencia_sistema, null, 'aun el jefe cuenta sin ver el sistema');
     await jefa.post(`/api/conteos/${lista.id}/contar`, { renglon_id: r.id, contado: 15 });
     await jefa.post(`/api/conteos/${lista.id}/contar`, { renglon_id: r.id, contado: 15 });
     await jefa.post(`/api/conteos/${lista.id}/motivo`, { renglon_id: r.id, motivo: 'No sé' });
-    assert.equal((await jefa.post(`/api/conteos/${lista.id}/terminar`, {})).body.estado, 'por_autorizar');
-    const propio = await jefa.post(`/api/conteos/${lista.id}/autorizar`, { aprobar: [r.id] });
+    assert.equal((await jefa.post(`/api/conteos/${lista.id}/terminar`, {})).body.estado, 'cerrado');
+    assert.equal(stock(central, paracetamol, 1), 15);
+
+    // Un inventario que se quedó "por autorizar" con la versión anterior: lo revisa un jefe que no contó
+    const viejo = Number(central.db.prepare(
+      "INSERT INTO conteos (sucursal_id, fecha, turno, estado, productos, contados) VALUES (1, '2026-01-05', 'tarde', 'por_autorizar', 1, 1)"
+    ).run().lastInsertRowid);
+    const renglonViejo = Number(central.db.prepare(
+      `INSERT INTO conteo_detalle (conteo_id, sucursal_id, producto_id, descripcion, contado, existencia_sistema, diferencia, reconteos, motivo, contado_por, decision, costo)
+       VALUES (?, 1, ?, 'Paracetamol 500 mg', 13, 15, -2, 1, 'Roto', ?, 'pendiente', 10)`
+    ).run(viejo, paracetamol, laura).lastInsertRowid);
+    const propio = await jefa.post(`/api/conteos/${viejo}/autorizar`, { aprobar: [renglonViejo] });
     assert.equal(propio.status, 403);
     assert.equal(propio.body.codigo, 'PROPIO');
     const pedro = await entrar(servidores.central.base, 'pedro', 'jefe1234', { caja: false });
-    const rechazo = await pedro.post(`/api/conteos/${lista.id}/autorizar`, { rechazar: [r.id] });
+    const rechazo = await pedro.post(`/api/conteos/${viejo}/autorizar`, { rechazar: [renglonViejo] });
     assert.equal(rechazo.status, 200, JSON.stringify(rechazo.body));
     assert.equal(rechazo.body.estado, 'cerrado');
-    assert.equal(stock(central, paracetamol, 1), 18, 'lo rechazado no se ajusta');
+    assert.equal(stock(central, paracetamol, 1), 15, 'lo rechazado no se ajusta');
     assert.equal(rechazo.body.renglones[0].decision, 'rechazado');
     assert.equal(rechazo.body.renglones[0].decisor, 'Pedro Jefe');
   });
 
-  await t.test('inicio del jefe: inventario de cada sucursal, negativos y productos por día', async () => {
+  await t.test('dos turnos al día: al empezar la tarde, el de la mañana se cierra solo', async () => {
+    // Con la tarde a las 23:59, en Norte todavía es la mañana
+    assert.equal((await jefa.put('/api/conteos/config', { sucursal_id: 2, hora_tarde: '23:59' })).status, 200);
+    const manana = (await norte.get('/api/conteos/hoy')).body;
+    assert.deepEqual([manana.turno, manana.titulo, manana.estado, manana.productos], ['manana', 'Inventario de la mañana', 'abierto', 3]);
+    const r = manana.renglones.find((x) => x.producto_id === paracetamol);
+    assert.equal((await norte.post(`/api/conteos/${manana.id}/contar`, { renglon_id: r.id, contado: 5 })).body.resultado, 'cuadra');
+    assert.equal((await jefa.put('/api/conteos/config', { sucursal_id: 2, hora_tarde: '00:00' })).status, 200);
+    const tarde = (await norte.get('/api/conteos/hoy')).body;
+    assert.equal(tarde.turno, 'tarde');
+    const cerrado = (await jefa.get(`/api/conteos/${manana.id}`)).body;
+    assert.deepEqual([cerrado.estado, cerrado.nota, cerrado.contados], ['cerrado', 'Se cerró solo al empezar el turno de la tarde', 1]);
+    assert.equal((await jefa.post(`/api/conteos/${tarde.id}/cancelar`, {})).status, 400, 'los turnos no se cancelan');
+    const deNorte = (await jefa.get('/api/conteos?sucursal_id=2')).body;
+    assert.deepEqual(deNorte.map((c) => c.turno).sort(), ['manana', 'tarde']);
+  });
+
+  await t.test('inventario completo: lo empieza el jefe (todo o un departamento), se cuenta igual y se puede cancelar', async () => {
+    assert.equal((await norte.post('/api/conteos/completo', { sucursal_id: 2 })).status, 403);
+    const iniciado = await jefa.post('/api/conteos/completo', { sucursal_id: 2, departamento: 'Vitaminas' });
+    assert.equal(iniciado.status, 200, JSON.stringify(iniciado.body));
+    assert.deepEqual([iniciado.body.turno, iniciado.body.titulo, iniciado.body.productos, iniciado.body.estado],
+      ['completo', 'Inventario completo · Vitaminas', 1, 'abierto']);
+    assert.equal((await jefa.post('/api/conteos/completo', { sucursal_id: 2 })).body.codigo, 'COMPLETO_ABIERTO');
+    const hoy = (await norte.get('/api/conteos/hoy')).body;
+    assert.equal(hoy.completo.id, iniciado.body.id, 'la sucursal ve que hay un inventario completo abierto');
+    const completo = (await norte.get(`/api/conteos/${iniciado.body.id}`)).body;
+    assert.equal(completo.renglones[0].existencia_sistema, undefined, 'también a ciegas');
+    const contado = await norte.post(`/api/conteos/${completo.id}/contar`, { renglon_id: completo.renglones[0].id, contado: 8 });
+    assert.equal(contado.body.resultado, 'cuadra');
+    const cancelado = await jefa.post(`/api/conteos/${completo.id}/cancelar`, {});
+    assert.equal(cancelado.status, 200, JSON.stringify(cancelado.body));
+    assert.equal(cancelado.body.estado, 'cancelado');
+    assert.equal((await norte.get('/api/conteos/hoy')).body.completo, null);
+    const todo = (await jefa.post('/api/conteos/completo', { sucursal_id: 3 })).body;
+    assert.deepEqual([todo.titulo, todo.productos], ['Inventario completo', 3], 'todo: los productos que usan inventario');
+    assert.equal((await jefa.post(`/api/conteos/${todo.id}/cancelar`, {})).body.estado, 'cancelado');
+    assert.equal((await jefa.post('/api/conteos/completo', { sucursal_id: 2, departamento: 'No existe' })).status, 400);
+  });
+
+  await t.test('inicio del jefe: inventario de cada sucursal, negativos y los turnos de hoy', async () => {
     // Existencia negativa en Sur (por ejemplo, una venta sin conexión de más)
     central.db.prepare('INSERT INTO inventario (producto_id, sucursal_id, existencia, minimo) VALUES (?, 3, -2, 0)').run(ibuprofeno);
     const inicio = await jefa.get('/api/supervision/inicio?fresco=1');
@@ -213,23 +296,15 @@ test('jefe: cuenta, movimientos, cambios e inventario del día', async (t) => {
     const porNombre = Object.fromEntries(inicio.body.sucursales.map((s) => [s.sucursal, s]));
     assert.equal(porNombre['Sucursal Sur'].negativos, 1);
     assert.equal(porNombre['Sucursal Norte'].valor_costo, 5 * 10 + 8 * 12 + 8 * 20);
-    assert.equal(porNombre['Sucursal Norte'].conteo_hoy.estado, 'cerrado');
-    assert.equal(porNombre['Sucursal Norte'].conteo_hoy.exactitud, 33);
+    const norteHoy = porNombre['Sucursal Norte'].inventario_hoy;
+    assert.deepEqual([norteHoy.tarde.estado, norteHoy.tarde.exactitud, norteHoy.manana.estado, norteHoy.en_lista, norteHoy.completo], ['cerrado', 33, 'cerrado', 3, null]);
+    assert.equal(porNombre['Sucursal Norte'].conteo_hoy.id, norteHoy.tarde.id);
     assert.equal(porNombre['Sucursal Sur'].conteo_hoy, null);
     assert.deepEqual(inicio.body.por_autorizar, []);
     assert.ok(inicio.body.alertas.some((c) => c.tipo === 'corte'));
     const negativos = (await jefa.get('/api/supervision/inventario/lista?lista=negativos&sucursal_id=3')).body;
     assert.deepEqual(negativos.productos.map((p) => [p.descripcion, p.existencia]), [['Ibuprofeno 400 mg', -2]]);
     assert.equal((await admin.get('/api/supervision/inicio')).status, 403, 'el administrador no es jefe');
-
-    assert.equal((await norte.put('/api/conteos/config', { sucursal_id: 3, productos_por_dia: 5 })).status, 403);
-    const config = await jefa.put('/api/conteos/config', { sucursal_id: 3, productos_por_dia: 5 });
-    assert.equal(config.status, 200, JSON.stringify(config.body));
-    assert.equal(config.body.find((c) => c.sucursal_id === 3).productos_por_dia, 5);
-    assert.equal((await jefa.put('/api/conteos/config', { sucursal_id: 3, productos_por_dia: 1 })).status, 400);
-    assert.equal((await jefa.post('/api/conteos/importante', { producto_id: vitamina, importante: true })).body.importante, true);
-    assert.equal((await jefa.get(`/api/conteos/importante/${vitamina}`)).body.importante, true);
-    assert.equal((await norte.get(`/api/conteos/importante/${vitamina}`)).status, 403);
   });
 
   await t.test('desde el celular (la nube) el jefe y las sucursales usan las mismas reglas', async () => {
@@ -239,16 +314,21 @@ test('jefe: cuenta, movimientos, cambios e inventario del día', async (t) => {
     assert.equal((await nube.pedir('GET', '/api/auth/yo', { token: tokenJefa })).body.jefe, 1);
     assert.equal((await nube.pedir('GET', '/api/auth/yo', { token: tokenSur })).body.jefe, 0);
 
-    // La sucursal Sur cuenta (lo negativo entra primero) y el jefe lo ve completo
+    // La sucursal Sur cuenta su lista y el jefe lo ve completo
     const hoy = await nube.pedir('GET', '/api/conteos/hoy', { token: tokenSur });
     assert.equal(hoy.status, 200, JSON.stringify(hoy.body));
-    assert.deepEqual(hoy.body.renglones.map((r) => r.producto_id), [ibuprofeno]);
+    assert.deepEqual([hoy.body.turno, hoy.body.renglones.map((r) => r.producto_id)], ['tarde', [ibuprofeno]]);
     const contado = await nube.pedir('POST', `/api/conteos/${hoy.body.id}/contar`, { token: tokenSur, cuerpo: { renglon_id: hoy.body.renglones[0].id, contado: 0 } });
     assert.equal(contado.body.resultado, 'recontar');
     const completo = await nube.pedir('GET', `/api/conteos/${hoy.body.id}`, { token: tokenJefa });
-    assert.equal(completo.body.renglones[0].razon, 'negativo');
+    assert.equal(completo.body.renglones[0].razon, 'lista');
     assert.equal(completo.body.renglones[0].existencia_sistema, -2);
     assert.equal((await nube.pedir('GET', `/api/conteos/${hoy.body.id}`, { token: tokenSur })).body.renglones[0].existencia_sistema, undefined);
+    // La lista también se arma desde el celular del jefe
+    const desdeCelular = await nube.pedir('POST', '/api/conteos/lista/producto', { token: tokenJefa, cuerpo: { producto_id: vitamina, sucursal_id: 3, en_lista: true } });
+    assert.equal(desdeCelular.status, 200, JSON.stringify(desdeCelular.body));
+    assert.equal(desdeCelular.body.sucursales.find((s) => s.sucursal_id === 3).en_lista, true);
+    assert.equal((await nube.pedir('GET', '/api/conteos/lista?sucursal_id=3', { token: tokenSur })).status, 403);
 
     const movimientos = await nube.pedir('GET', '/api/movimientos?sucursal_id=2', { token: tokenJefa });
     assert.equal(movimientos.status, 200, JSON.stringify(movimientos.body));
@@ -256,7 +336,7 @@ test('jefe: cuenta, movimientos, cambios e inventario del día', async (t) => {
     assert.equal((await nube.pedir('GET', '/api/movimientos', { token: tokenSur })).status, 403);
     const inicio = await nube.pedir('GET', '/api/supervision/inicio?fresco=1', { token: tokenJefa });
     assert.equal(inicio.status, 200, JSON.stringify(inicio.body));
-    assert.equal(inicio.body.sucursales.find((s) => s.sucursal_id === 3).conteo_hoy.contados, 1);
+    assert.equal(inicio.body.sucursales.find((s) => s.sucursal_id === 3).inventario_hoy.tarde.contados, 1);
 
     // El cambio de precio desde el celular queda en el registro con antes y después
     const producto = (await nube.pedir('GET', '/api/productos/codigo/7501000000303', { token: tokenJefa })).body;

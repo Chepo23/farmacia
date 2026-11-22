@@ -96,6 +96,17 @@ main { padding: 6px 14px 0; }
 .m-check input { width: 22px; height: 22px; accent-color: var(--sage); }
 .m-resumen { display: flex; justify-content: space-between; font-size: 14px; color: var(--text-soft); padding: 0 2px; }
 .m-resumen b { color: var(--text); font-size: 17px; }
+/* Revisión semanal del inventario */
+.m-semana-nav { justify-content: space-between; }
+.m-semana-turno { display: flex; flex-direction: column; gap: 3px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
+.m-semana-turno.sin-hacer { background: #fdf3f1; border-color: #f0c9c2; }
+.m-semana-turno small { color: var(--text-soft); font-size: 12.5px; }
+.m-semana-difs { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.m-semana-difs li { display: flex; justify-content: space-between; gap: 10px; align-items: center; padding: 6px 8px; border-radius: 10px; background: #fdecea; }
+.m-semana-difs li.mas { background: #e2f2f8; }
+.m-semana-difs li span { display: flex; flex-direction: column; font-size: 14px; }
+.m-semana-difs li b { font-size: 16px; color: #b3261e; }
+.m-semana-difs li.mas b { color: #084a63; }
 .m-titulo-seccion { font-family: 'Nunito', sans-serif; font-weight: 900; font-size: 15px; color: var(--sage-dark); margin: 6px 2px 0; }
 
 /* ---------- Tarjeta de producto ---------- */
@@ -474,3 +485,18 @@ body.sin-vincular .m-nav, body.sin-vincular .m-instalar-aviso { display: none !i
 @media (min-width: 720px) {
   .m-captura, main { max-width: 640px; margin: 0 auto; width: 100%; }
 }
+
+/* ---------- Lista del inventario (jefe) ---------- */
+/* Una fila con una lista desplegable o un campo y su botón */
+.m-fila-accion { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.m-fila-accion label { font-size: 14px; font-weight: 700; color: var(--text-soft); }
+.m-fila-accion select, .m-fila-accion input {
+  flex: 1 1 160px; min-width: 0; height: 46px; border: 1px solid var(--line); border-radius: 12px; background: #fff;
+  padding: 0 10px; font-size: 16px; color: var(--text);
+}
+.m-fila-accion input[type="time"] { flex: 0 1 170px; min-width: 150px; }
+.m-fila-accion .m-boton { height: 46px; padding: 0 16px; font-size: 15px; }
+/* Al consultar un producto: en qué listas del inventario está */
+.m-listas-producto { grid-column: 1 / -1; align-items: center; }
+.m-listas-producto small { width: 100%; color: var(--text-soft); font-size: 12.5px; font-weight: 700; }
+#dia-departamento { height: 46px; }

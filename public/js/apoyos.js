@@ -1,6 +1,7 @@
 // Apoyos entre farmacias.
-// La central arma la lista escaneando códigos y la envía; la sucursal que recibe
-// la revisa pieza por pieza. Cada paso mueve inventario y queda con nombre y hora.
+// Cualquier farmacia arma la lista escaneando códigos y la envía a otra (la central a las sucursales,
+// una sucursal a la central o a otra sucursal); la que recibe la revisa pieza por pieza con el celular.
+// Cada paso mueve inventario y queda con nombre y hora. Las sucursales también le piden a la central.
 const Apoyos = {
   apoyos: [],
   pedidos: [],
@@ -78,6 +79,7 @@ async function cargarApoyosInicio() {
   pintarFranjaAvisos();
   pintarFarmacias();
   pintarTablaPedidos();
+  pintarEnCamino();
   pintarHistorialApoyos();
   cambiarVistaApoyos('pendientes');
   revisarPendientes();
@@ -126,49 +128,72 @@ function pintarFranjaAvisos() {
   }
 }
 
+// Una tarjeta por cada farmacia para mandarle un apoyo (cualquier farmacia le manda a cualquiera);
+// las sucursales además le piden a la central, y todas ven lo que les viene en camino
 function pintarFarmacias() {
   const contenedor = document.getElementById('apoyos-farmacias');
+  const mia = App.usuario.sucursal_id;
+  const porRecibir = Apoyos.apoyos.filter((a) => a.estado === 'enviado' && a.destino_id === mia).length;
+  let html = '';
   if (!soyCentral()) {
-    const porRecibir = Apoyos.apoyos.filter(
-      (a) => a.estado === 'enviado' && a.destino_id === App.usuario.sucursal_id
-    ).length;
-    const miPedido = Apoyos.pedidos.find(
-      (p) => p.sucursal_id === App.usuario.sucursal_id && p.estado === 'borrador'
-    );
-    contenedor.innerHTML = `
+    const miPedido = Apoyos.pedidos.find((p) => p.sucursal_id === mia && p.estado === 'borrador');
+    html += `
       <button class="tarjeta-farmacia" data-accion="pedir">
         <b>Pedir apoyo a la central</b>
         <small>${miPedido
           ? `<span class="con-borrador">Tienes un pedido a medias con ${miPedido.renglones} producto(s)</span>`
           : 'Escanea o busca lo que necesitas y mándalo'}</small>
-      </button>
-      <button class="tarjeta-farmacia" data-accion="recibir-primero" ${porRecibir ? '' : 'disabled'}>
-        <b>Apoyos en camino</b>
-        <small>${porRecibir ? `${porRecibir} por verificar con el celular` : 'Nada pendiente'}</small>
       </button>`;
-    return;
   }
-
-  const otras = App.sucursales.filter((s) => s.id !== App.usuario.sucursal_id);
-  contenedor.innerHTML =
-    otras
-      .map((s) => {
-        const borrador = Apoyos.apoyos.find((a) => a.destino_id === s.id && a.estado === 'borrador');
-        const pedido = Apoyos.pedidos.find((p) => p.sucursal_id === s.id && p.estado === 'enviado');
-        return `<button class="tarjeta-farmacia" data-accion="abrir-apoyo" data-id="${s.id}">
+  html += App.sucursales
+    .filter((s) => s.id !== mia)
+    .map((s) => {
+      const borrador = Apoyos.apoyos.find((a) => a.origen_id === mia && a.destino_id === s.id && a.estado === 'borrador');
+      const pedido = soyCentral() ? Apoyos.pedidos.find((p) => p.sucursal_id === s.id && p.estado === 'enviado') : null;
+      return `<button class="tarjeta-farmacia" data-accion="abrir-apoyo" data-id="${s.id}">
           <b>${escaparHtml(s.nombre)}</b>
           <small>${borrador
             ? `<span class="con-borrador">Apoyo a medias: ${borrador.renglones} producto(s)</span>`
             : 'Escanear y armar apoyo'}</small>
           <small>${pedido ? `Pidió ${pedido.renglones} producto(s)` : '&nbsp;'}</small>
         </button>`;
-      })
-      .join('') +
-    (App.usuario.rol === 'admin'
-      ? `<button class="tarjeta-farmacia nueva" data-accion="nueva-farmacia">
+    })
+    .join('');
+  html += `
+      <button class="tarjeta-farmacia" data-accion="recibir-primero" ${porRecibir ? '' : 'disabled'}>
+        <b>Apoyos en camino</b>
+        <small>${porRecibir ? `${porRecibir} por verificar con el celular` : 'Nada pendiente'}</small>
+      </button>`;
+  if (soyCentral() && App.usuario.rol === 'admin') {
+    html += `<button class="tarjeta-farmacia nueva" data-accion="nueva-farmacia">
            <b>+ Agregar farmacia</b><small>Da de alta una sucursal nueva</small>
-         </button>`
-      : '');
+         </button>`;
+  }
+  contenedor.innerHTML = html;
+}
+
+// Los apoyos enviados que todavía no se reciben (los que mandé y los que me mandaron)
+function pintarEnCamino() {
+  const cuerpo = document.getElementById('cuerpo-en-camino');
+  if (!cuerpo) return;
+  const enCamino = Apoyos.apoyos.filter((a) => a.estado === 'enviado');
+  if (enCamino.length === 0) {
+    cuerpo.innerHTML = '<tr><td colspan="8" class="vacio">No hay apoyos en camino.</td></tr>';
+    return;
+  }
+  cuerpo.innerHTML = enCamino
+    .map((a) => `
+      <tr>
+        <td class="num">${a.folio}</td>
+        <td>${escaparHtml(a.origen)}</td>
+        <td>${escaparHtml(a.destino)}${a.destino_id === App.usuario.sucursal_id ? ' <span class="chip enviado">Para ti</span>' : ''}</td>
+        <td class="num">${a.renglones}</td>
+        <td class="num">${a.piezas}</td>
+        <td class="num">${dinero(a.total_costo)}</td>
+        <td>${fechaCorta(a.enviado || a.creado)}</td>
+        <td style="white-space:nowrap"><button class="boton chico" data-accion="ver-apoyo" data-id="${a.id}">Ver</button></td>
+      </tr>`)
+    .join('');
 }
 
 function pintarHistorialApoyos() {
@@ -487,7 +512,7 @@ function ofrecerAltaProducto(codigo) {
   });
 }
 
-// Buscar por nombre (F3): para el apoyo que arma la central o para el pedido de una sucursal
+// Buscar por nombre (F3): para el apoyo que se arma o para el pedido de una sucursal a la central
 async function buscarProductoParaApoyo(para = 'apoyo') {
   const esPedido = para === 'pedido';
   const modal = abrirModal(`
@@ -646,7 +671,7 @@ function cancelarApoyo() {
   });
 }
 
-// La central descarta un borrador que todavía no envía (no mueve inventario)
+// La farmacia que armó el borrador lo descarta mientras no lo envía (no mueve inventario)
 async function descartarApoyo() {
   const apoyo = Apoyos.actual;
   const confirmado = await confirmar({

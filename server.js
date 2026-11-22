@@ -24,6 +24,7 @@ app.use('/api/config', requiereSesion, require('./src/routes/config'));
 app.use('/api/productos', requiereSesion, require('./src/routes/productos'));
 app.use('/api/ventas', requiereSesion, require('./src/routes/ventas'));
 app.use('/api/clientes', requiereSesion, require('./src/routes/clientes'));
+app.use('/api/prestamos', requiereSesion, require('./src/routes/prestamos'));
 app.use('/api/cortes', requiereSesion, require('./src/routes/cortes'));
 app.use('/api/reportes', requiereSesion, require('./src/routes/reportes'));
 app.use('/api/admin', requiereSesion, require('./src/routes/admin'));

@@ -8,7 +8,44 @@ const App = {
   alMostrarSeccion: {}, // cada módulo registra qué recargar al abrir su pestaña
 };
 
+// Contra el doble clic: el botón cuyo clic manda guardar algo (POST, PUT, DELETE) queda desactivado
+// hasta que el servidor contesta (y medio segundo más). Así un doble clic no suma dos veces una
+// entrada de mercancía, un abono, un cliente o un producto.
+let botonDelClic = null;
+document.addEventListener('click', (e) => {
+  botonDelClic = e.target instanceof Element ? e.target.closest('button') : null;
+  setTimeout(() => { botonDelClic = null; }, 0);
+}, true);
+
+function apartarBoton(opciones) {
+  const escribe = String(opciones.method || 'GET').toUpperCase() !== 'GET';
+  const boton = escribe && botonDelClic && !botonDelClic.disabled ? botonDelClic : null;
+  if (!boton) return () => {};
+  boton.disabled = true;
+  boton.dataset.guardando = '1';
+  const liberar = () => {
+    if (boton.dataset.guardando !== '1') return;
+    delete boton.dataset.guardando;
+    boton.disabled = false;
+  };
+  // Si se guardó, medio segundo más (el segundo clic de un doble clic); si hubo error, de inmediato
+  // para que se pueda corregir y volver a intentar
+  return (guardado) => (guardado ? setTimeout(liberar, 500) : liberar());
+}
+
 async function api(ruta, opciones = {}) {
+  const liberarBoton = apartarBoton(opciones);
+  let guardado = false;
+  try {
+    const datos = await pedirAlServidor(ruta, opciones);
+    guardado = true;
+    return datos;
+  } finally {
+    liberarBoton(guardado);
+  }
+}
+
+async function pedirAlServidor(ruta, opciones) {
   let r;
   try {
     r = await fetch(ruta, {
@@ -54,9 +91,20 @@ function aviso(mensaje, tipo = '') {
 }
 
 // ---------- Modal genérico ----------
+// Cada ventana se arma en un recuadro nuevo. Si se reusara el mismo, los atajos de teclado que una
+// ventana le pone (E/T/D/M/C, F1 y F2 del cobro, Enter de "Venta realizada"…) seguirían activos en las
+// ventanas que se abren después: se comían letras en los buscadores y se repetían cobros.
+function recuadroNuevo(id, clase) {
+  const anterior = document.getElementById(id);
+  const nuevo = anterior.cloneNode(false); // mismos atributos, sin contenido ni atajos
+  if (clase) nuevo.className = clase;
+  anterior.replaceWith(nuevo);
+  return nuevo;
+}
+
 function abrirModal(html) {
   const fondo = document.getElementById('fondo-modal');
-  const contenido = document.getElementById('contenido-modal');
+  const contenido = recuadroNuevo('contenido-modal', 'modal');
   contenido.innerHTML = html;
   fondo.hidden = false;
   const primero = contenido.querySelector('input, select, button');
@@ -66,9 +114,7 @@ function abrirModal(html) {
 
 function cerrarModal() {
   document.getElementById('fondo-modal').hidden = true;
-  const contenido = document.getElementById('contenido-modal');
-  contenido.innerHTML = '';
-  contenido.className = 'modal'; // quitar variantes como "grande"
+  recuadroNuevo('contenido-modal', 'modal'); // vacío, sin variantes como "grande" y sin atajos
   const seccionVenta = document.getElementById('seccion-venta');
   if (seccionVenta.classList.contains('activa')) {
     document.getElementById('entrada-codigo').focus();
@@ -88,7 +134,7 @@ let alCerrarDialogo = null;
 
 function abrirDialogo(html) {
   const fondo = document.getElementById('fondo-dialogo');
-  const contenido = document.getElementById('contenido-dialogo');
+  const contenido = recuadroNuevo('contenido-dialogo');
   contenido.innerHTML = html;
   fondo.hidden = false;
   const primero = contenido.querySelector('input, textarea, select') || contenido.querySelector('.boton.exito, .boton.peligro');
@@ -98,7 +144,7 @@ function abrirDialogo(html) {
 
 function cerrarDialogo() {
   document.getElementById('fondo-dialogo').hidden = true;
-  document.getElementById('contenido-dialogo').innerHTML = '';
+  recuadroNuevo('contenido-dialogo');
   const alCerrar = alCerrarDialogo;
   alCerrarDialogo = null;
   if (alCerrar) alCerrar();
@@ -109,15 +155,18 @@ function dialogoAbierto() {
 }
 
 // Pregunta sí/no. Resuelve true o false.
-function confirmar({ titulo, mensaje = '', boton = 'Aceptar', peligro = false }) {
+// enfocarNo: el botón seleccionado de entrada es el de "no", para que un Enter perdido (por ejemplo,
+// el del lector de códigos) no confirme algo que borra.
+function confirmar({ titulo, mensaje = '', boton = 'Aceptar', peligro = false, botonNo = 'Cancelar', enfocarNo = false }) {
   return new Promise((resolver) => {
     const dialogo = abrirDialogo(`
       <h3>${escaparHtml(titulo)}</h3>
       ${mensaje ? `<p>${escaparHtml(mensaje)}</p>` : ''}
       <div class="pie">
-        <button class="boton" data-respuesta="no">Cancelar</button>
+        <button class="boton" data-respuesta="no">${escaparHtml(botonNo)}</button>
         <button class="boton ${peligro ? 'peligro' : 'exito'}" data-respuesta="si">${escaparHtml(boton)}</button>
       </div>`);
+    if (enfocarNo) dialogo.querySelector('[data-respuesta="no"]').focus();
     let respuesta = false;
     alCerrarDialogo = () => resolver(respuesta);
     dialogo.querySelector('[data-respuesta="si"]').addEventListener('click', () => { respuesta = true; cerrarDialogo(); });

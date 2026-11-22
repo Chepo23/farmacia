@@ -364,6 +364,16 @@ agregarColumna('clientes', 'notas', "TEXT DEFAULT ''");
 agregarColumna('clientes', 'credito_autorizado', 'INTEGER NOT NULL DEFAULT 0');
 agregarColumna('sesiones', 'apertura_id', 'INTEGER REFERENCES aperturas_caja(id)');
 agregarColumna('productos', 'es_comun', 'INTEGER NOT NULL DEFAULT 0');
+// Venta suelta y por caja (el inventario va en piezas) y cócteles de inyecciones
+agregarColumna('productos', 'piezas_caja', 'REAL');
+agregarColumna('productos', 'precio_caja', 'REAL');
+agregarColumna('productos', 'es_coctel', 'INTEGER NOT NULL DEFAULT 0');
+agregarColumna('venta_detalle', 'coctel', "TEXT NOT NULL DEFAULT ''");
+agregarColumna('venta_detalle', 'coctel_grupo', 'INTEGER');
+agregarColumna('venta_detalle', 'cajas', 'REAL');
+// Precio cambiado en la venta (doble clic en el precio): solo esa venta, nunca abajo del costo
+agregarColumna('venta_detalle', 'precio_manual', 'INTEGER NOT NULL DEFAULT 0');
+agregarColumna('venta_detalle', 'descuento', 'REAL NOT NULL DEFAULT 0'); // lo que se descontó (negativo si se subió)
 agregarColumna('cortes', 'total_dolares', 'REAL NOT NULL DEFAULT 0');
 agregarColumna('apoyos', 'cancelado_por', 'INTEGER REFERENCES usuarios(id)');
 agregarColumna('apoyos', 'cancelado', 'TEXT');
@@ -437,6 +447,46 @@ BEGIN UPDATE abonos SET subir = 1 WHERE id = NEW.id; END;
 CREATE TRIGGER IF NOT EXISTS subir_cliente_cambio AFTER UPDATE OF nombre, telefono, limite_credito, credito_autorizado, notas, activo ON clientes
 BEGIN UPDATE clientes SET subir = 1 WHERE id = NEW.id; END;
 `);
+
+// Préstamos de medicamento a otras farmacias (dadas de alta como clientes): lo prestado sale del
+// inventario; lo que regresan vuelve a entrar; lo que pagan se cobra en la caja sin volver a sacarlo
+db.exec(`
+CREATE TABLE IF NOT EXISTS prestamos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  folio INTEGER NOT NULL,
+  sucursal_id INTEGER NOT NULL REFERENCES sucursales(id),
+  cliente_id INTEGER NOT NULL REFERENCES clientes(id),
+  usuario_id INTEGER NOT NULL REFERENCES usuarios(id),
+  fecha TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  nota TEXT NOT NULL DEFAULT '',
+  subir INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS prestamo_detalle (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  prestamo_id INTEGER NOT NULL REFERENCES prestamos(id) ON DELETE CASCADE,
+  producto_id INTEGER NOT NULL,
+  descripcion TEXT NOT NULL,
+  cantidad REAL NOT NULL,
+  devuelto REAL NOT NULL DEFAULT 0,
+  cobrado REAL NOT NULL DEFAULT 0,
+  costo REAL NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS prestamo_movimientos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  prestamo_id INTEGER NOT NULL REFERENCES prestamos(id) ON DELETE CASCADE,
+  detalle_id INTEGER NOT NULL REFERENCES prestamo_detalle(id) ON DELETE CASCADE,
+  tipo TEXT NOT NULL CHECK (tipo IN ('devolucion', 'cobro')),
+  cantidad REAL NOT NULL,
+  venta_id INTEGER,
+  usuario_id INTEGER NOT NULL,
+  fecha TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  anulado INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_prestamos_cliente ON prestamos(cliente_id);
+CREATE INDEX IF NOT EXISTS idx_prestamos_subir ON prestamos(subir);
+CREATE INDEX IF NOT EXISTS idx_prestamo_detalle ON prestamo_detalle(prestamo_id);
+`);
+agregarColumna('venta_detalle', 'prestamo_detalle_id', 'INTEGER');
 
 // Apoyos y pedidos descargados antes con fechas de la central en UTC ('2026-09-12T18:26:55+00:00'):
 // se pasan a hora local 'AAAA-MM-DD HH:MM:SS' como el resto del sistema

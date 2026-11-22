@@ -167,6 +167,12 @@ on conflict (producto_id, sucursal_id) do nothing;
 drop index if exists public.idx_productos_sucursal;
 alter table public.productos drop column if exists sucursal_id;
 
+-- Venta suelta y por caja: el inventario va en piezas; la caja trae piezas_caja y tiene su precio.
+-- Cóctel de inyecciones (es_coctel): sin inventario; su precio se cobra por las ampolletas que se usaron.
+alter table public.productos add column if not exists piezas_caja numeric(12,3);
+alter table public.productos add column if not exists precio_caja numeric(12,2);
+alter table public.productos add column if not exists es_coctel boolean not null default false;
+
 -- ========================================================
 -- Inventario unificado (octubre 2026). Se puede ejecutar varias veces.
 -- ========================================================
@@ -281,12 +287,16 @@ create table if not exists public.bitacora (
 create index if not exists idx_bitacora_fecha on public.bitacora (fecha desc);
 create index if not exists idx_bitacora_sucursal on public.bitacora (sucursal_id, fecha desc);
 
--- Inventario del día: cada día el sistema arma una lista corta por sucursal, se cuenta con el
--- celular sin ver lo que dice el sistema y el jefe autoriza las diferencias.
+-- Inventario: cada farmacia cuenta en el turno de la mañana y en el de la tarde los productos de su
+-- lista (la arma el jefe), con el celular y sin ver lo que dice el sistema; el jefe autoriza las
+-- diferencias. Aparte, el jefe puede empezar un inventario completo (turno 'completo': todo o un
+-- departamento) que queda abierto hasta que se termina. 'dia' = la lista automática anterior.
 create table if not exists public.conteos (
   id bigserial primary key,
   sucursal_id bigint not null references public.sucursales(id),
   fecha date not null,
+  turno text not null default 'dia' check (turno in ('dia', 'manana', 'tarde', 'completo')),
+  departamento text not null default '',
   estado text not null default 'abierto' check (estado in ('abierto', 'por_autorizar', 'cerrado', 'cancelado')),
   productos integer not null default 0,
   contados integer not null default 0,
@@ -297,10 +307,22 @@ create table if not exists public.conteos (
   terminado_por bigint,
   cerrado timestamptz,
   cerrado_por bigint,
-  updated_at timestamptz not null default now(),
-  unique (sucursal_id, fecha)
+  updated_at timestamptz not null default now()
 );
+-- Centrales que ya tenían la tabla (antes había un solo conteo al día por sucursal)
+alter table public.conteos add column if not exists turno text not null default 'dia';
+alter table public.conteos add column if not exists departamento text not null default '';
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'conteos_turno_check') then
+    alter table public.conteos add constraint conteos_turno_check check (turno in ('dia', 'manana', 'tarde', 'completo'));
+  end if;
+end $$;
+alter table public.conteos drop constraint if exists conteos_sucursal_id_fecha_key;
+-- Un conteo por turno al día en cada sucursal; inventarios completos, los que hagan falta
+create unique index if not exists conteos_turno_unico on public.conteos (sucursal_id, fecha, turno) where turno in ('dia', 'manana', 'tarde');
 create index if not exists idx_conteos_estado on public.conteos (estado, fecha);
+create index if not exists idx_conteos_turno on public.conteos (sucursal_id, turno, estado);
 
 create table if not exists public.conteo_detalle (
   id bigserial primary key,
@@ -327,8 +349,10 @@ create table if not exists public.conteo_detalle (
   unique (conteo_id, producto_id)
 );
 create index if not exists idx_conteo_detalle_conteo on public.conteo_detalle (conteo_id, orden);
+-- Lo que se vende suelto de una caja se cuenta en piezas: el renglón recuerda cuántas trae la caja
+alter table public.conteo_detalle add column if not exists piezas_caja numeric(12,3);
 
--- Cuándo se contó por última vez cada producto en cada sucursal (para armar la lista del día)
+-- Cuándo se contó por última vez cada producto en cada sucursal
 create table if not exists public.conteo_ultimos (
   sucursal_id bigint not null references public.sucursales(id) on delete cascade,
   producto_id bigint not null references public.productos(id) on delete cascade,
@@ -337,14 +361,26 @@ create table if not exists public.conteo_ultimos (
   primary key (sucursal_id, producto_id)
 );
 
--- Cuántos productos se cuentan al día en cada sucursal (sin fila: 40)
+-- A qué hora empieza el turno de la tarde del inventario en cada sucursal (sin fila: 14:00).
+-- productos_por_dia era de la lista automática anterior; ya no se usa.
 create table if not exists public.conteo_config (
   sucursal_id bigint primary key references public.sucursales(id) on delete cascade,
   productos_por_dia integer not null default 40 check (productos_por_dia between 5 and 500),
+  hora_tarde text not null default '14:00',
   updated_at timestamptz not null default now()
 );
+alter table public.conteo_config add column if not exists hora_tarde text not null default '14:00';
 
--- Productos que el jefe marca como importantes (controlados, antibióticos, los más caros): se cuentan seguido
+-- La lista del inventario de cada farmacia: los productos que se cuentan en cada turno (la arma el jefe)
+create table if not exists public.conteo_lista (
+  sucursal_id bigint not null references public.sucursales(id) on delete cascade,
+  producto_id bigint not null references public.productos(id) on delete cascade,
+  agregado_por bigint,
+  agregado timestamptz not null default now(),
+  primary key (sucursal_id, producto_id)
+);
+
+-- Productos que el jefe marcaba como importantes (lista automática anterior; ya no se usa)
 create table if not exists public.conteo_importantes (
   producto_id bigint primary key references public.productos(id) on delete cascade,
   creado_por bigint,
@@ -473,6 +509,27 @@ create table if not exists public.abonos (
   corte_clave text
 );
 create index if not exists idx_abonos_fecha on public.abonos (sucursal_id, fecha);
+
+-- Préstamos de medicamento a otras farmacias (las sube cada caja): lo que falta que regresen o paguen
+create table if not exists public.prestamos (
+  id bigserial primary key,
+  clave text not null unique,
+  caja_id bigint not null references public.cajas(id),
+  sucursal_id bigint not null references public.sucursales(id),
+  prestamo_local_id bigint not null,
+  folio integer not null,
+  cliente_clave text,
+  cliente_nombre text not null default '',
+  usuario_id bigint,
+  fecha timestamptz not null,
+  nota text not null default '',
+  estado text not null default 'pendiente' check (estado in ('pendiente', 'cerrado')),
+  piezas_pendientes numeric(12,3) not null default 0,
+  valor_pendiente numeric(12,2) not null default 0,
+  detalle jsonb not null default '[]'::jsonb,
+  updated_at timestamptz not null default now()
+);
+create index if not exists idx_prestamos_estado on public.prestamos (estado, sucursal_id);
 
 -- ========================================================
 -- Seguridad (igual que supabase/seguridad.sql): la llave pública no puede leer ni modificar nada.
