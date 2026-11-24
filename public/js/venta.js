@@ -15,7 +15,7 @@ function ticketNuevo() {
     nombre: '', // opcional, por ejemplo el nombre del cliente
     carrito: [], // { producto, cantidad }
     filaSeleccionada: -1,
-    mayoreo: false, // F11: cobrar con precio de mayoreo
+    mayoreo: false, // (de antes: F11 ponía mayoreo a toda la venta; ahora va en cada renglón, r.mayoreo)
     clienteSugerido: null, // al cobrar un préstamo, el cliente ya sale elegido para el crédito
     // Cotización cargada desde "Cotizaciones": { id, folio, cliente, vigente, vigente_hasta, precios: Map(producto -> { precio, cantidad }) }
     cotizacion: null,
@@ -51,10 +51,10 @@ function piezasDe(producto, t = Venta) {
   return t.carrito.filter((r) => r.producto.id === producto.id && suelto(r)).reduce((s, r) => s + r.cantidad, 0);
 }
 
-// Mayoreo con F11, o automático al llegar a la cantidad de mayoreo del producto
+// Mayoreo con F11 en el renglón, o automático al llegar a la cantidad de mayoreo del producto
 function aplicaMayoreo(producto, t = Venta) {
   if (producto.comun || producto.precio_mayoreo == null) return false;
-  if (t.mayoreo) return true;
+  if (t.carrito.some((r) => r.producto.id === producto.id && suelto(r) && r.mayoreo)) return true;
   return Number(producto.cantidad_mayoreo) > 0 && piezasDe(producto, t) >= Number(producto.cantidad_mayoreo);
 }
 
@@ -189,7 +189,7 @@ function pintarVenta() {
   const tipoCambio = App.apertura?.tipo_cambio || 0;
   document.getElementById('total-dolares').textContent =
     tipoCambio > 0 ? `≈ ${(total / tipoCambio).toFixed(2)} USD (T.C. $${tipoCambio.toFixed(2)})` : '';
-  document.getElementById('indicador-mayoreo').hidden = !Venta.mayoreo;
+  document.getElementById('indicador-mayoreo').hidden = true; // el mayoreo se marca en cada renglón
   pintarFranjaCotizacion();
   pintarPestanas();
   // Después del corte la caja queda cerrada: se pueden armar ventas y cobrarlas al abrirla
@@ -330,8 +330,9 @@ async function restaurarTickets() {
       ...ticketNuevo(),
       numero: Number(t.numero) || 1,
       nombre: String(t.nombre || ''),
-      carrito: t.carrito.filter((r) => r && r.producto && Number(r.cantidad) > 0),
-      mayoreo: Boolean(t.mayoreo),
+      // Las ventas guardadas con el mayoreo de antes (toda la venta) lo pasan a cada renglón suelto
+      carrito: t.carrito.filter((r) => r && r.producto && Number(r.cantidad) > 0)
+        .map((r) => (t.mayoreo && suelto(r) ? { ...r, mayoreo: true } : r)),
       clienteSugerido: Number(t.clienteSugerido) || null,
       cotizacion: t.cotizacion ? { ...t.cotizacion, precios: new Map(t.cotizacion.precios || []) } : null,
     }))
@@ -344,7 +345,7 @@ async function restaurarTickets() {
   }
   // Datos de hoy de cada producto (precio y existencia); los que ya no se venden se quitan
   const ids = [...new Set(recuperados.flatMap((t) => t.carrito.filter((r) => !r.producto.comun)
-    .flatMap((r) => [Number(r.producto.id), ...(r.coctel ? [Number(r.coctel.id)] : [])])))];
+    .flatMap((r) => [Number(r.producto.id), ...(r.coctel && r.coctel.id ? [Number(r.coctel.id)] : [])])))];
   const quitados = [];
   if (ids.length) {
     try {
@@ -364,7 +365,7 @@ async function restaurarTickets() {
             delete r.precioManual;
           }
           if (r.precioManual != null && costoRenglon(r) > 0 && Number(r.precioManual) + 0.005 < costoRenglon(r)) delete r.precioManual;
-          if (r.coctel) {
+          if (r.coctel && r.coctel.id) { // cóctel de antes (producto del catálogo); el armado en la caja trae su precio
             const coctel = frescos.get(Number(r.coctel.id));
             if (coctel && coctel.es_coctel) Object.assign(r.coctel, { descripcion: coctel.descripcion, precio: Number(coctel.precio_venta) });
             else delete r.coctel;
@@ -454,9 +455,10 @@ function alcanza(renglon, cantidad, caja = Boolean(renglon.caja)) {
 }
 
 function agregarProducto(producto, cantidad) {
-  // Un cóctel no se agrega como producto: se escanea lo que lleva y se cobra con Cóctel (F10)
+  // Un cóctel no se agrega como producto: se arma con el botón Cóctel (F10)
   if (producto.es_coctel) {
-    abrirCoctel(producto.id);
+    if (hayModalAbierto()) cerrarModal();
+    abrirCoctel();
     return true;
   }
   // Se suma al renglón suelto del mismo producto (no a una caja ni a un cóctel)
@@ -516,11 +518,29 @@ function abrirArticuloComun() {
   });
 }
 
-// F11: alternar entre precio normal y precio de mayoreo
+// F11: precio de mayoreo solo en el renglón seleccionado (otra vez F11 lo regresa a precio normal)
 function alternarMayoreo() {
-  Venta.mayoreo = !Venta.mayoreo;
+  const r = Venta.carrito[Venta.filaSeleccionada];
+  if (!r) {
+    aviso('Selecciona un producto de la venta para ponerle precio de mayoreo', 'error');
+    return;
+  }
+  if (!suelto(r) || r.producto.comun) {
+    aviso('El mayoreo solo aplica a productos sueltos (no cajas, cócteles ni préstamos)', 'error');
+    return;
+  }
+  if (r.producto.precio_mayoreo == null) {
+    aviso(`"${r.producto.descripcion}" no tiene precio de mayoreo`, 'error');
+    return;
+  }
+  if (r.mayoreo) delete r.mayoreo;
+  else r.mayoreo = true;
+  delete r.precioManual; // el mayoreo reemplaza un precio cambiado a mano
   pintarVenta();
-  aviso(Venta.mayoreo ? 'Precio de MAYOREO activado' : 'Precio normal activado');
+  const queda = aplicaMayoreo(r.producto);
+  aviso(r.mayoreo
+    ? `${r.producto.descripcion}: mayoreo ${dinero(r.producto.precio_mayoreo)}`
+    : `${r.producto.descripcion}: ${queda ? 'sigue en mayoreo por la cantidad' : `precio normal ${dinero(r.producto.precio_venta)}`}`);
 }
 
 // ---------- Cambiar el precio solo en esta venta (doble clic en el precio, como en Eleventa) ----------
@@ -624,144 +644,207 @@ function alternarCaja(i) {
 }
 
 // ---------- Cóctel de inyecciones (F10) ----------
-// Se escanea lo que se usó (las ampolletas, la jeringa y la aguja), se toca Cóctel y se elige cuál: todo
-// eso se cobra junto al precio del cóctel. El inventario descuenta exactamente lo que se usó, sea de la
-// marca que sea.
-const sinAcentos = (texto) => String(texto || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+// Un cuadro como el de F3: la inyección de siempre ya viene elegida (AMCEF, dexametasona y eucaliptine),
+// se pueden buscar y agregar otras cosas, y se elige el precio (150, 200 o 250). Al aceptar se agrega
+// una pieza de cada producto al ticket, todo junto al precio del cóctel; las cantidades se cambian en el ticket.
+// El inventario descuenta exactamente lo que se usó.
+const sinAcentos = (texto) => String(texto || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+const COCTEL_PRECIOS = [150, 200, 250];
+const COCTEL_PRECIO_INICIAL = 200;
+const COCTEL_DE_SIEMPRE = ['AMCEF I.M 1G 3.5ML', 'DEXAMETASONA AMP. AMSA', 'EUCALIPTINE AMP'];
 
-// Si solo un cóctel tiene una palabra suya (ej. "ceftriaxona") en lo que se escaneó, ya queda elegido
-function coctelSugerido(lista, renglones) {
-  const palabras = (c) => sinAcentos(c.descripcion).split(/[^a-z0-9]+/).filter((p) => p.length >= 5 && p !== 'coctel');
-  const escaneado = renglones.map((r) => sinAcentos(r.producto.descripcion)).join(' ');
-  const coinciden = lista.filter((c) => {
-    const deOtros = new Set(lista.filter((o) => o !== c).flatMap(palabras));
-    return palabras(c).some((p) => !deOtros.has(p) && escaneado.includes(p));
-  });
-  return coinciden.length === 1 ? coinciden[0] : null;
+// Los productos de la inyección de siempre, buscados por su descripción exacta
+async function productosDeSiempre() {
+  const encontrados = await Promise.all(COCTEL_DE_SIEMPRE.map(async (descripcion) => {
+    const lista = await api('/api/productos/buscar?q=' + encodeURIComponent(descripcion));
+    return lista.find((p) => sinAcentos(p.descripcion).trim() === sinAcentos(descripcion)) || null;
+  }));
+  return { productos: encontrados.filter(Boolean), faltan: COCTEL_DE_SIEMPRE.filter((d, i) => !encontrados[i]) };
 }
 
-async function abrirCoctel(coctelId = null) {
-  const elegibles = Venta.carrito.filter((r) => !r.producto.comun && suelto(r));
-  if (elegibles.length < 2) {
-    aviso('Primero escanea lo que lleva la inyección (las ampolletas, la jeringa y la aguja) y luego toca Cóctel (F10)', 'error');
-    entradaCodigo.focus();
-    return;
-  }
-  let lista = [];
+async function abrirCoctel() {
+  if (hayModalAbierto()) return;
+  let deSiempre = { productos: [], faltan: [] };
   try {
-    lista = await api('/api/productos/cocteles');
+    deSiempre = await productosDeSiempre();
   } catch (err) {
     aviso(err.message, 'error');
-    return;
-  }
-  if (!lista.length) {
-    aviso('Todavía no hay cócteles: la central los da de alta en Productos (Nuevo producto, marcando "Es un cóctel")', 'error');
-    return;
   }
   if (hayModalAbierto()) return;
-  let elegido = lista.find((c) => c.id === coctelId) || (lista.length === 1 ? lista[0] : coctelSugerido(lista, elegibles));
+  let lleva = [...deSiempre.productos]; // lo que lleva el cóctel (una pieza de cada uno)
+  let precio = COCTEL_PRECIO_INICIAL;
+  let resultados = [];
+  let seleccion = 0;
+
   const modal = abrirModal(`
-    <h3>Cobrar como cóctel</h3>
-    <p>Elige el cóctel y deja marcado lo que lleva la inyección (ampolletas, jeringa y aguja): se cobra todo junto al precio del cóctel. La aplicación no se cobra.</p>
-    <div class="formas-pago opciones-coctel" role="radiogroup" aria-label="Cóctel">
-      ${lista.map((c, k) => `<button type="button" class="forma-pago" data-coctel="${c.id}" role="radio" aria-checked="false">
-          ${k < 9 ? `<small class="tecla-forma">${k + 1}</small>` : ''}
-          <b>${escaparHtml(c.descripcion)}</b><span>${dinero(c.precio_venta)}</span>
-        </button>`).join('')}
+    <h3>Cóctel</h3>
+    <div class="formas-pago opciones-coctel">
+      <button type="button" class="forma-pago" id="coctel-siempre" aria-pressed="false">
+        <b>Inyección de siempre</b><span>${COCTEL_DE_SIEMPRE.map(escaparHtml).join(' · ')}</span>
+      </button>
     </div>
-    <div class="resultados-busqueda">
+    ${deSiempre.faltan.length ? `<div class="mensaje-error">No se encontró en el catálogo: ${deSiempre.faltan.map(escaparHtml).join(', ')}</div>` : ''}
+    <input type="text" id="coctel-buscar" class="entrada" placeholder="Agregar otro producto: escribe el nombre o el código…" autocomplete="off">
+    <div class="resultados-busqueda" id="coctel-resultados-caja" hidden>
       <table class="tabla">
-        <thead><tr><th></th><th class="num">Cant.</th><th>Lleva</th><th class="num">Por separado</th></tr></thead>
-        <tbody id="coctel-renglones">${elegibles.map((r, k) => `<tr data-k="${k}">
-            <td><input type="checkbox" data-k="${k}" checked aria-label="Va en el cóctel" style="width:auto"></td>
-            <td class="num">${r.cantidad}</td>
-            <td>${escaparHtml(r.producto.descripcion)}</td>
-            <td class="num">${dinero(redondear2(Number(r.producto.precio_venta) * r.cantidad))}</td>
-          </tr>`).join('')}</tbody>
+        <thead><tr><th>Descripción</th><th class="num">Precio</th><th class="num">Existencia</th></tr></thead>
+        <tbody id="coctel-resultados"></tbody>
       </table>
     </div>
-    <div class="fila-esperado" id="coctel-resumen"></div>
+    <h4 class="subtitulo-coctel">Lleva</h4>
+    <div class="resultados-busqueda">
+      <table class="tabla">
+        <tbody id="coctel-lleva"></tbody>
+      </table>
+    </div>
+    <h4 class="subtitulo-coctel">Precio del cóctel</h4>
+    <div class="formas-pago precios-coctel" role="radiogroup" aria-label="Precio del cóctel">
+      ${COCTEL_PRECIOS.map((p) => `<button type="button" class="forma-pago" data-precio="${p}" role="radio" aria-checked="false"><b>${dinero(p)}</b></button>`).join('')}
+    </div>
     <div id="coctel-error" class="mensaje-error" hidden></div>
     <div class="pie">
       <button class="boton" id="coctel-cancelar">Cancelar (Esc)</button>
-      <button class="boton exito" id="coctel-aceptar">Cobrar como cóctel (Enter)</button>
+      <button class="boton exito" id="coctel-aceptar">Agregar al ticket (Enter)</button>
     </div>
   `);
-  const marcados = () => elegibles.filter((r, k) => modal.querySelector(`input[data-k="${k}"]`).checked);
-  function actualizar() {
-    modal.querySelectorAll('[data-coctel]').forEach((b) => {
-      const activa = Boolean(elegido) && Number(b.dataset.coctel) === elegido.id;
+  const entrada = modal.querySelector('#coctel-buscar');
+  const cajaResultados = modal.querySelector('#coctel-resultados-caja');
+  const cuerpoResultados = modal.querySelector('#coctel-resultados');
+  const errorEl = modal.querySelector('#coctel-error');
+
+  const esDeSiempre = () => deSiempre.productos.length > 0 && deSiempre.productos.every((p) => lleva.some((x) => x.id === p.id));
+
+  function pintar() {
+    const siempre = modal.querySelector('#coctel-siempre');
+    siempre.classList.toggle('activa', esDeSiempre());
+    siempre.setAttribute('aria-pressed', String(esDeSiempre()));
+    modal.querySelectorAll('[data-precio]').forEach((b) => {
+      const activa = Number(b.dataset.precio) === precio;
       b.classList.toggle('activa', activa);
       b.setAttribute('aria-checked', String(activa));
     });
-    const separado = redondear2(marcados().reduce((s, r) => s + Number(r.producto.precio_venta) * r.cantidad, 0));
-    modal.querySelector('#coctel-resumen').innerHTML = `Por separado: <b>${dinero(separado)}</b>
-      ${elegido ? `· Como cóctel: <b>${dinero(elegido.precio_venta)}</b>` : '· <b>Elige el cóctel</b>'}`;
+    modal.querySelector('#coctel-lleva').innerHTML = lleva.map((p, k) => `<tr>
+        <td class="num" style="width:1%">1</td>
+        <td>${escaparHtml(p.descripcion)}</td>
+        <td style="width:1%"><button type="button" class="boton-quitar" data-quitar="${k}" title="Quitar del cóctel"><svg class="icono"><use href="#i-x"/></svg></button></td>
+      </tr>`).join('') || '<tr><td colspan="3" class="vacio">Elige la inyección de siempre o busca los productos.</td></tr>';
   }
-  function aceptar() {
-    const errorEl = modal.querySelector('#coctel-error');
-    const filas = marcados();
+
+  function pintarResultados() {
+    cajaResultados.hidden = !entrada.value.trim();
+    cuerpoResultados.innerHTML = resultados.map((p, i) => {
+      const existencia = existenciaLocal(p);
+      return `<tr data-indice="${i}" class="${i === seleccion ? 'seleccionado' : ''}">
+        <td>${escaparHtml(p.descripcion)}${p.codigo_barras ? `<br><small>${escaparHtml(p.codigo_barras)}</small>` : ''}</td>
+        <td class="num">${dinero(p.precio_venta)}</td>
+        <td class="num ${p.usa_inventario && existencia <= 0 ? 'texto-rojo' : ''}">${p.usa_inventario ? existencia : '—'}</td>
+      </tr>`;
+    }).join('') || '<tr><td colspan="3" class="vacio">Sin resultados</td></tr>';
+  }
+
+  function agregarALista(p) {
+    if (!p) return;
     errorEl.hidden = true;
-    if (!elegido || filas.length < 2) {
-      errorEl.textContent = !elegido ? 'Elige el cóctel (tecla 1, 2…)' : 'Marca por lo menos dos productos (las ampolletas y la jeringa)';
+    if (!lleva.some((x) => x.id === p.id)) lleva.push(p);
+    entrada.value = '';
+    resultados = [];
+    pintarResultados();
+    pintar();
+    entrada.focus();
+  }
+
+  function aceptar() {
+    errorEl.hidden = true;
+    if (lleva.length < 2) {
+      errorEl.textContent = 'El cóctel lleva por lo menos dos productos';
+      errorEl.hidden = false;
+      return;
+    }
+    // Una pieza de cada uno; si falta existencia de algo, no se agrega nada
+    const sinExistencia = lleva.filter((p) => {
+      const otros = Venta.carrito.reduce((s, r) => (!r.prestamo && r.producto.id === p.id ? s + piezasRenglon(r) : s), 0);
+      return otros + 1 > existenciaLocal(p) + 1e-9;
+    });
+    if (sinExistencia.length) {
+      errorEl.textContent = `No hay existencia de: ${sinExistencia.map((p) => p.descripcion).join(', ')}`;
       errorEl.hidden = false;
       return;
     }
     const grupo = 1 + Math.max(0, ...Venta.carrito.filter((r) => r.coctel).map((r) => Number(r.coctel.grupo) || 0));
-    for (const r of filas) {
-      r.coctel = { id: elegido.id, grupo, descripcion: elegido.descripcion, precio: Number(elegido.precio_venta) };
-      delete r.precioManual;
+    for (const p of lleva) {
+      Venta.carrito.push({ producto: p, cantidad: 1, coctel: { id: null, grupo, descripcion: 'Cóctel', precio } });
     }
-    // Lo del cóctel queda junto, donde estaba lo primero que se escaneó
-    const enGrupo = new Set(filas);
-    const primero = Math.min(...filas.map((r) => Venta.carrito.indexOf(r)));
-    const nuevo = [];
-    Venta.carrito.forEach((r, i) => {
-      if (i === primero) nuevo.push(...filas);
-      if (!enGrupo.has(r)) nuevo.push(r);
-    });
-    Venta.carrito = nuevo;
-    Venta.filaSeleccionada = nuevo.indexOf(filas[filas.length - 1]);
-    const nombre = elegido.descripcion;
-    const precio = elegido.precio_venta;
+    Venta.filaSeleccionada = Venta.carrito.length - 1;
     cerrarModal();
     pintarVenta();
-    aviso(`${nombre}: ${dinero(precio)}`, 'exito');
+    aviso(`Cóctel agregado: ${dinero(precio)}`, 'exito');
+    entradaCodigo.focus();
   }
-  modal.querySelector('.opciones-coctel').addEventListener('click', (e) => {
-    const boton = e.target.closest('[data-coctel]');
-    if (!boton) return;
-    elegido = lista.find((c) => c.id === Number(boton.dataset.coctel)) || null;
-    actualizar();
-    modal.querySelector('#coctel-aceptar').focus();
-  });
-  modal.querySelector('#coctel-renglones').addEventListener('click', (e) => {
-    const fila = e.target.closest('tr[data-k]');
-    if (!fila) return;
-    // Un clic en cualquier parte del renglón lo marca o lo desmarca
-    if (e.target.tagName !== 'INPUT') {
-      const casilla = fila.querySelector('input');
-      casilla.checked = !casilla.checked;
+
+  let temporizador = null;
+  entrada.addEventListener('input', () => {
+    clearTimeout(temporizador);
+    if (!entrada.value.trim()) {
+      resultados = [];
+      pintarResultados();
+      return;
     }
-    actualizar();
+    temporizador = setTimeout(async () => {
+      try {
+        resultados = (await api('/api/productos/buscar?q=' + encodeURIComponent(entrada.value))).filter((p) => !p.es_coctel);
+      } catch (err) {
+        aviso(err.message, 'error');
+        resultados = [];
+      }
+      seleccion = 0;
+      pintarResultados();
+    }, 200);
+  });
+  entrada.addEventListener('keydown', (e) => {
+    if (!entrada.value.trim()) return; // sin búsqueda, Enter agrega el cóctel al ticket
+    if (e.key === 'ArrowDown') { e.preventDefault(); seleccion = Math.min(seleccion + 1, resultados.length - 1); pintarResultados(); }
+    if (e.key === 'ArrowUp') { e.preventDefault(); seleccion = Math.max(seleccion - 1, 0); pintarResultados(); }
+    if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); agregarALista(resultados[seleccion]); }
+  });
+  cuerpoResultados.addEventListener('click', (e) => {
+    const fila = e.target.closest('tr[data-indice]');
+    if (fila) agregarALista(resultados[Number(fila.dataset.indice)]);
+  });
+  cuerpoResultados.addEventListener('mouseover', (e) => {
+    const fila = e.target.closest('tr[data-indice]');
+    if (!fila || Number(fila.dataset.indice) === seleccion) return;
+    seleccion = Number(fila.dataset.indice);
+    cuerpoResultados.querySelectorAll('tr.seleccionado').forEach((tr) => tr.classList.remove('seleccionado'));
+    fila.classList.add('seleccionado');
+  });
+  // La inyección de siempre: un clic la pone (o la quita si ya está)
+  modal.querySelector('#coctel-siempre').addEventListener('click', () => {
+    if (esDeSiempre()) lleva = lleva.filter((p) => !deSiempre.productos.some((x) => x.id === p.id));
+    else for (const p of deSiempre.productos) if (!lleva.some((x) => x.id === p.id)) lleva.push(p);
+    pintar();
+  });
+  modal.querySelector('#coctel-lleva').addEventListener('click', (e) => {
+    const boton = e.target.closest('[data-quitar]');
+    if (!boton) return;
+    lleva.splice(Number(boton.dataset.quitar), 1);
+    pintar();
+  });
+  modal.querySelector('.precios-coctel').addEventListener('click', (e) => {
+    const boton = e.target.closest('[data-precio]');
+    if (!boton) return;
+    precio = Number(boton.dataset.precio);
+    pintar();
   });
   modal.querySelector('#coctel-aceptar').addEventListener('click', aceptar);
   modal.querySelector('#coctel-cancelar').addEventListener('click', cerrarModal);
   modal.addEventListener('keydown', (e) => {
-    const n = Number(e.key);
-    if (Number.isInteger(n) && n >= 1 && n <= Math.min(lista.length, 9) && !e.ctrlKey && !e.altKey && !e.metaKey) {
-      e.preventDefault();
-      elegido = lista[n - 1];
-      actualizar();
-      return;
-    }
-    if (e.key === 'Enter' && e.target.id !== 'coctel-cancelar') {
+    if (e.key === 'Enter' && e.target.tagName !== 'BUTTON') {
       e.preventDefault();
       aceptar();
     }
   });
-  actualizar();
-  modal.querySelector('#coctel-aceptar').focus();
+  pintar();
+  entrada.focus();
 }
 
 function quitarCoctel(grupo) {
@@ -838,10 +921,13 @@ document.getElementById('cuerpo-venta').addEventListener('click', (e) => {
     entradaCodigo.focus();
     return;
   }
+  // Seleccionar un renglón solo cambia el resaltado: si se volviera a pintar la tabla, la celda del
+  // primer clic desaparece y el navegador ya no reconoce el doble clic en el precio.
   const fila = e.target.closest('tr[data-indice]');
   if (fila) {
     Venta.filaSeleccionada = Number(fila.dataset.indice);
-    pintarVenta();
+    e.currentTarget.querySelectorAll('tr.seleccionado').forEach((tr) => tr.classList.remove('seleccionado'));
+    fila.classList.add('seleccionado');
   }
 });
 
@@ -981,7 +1067,7 @@ async function cargarCotizacion(id, boton) {
       continue;
     }
     if (producto.es_coctel) {
-      avisos.push(`"${r.descripcion}" es un cóctel: escanea lo que lleva y toca Cóctel (F10)`);
+      avisos.push(`"${r.descripcion}" es un cóctel: ármalo con el botón Cóctel (F10)`);
       continue;
     }
     const existencia = existenciaLocal(producto);
@@ -1072,6 +1158,14 @@ function abrirBusquedaProducto() {
   cuerpo.addEventListener('click', (e) => {
     const fila = e.target.closest('tr[data-indice]');
     if (fila) elegir(Number(fila.dataset.indice));
+  });
+  // El renglón bajo el cursor queda como el elegido (Enter agrega ese); sin volver a pintar la lista
+  cuerpo.addEventListener('mouseover', (e) => {
+    const fila = e.target.closest('tr[data-indice]');
+    if (!fila || Number(fila.dataset.indice) === seleccion) return;
+    seleccion = Number(fila.dataset.indice);
+    cuerpo.querySelectorAll('tr.seleccionado').forEach((tr) => tr.classList.remove('seleccionado'));
+    fila.classList.add('seleccionado');
   });
 }
 
@@ -1216,15 +1310,14 @@ async function abrirCobro() {
             const especial = r.precioManual != null ? { precio_manual: Number(r.precioManual) } : {};
             if (r.prestamo) return { producto_id: r.producto.id, cantidad: r.cantidad, prestamo_detalle_id: r.prestamo.detalle_id, ...especial };
             if (r.caja) return { producto_id: r.producto.id, cantidad: r.cantidad, caja: true, ...especial };
-            if (r.coctel) return { producto_id: r.producto.id, cantidad: r.cantidad, coctel: { id: r.coctel.id, grupo: r.coctel.grupo } };
-            return { producto_id: r.producto.id, cantidad: r.cantidad, ...especial };
+            if (r.coctel) return { producto_id: r.producto.id, cantidad: r.cantidad, coctel: { id: r.coctel.id, grupo: r.coctel.grupo, precio: r.coctel.precio } };
+            return { producto_id: r.producto.id, cantidad: r.cantidad, ...(r.mayoreo ? { mayoreo: true } : {}), ...especial };
           }),
           forma_pago: forma.value,
           pago: forma.value === 'efectivo' ? Number(pago.value) : totalVenta(),
           pago_usd: forma.value === 'dolar' ? Number(pagoUsd.value) : null,
           pago_efectivo: forma.value === 'mixto' ? Number(mixtoEfectivo.value) : null,
           cliente_id: forma.value === 'credito' ? Number(modal.querySelector('#cobro-cliente').value) : null,
-          mayoreo: Venta.mayoreo,
           nota: modal.querySelector('#cobro-nota').value,
           cotizacion_id: Venta.cotizacion ? Venta.cotizacion.id : null,
         },

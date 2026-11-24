@@ -1091,7 +1091,7 @@ function pintarCotizacion(nuevo = null) {
                class="${Math.abs(r.precio - r.precio_lista) > 0.004 ? 'cambiado' : ''}" aria-label="Precio unitario">
         <span class="m-importe">${dinero(r2(r.precio * r.cantidad))}</span>
       </label>
-    </li>`).join('') || '<li class="m-vacio">Todavía no hay productos. Toca <b>Escanear</b> o escribe el nombre del producto.</li>';
+    </li>`).join('') || '<li class="m-vacio">Escanea o busca un producto.</li>';
   $('cot-productos').textContent = lista.length;
   $('cot-total').textContent = dinero(totalCotizacion());
   $('cot-enviar').disabled = lista.length === 0;
@@ -1347,7 +1347,7 @@ function pintarApoyos() {
         <small>${a.renglones} producto(s) · ${cantidadTexto(a.piezas)} pieza(s)${enCurso ? ' · <span class="m-en-curso">revisión a medias</span>' : ''}</small></span>
       <span class="m-accion principal">Revisar</span>
     </button></li>`;
-  }).join('') || '<li class="m-vacio">No hay apoyos por recibir. Cuando otra farmacia te mande uno, aparecerá aquí.</li>';
+  }).join('') || '<li class="m-vacio">No hay apoyos por recibir.</li>';
   $('nav-apoyos').hidden = lista.length === 0;
   $('nav-apoyos').textContent = lista.length;
 }

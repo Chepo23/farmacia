@@ -238,6 +238,7 @@ async function cargarMovimientosSup({ mas = false } = {}) {
     cuerpo.innerHTML = `<tr><td colspan="9">${escaparHtml(error.message)}</td></tr>`;
     return;
   }
+  const yaHabia = mas ? Sup.movs.lista.length : 0;
   Sup.movs.lista = mas ? [...Sup.movs.lista, ...r.movimientos] : r.movimientos;
   Sup.movs.siguiente = r.siguiente;
   if (r.resumen) {
@@ -251,6 +252,8 @@ async function cargarMovimientosSup({ mas = false } = {}) {
     ? 'Sin conexión con la central: solo se ven los movimientos hechos en esta computadora.'
     : 'Movimientos de esta computadora.';
   cuerpo.innerHTML = Sup.movs.lista.map(filaMovimientoSup).join('') || '<tr><td colspan="9">No hay movimientos con estos filtros.</td></tr>';
+  // Con "Cargar más" se va a la página donde empiezan los nuevos
+  if (mas && r.movimientos.length) Paginador.irA(cuerpo, Math.floor(yaHabia / Paginador.POR_PAGINA) + 1);
   document.getElementById('sup-mov-mas').hidden = !r.hay_mas;
 }
 

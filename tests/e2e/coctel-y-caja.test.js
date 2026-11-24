@@ -226,4 +226,28 @@ test('inyecciones: venta por caja y cócteles', async (t) => {
     assert.equal(desdeCelular.body.renglones.find((r) => r.producto_id === ids.keto).piezas_caja, 3);
     assert.deepEqual(nube.errores, []);
   });
+
+  // Botón Cóctel de la caja: se arma con lo que lleva y se elige el precio (150, 200 o 250), sin producto cóctel
+  await t.test('cóctel armado en la caja con precio elegido', async () => {
+    const armado = (id, precio, grupo = 1) => ({ producto_id: id, cantidad: 1, coctel: { id: null, grupo, precio } });
+    const antes = [stock(ids.amcef), stock(ids.dexa), stock(ids.euca)];
+    const r = await vender([armado(ids.amcef, 250), armado(ids.dexa, 250), armado(ids.euca, 250), { producto_id: ids.jeringa, cantidad: 1 }]);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.total, 258, 'cóctel $250 + jeringa $8 aparte');
+    assert.deepEqual([stock(ids.amcef), stock(ids.dexa), stock(ids.euca)], antes.map((n) => n - 1));
+    const venta = (await norte.get(`/api/ventas/${r.body.ventaId}`)).body;
+    const delCoctel = venta.partidas.filter((p) => p.coctel === 'Cóctel');
+    assert.equal(delCoctel.length, 3);
+    assert.equal(Math.round(delCoctel.reduce((s, p) => s + p.importe, 0) * 100) / 100, 250);
+
+    const casos = [
+      [[armado(ids.amcef, 300), armado(ids.dexa, 300)], 'precio que no es 150, 200 ni 250'],
+      [[armado(ids.amcef, 150), armado(ids.dexa, 200)], 'un grupo con dos precios'],
+      [[armado(ids.amcef, 200)], 'un solo producto'],
+    ];
+    for (const [partidas, porque] of casos) {
+      const mal = await vender(partidas);
+      assert.equal(mal.status, 400, `${porque}: ${JSON.stringify(mal.body)}`);
+    }
+  });
 });

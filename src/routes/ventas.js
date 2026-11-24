@@ -88,6 +88,11 @@ async function conCotizacion(fn) {
   }
 }
 
+// Precios del cóctel que se arma en la caja (botón Cóctel): lo que lleva se cobra junto a uno de estos
+const PRECIOS_COCTEL = [150, 200, 250];
+const coctelValido = (c) => Number.isInteger(Number(c.grupo))
+  && (Number(c.id) > 0 || PRECIOS_COCTEL.includes(Number(c.precio)));
+
 // Registrar una venta completa
 router.post('/', manejar(async (req, res) => {
   const { partidas, forma_pago, pago, cliente_id, mayoreo, nota, pago_usd, pago_efectivo, cotizacion_id } = req.body || {};
@@ -118,7 +123,7 @@ router.post('/', manejar(async (req, res) => {
     if (!Number.isFinite(cantidad) || !(cantidad > 0)) return res.status(400).json({ error: 'Cantidad no válida' });
     if (p.caja && !Number.isInteger(cantidad)) return res.status(400).json({ error: 'Las cajas se venden completas' });
     if (p.coctel && (p.comun || p.caja)) return res.status(400).json({ error: 'En un cóctel solo van productos sueltos del catálogo' });
-    if (p.coctel && !(Number(p.coctel.id) > 0 && Number.isInteger(Number(p.coctel.grupo)))) {
+    if (p.coctel && !coctelValido(p.coctel)) {
       return res.status(400).json({ error: 'Cóctel no válido' });
     }
     if (p.prestamo_detalle_id != null && (p.comun || p.caja || p.coctel)) {
@@ -134,7 +139,7 @@ router.post('/', manejar(async (req, res) => {
       ids.add(id);
       if (!p.caja && !p.coctel && p.prestamo_detalle_id == null) cantidadPorProducto.set(id, (cantidadPorProducto.get(id) || 0) + cantidad);
     }
-    if (p.coctel) ids.add(Number(p.coctel.id));
+    if (p.coctel && Number(p.coctel.id) > 0) ids.add(Number(p.coctel.id)); // cóctel de antes (producto del catálogo)
   }
   const productos = await catalogo.porIds([...ids]);
 
@@ -175,7 +180,7 @@ router.post('/', manejar(async (req, res) => {
       return res.status(400).json({ error: `El producto ${p.producto_id} ya no está disponible en el catálogo` });
     }
     if (producto.es_coctel) {
-      return res.status(400).json({ error: 'Para cobrar un cóctel escanea las ampolletas que se usaron y toca Cóctel' });
+      return res.status(400).json({ error: 'Para cobrar un cóctel toca el botón Cóctel (F10) en la venta' });
     }
     // Caja completa: su precio, y se descuentan todas sus piezas (el inventario va en piezas)
     if (p.caja) {
@@ -217,7 +222,8 @@ router.post('/', manejar(async (req, res) => {
         costo_unitario: producto.precio_costo,
         importe: redondear(producto.precio_venta * cantidad),
         usa_inventario: producto.usa_inventario ? 1 : 0,
-        coctel_id: Number(p.coctel.id),
+        coctel_id: Number(p.coctel.id) > 0 ? Number(p.coctel.id) : 0,
+        coctel_precio: Number(p.coctel.id) > 0 ? null : Number(p.coctel.precio),
         coctel_grupo: Number(p.coctel.grupo),
       });
       continue;
@@ -236,10 +242,13 @@ router.post('/', manejar(async (req, res) => {
       }
       prestamo = { detalle_id: Number(d.id), prestamo_id: Number(d.prestamo_id), folio: d.folio };
     }
-    // Mayoreo: con F11, o automático al llegar a la cantidad de mayoreo del producto
+    // Mayoreo: con F11 en el renglón (o en toda la venta, como antes), o automático al llegar a la
+    // cantidad de mayoreo del producto. Un renglón con F11 pone en mayoreo todas las piezas sueltas de ese producto.
     const totalProducto = cantidadPorProducto.get(producto.id) || cantidad;
+    const conF11 = Boolean(mayoreo) || partidas.some((x) => Number(x.producto_id) === Number(producto.id) && x.mayoreo
+      && !x.caja && !x.coctel && x.prestamo_detalle_id == null);
     const aplicaMayoreo = producto.precio_mayoreo != null
-      && (Boolean(mayoreo) || (producto.cantidad_mayoreo > 0 && totalProducto >= producto.cantidad_mayoreo));
+      && (conF11 || (producto.cantidad_mayoreo > 0 && totalProducto >= producto.cantidad_mayoreo));
     let precio = aplicaMayoreo ? producto.precio_mayoreo : producto.precio_venta;
     const cotizado = cotizacion && cotizacion.vigente ? cotizacion.precios.get(producto.id) : null;
     if (cotizado && totalProducto <= cotizado.cantidad + 1e-9) precio = Math.min(precio, cotizado.precio);
@@ -273,13 +282,14 @@ router.post('/', manejar(async (req, res) => {
   const grupos = new Map();
   for (const r of renglones) {
     if (!r.coctel_grupo && r.coctel_grupo !== 0) continue;
-    if (!grupos.has(r.coctel_grupo)) grupos.set(r.coctel_grupo, { coctelId: r.coctel_id, renglones: [] });
+    if (!grupos.has(r.coctel_grupo)) grupos.set(r.coctel_grupo, { coctelId: r.coctel_id, precio: r.coctel_precio, renglones: [] });
     const g = grupos.get(r.coctel_grupo);
-    if (g.coctelId !== r.coctel_id) return res.status(400).json({ error: 'Un cóctel tiene renglones de otro cóctel' });
+    if (g.coctelId !== r.coctel_id || g.precio !== r.coctel_precio) return res.status(400).json({ error: 'Un cóctel tiene renglones de otro cóctel' });
     g.renglones.push(r);
   }
   for (const g of grupos.values()) {
-    const coctel = productos.get(g.coctelId);
+    // Cóctel armado en la caja (precio elegido: 150, 200 o 250) o, como antes, un producto cóctel del catálogo
+    const coctel = g.coctelId ? productos.get(g.coctelId) : { descripcion: 'Cóctel', precio_venta: g.precio, es_coctel: 1 };
     if (!coctel || !coctel.es_coctel) return res.status(400).json({ error: 'Ese cóctel ya no está disponible' });
     if (g.renglones.length < 2) return res.status(400).json({ error: 'Un cóctel lleva por lo menos dos productos' });
     const precioCoctel = redondear(coctel.precio_venta);

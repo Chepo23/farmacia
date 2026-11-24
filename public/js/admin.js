@@ -293,13 +293,11 @@ async function cargarRespaldos() {
     contenedor.innerHTML = `
       <div class="dato-secundario"><span>Último respaldo</span>
         <b class="${ultimo ? '' : 'texto-rojo'}">${ultimo ? escaparHtml(new Date(ultimo.creado).toLocaleString('es-MX')) : 'Todavía no hay'}</b></div>
-      <div class="dato-secundario"><span>Respaldos guardados</span><b>${r.total} (se conservan ${r.conservar_dias} días)</b></div>
-      <div class="dato-secundario"><span>Carpeta</span><b class="texto-ruta">${escaparHtml(r.carpeta)}</b></div>
-      ${r.carpeta_extra ? `<div class="dato-secundario"><span>Copia extra en</span><b class="texto-ruta">${escaparHtml(r.carpeta_extra)}</b></div>` : ''}
-      ${r.activo ? '' : '<div class="mensaje-error">Los respaldos automáticos están apagados en esta computadora.</div>'}
+      <div class="dato-secundario" title="Carpeta: ${escaparHtml(r.carpeta)}${r.carpeta_extra ? ` · copia extra: ${escaparHtml(r.carpeta_extra)}` : ''}"><span>Guardados</span><b>${r.total} · últimos ${r.conservar_dias} días</b></div>
+      ${r.activo ? '' : '<div class="mensaje-error">Respaldos automáticos apagados.</div>'}
       ${r.error ? `<div class="mensaje-error">${escaparHtml(r.error)}</div>` : ''}
       ${r.error_extra ? `<div class="mensaje-error">${escaparHtml(r.error_extra)}</div>` : ''}
-      ${r.respaldos.length ? `<ul class="lista-respaldos">${r.respaldos.slice(0, 5).map((x) => `
+      ${r.respaldos.length ? `<ul class="lista-respaldos">${r.respaldos.slice(0, 3).map((x) => `
         <li><span>${escaparHtml(x.nombre)} <small>${tamanio(x.bytes)}</small></span>
           <a class="boton chico" href="/api/respaldos/${encodeURIComponent(x.nombre)}" download>Descargar</a></li>`).join('')}</ul>` : ''}
       ${pintarCopiaCentral(r.central)}`;
@@ -319,13 +317,10 @@ function pintarCopiaCentral(c) {
   const ultima = c.ultima;
   const vieja = !ultima || (Date.now() - new Date(ultima.creado).getTime()) > 3 * 86400000;
   return `
-    <h4 class="subtitulo-respaldos">Copia de la central</h4>
-    <p><small>Cada día se guarda aquí también una copia de la base central: el inventario de todas las farmacias,
-      productos, conteos, apoyos, préstamos, ventas y el registro de cambios.</small></p>
+    <h4 class="subtitulo-respaldos" title="Copia diaria de la base central: inventario de todas las farmacias, productos, conteos, apoyos, ventas y registro de cambios">Copia de la central</h4>
     <div class="dato-secundario"><span>Última copia</span>
       <b class="${vieja ? 'texto-rojo' : ''}">${ultima ? escaparHtml(new Date(ultima.creado).toLocaleString('es-MX')) : 'Todavía no hay'}</b></div>
-    <div class="dato-secundario"><span>Copias guardadas</span><b>${c.total} (se conservan ${c.conservar_dias} días)</b></div>
-    <div class="dato-secundario"><span>Carpeta</span><b class="texto-ruta">${escaparHtml(c.carpeta)}</b></div>
+    <div class="dato-secundario" title="Carpeta: ${escaparHtml(c.carpeta)}"><span>Guardadas</span><b>${c.total} · últimos ${c.conservar_dias} días</b></div>
     ${c.en_curso ? '<div class="dato-secundario"><span>Estado</span><b>Copiando…</b></div>' : ''}
     ${c.error ? `<div class="mensaje-error">${escaparHtml(c.error)}</div>` : ''}
     ${c.error_extra ? `<div class="mensaje-error">${escaparHtml(c.error_extra)}</div>` : ''}
@@ -398,7 +393,7 @@ async function cargarSincronizacion() {
   const errores = document.getElementById('admin-sync-errores');
   const boton = document.getElementById('boton-sincronizar');
   if (App.usuario.modo !== 'central') {
-    contenedor.innerHTML = '<p><small>Esta computadora trabaja sin central (modo local): el inventario está en esta misma base de datos.</small></p>';
+    contenedor.innerHTML = '<p><small>Sin central: esta computadora trabaja sola.</small></p>';
     boton.hidden = true;
     errores.innerHTML = '';
     return;
@@ -407,12 +402,11 @@ async function cargarSincronizacion() {
   try {
     const e = await api('/api/sync/estado');
     contenedor.innerHTML = `
-      <div class="dato-secundario"><span>Conexión con la central</span><b class="${e.disponible ? 'texto-verde' : 'texto-rojo'}">${e.disponible ? 'En línea' : 'Sin conexión'}</b></div>
-      <div class="dato-secundario"><span>Movimientos por subir</span><b>${e.pendientes}</b></div>
-      <div class="dato-secundario"><span>Movimientos con error</span><b class="${e.errores ? 'texto-rojo' : ''}">${e.errores}</b></div>
-      <div class="dato-secundario"><span>Última sincronización</span><b>${e.ultima_sincronizacion ? escaparHtml(new Date(e.ultima_sincronizacion).toLocaleString('es-MX')) : '—'}</b></div>
-      ${e.ventas ? `<div class="dato-secundario"><span>Ventas, cortes y abonos por subir</span><b>${Object.values(e.ventas.pendientes).reduce((t, n) => t + n, 0)}</b></div>
-      ${e.ventas.caja ? `<div class="dato-secundario"><span>Esta computadora es la</span><b>Caja ${e.ventas.caja.numero}</b></div>` : ''}` : ''}
+      <div class="dato-secundario"><span>Central</span><b class="${e.disponible ? 'texto-verde' : 'texto-rojo'}">${e.disponible ? 'En línea' : 'Sin conexión'}</b></div>
+      <div class="dato-secundario"><span>Última vez</span><b>${e.ultima_sincronizacion ? escaparHtml(new Date(e.ultima_sincronizacion).toLocaleString('es-MX')) : '—'}</b></div>
+      <div class="dato-secundario" title="Movimientos de inventario${e.ventas ? ', ventas, cortes y abonos' : ''} que faltan por subir"><span>Por subir</span><b>${Number(e.pendientes) + (e.ventas ? Object.values(e.ventas.pendientes).reduce((t, n) => t + n, 0) : 0)}</b></div>
+      ${e.errores ? `<div class="dato-secundario"><span>Con error</span><b class="texto-rojo">${e.errores}</b></div>` : ''}
+      ${e.ventas && e.ventas.caja ? `<div class="dato-secundario"><span>Esta computadora</span><b>Caja ${e.ventas.caja.numero}</b></div>` : ''}
       ${e.ultimo_error ? `<div class="mensaje-error">${escaparHtml(e.ultimo_error)}</div>` : ''}`;
     errores.innerHTML = e.detalle_errores.length ? `
       <div class="lista-errores-sync">

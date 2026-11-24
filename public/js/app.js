@@ -647,3 +647,85 @@ async function iniciar() {
 }
 
 iniciar();
+
+// ---------- Paginación de tablas ----------
+// Las tablas largas muestran 10 renglones a la vez con flechas abajo: "‹ 1 de 10 ›  1–10 de 100".
+// Se engancha al <tbody> y vigila cuando el módulo lo vuelve a pintar: si cambia cuántos renglones
+// hay (otra búsqueda, se borró algo) regresa a la página 1; si son los mismos se queda en la página.
+const Paginador = (() => {
+  const POR_PAGINA = 10;
+  const estados = new Map(); // tbody -> { pagina, total, barra }
+
+  // Un renglón de "No hay…" / "Cargando…" (una sola celda que abarca la tabla) no cuenta
+  const filasDe = (tbody) => [...tbody.rows].filter((tr) => !(tr.cells.length === 1 && tr.cells[0].colSpan > 1));
+
+  function pintar(tbody) {
+    const est = estados.get(tbody);
+    const filas = filasDe(tbody);
+    const total = filas.length;
+    if (total !== est.total) est.pagina = 1;
+    est.total = total;
+    const paginas = Math.max(1, Math.ceil(total / POR_PAGINA));
+    est.pagina = Math.min(Math.max(1, est.pagina), paginas);
+    const inicio = (est.pagina - 1) * POR_PAGINA;
+    filas.forEach((tr, i) => tr.classList.toggle('fila-fuera-de-pagina', i < inicio || i >= inicio + POR_PAGINA));
+
+    est.barra.hidden = total <= POR_PAGINA;
+    est.barra.querySelector('[data-pag="anterior"]').disabled = est.pagina <= 1;
+    est.barra.querySelector('[data-pag="siguiente"]').disabled = est.pagina >= paginas;
+    est.barra.querySelector('.paginador-pagina').textContent = `${est.pagina} de ${paginas}`;
+    est.barra.querySelector('.paginador-rango').textContent = total
+      ? `${inicio + 1}–${Math.min(inicio + POR_PAGINA, total)} de ${total}` : '0 de 0';
+  }
+
+  const observador = new MutationObserver((cambios) => {
+    const tocados = new Set(cambios.map((c) => c.target.closest('tbody')).filter((t) => estados.has(t)));
+    tocados.forEach(pintar);
+  });
+
+  function activar(idTbody) {
+    const tbody = document.getElementById(idTbody);
+    if (!tbody || estados.has(tbody)) return;
+    const tabla = tbody.closest('table');
+    const ancla = tabla.parentElement.classList.contains('contenedor-tabla') ? tabla.parentElement : tabla;
+    const barra = document.createElement('div');
+    barra.className = 'paginador';
+    barra.hidden = true;
+    barra.innerHTML = `
+      <button type="button" class="boton chico" data-pag="anterior" aria-label="Página anterior">‹</button>
+      <span class="paginador-pagina"></span>
+      <button type="button" class="boton chico" data-pag="siguiente" aria-label="Página siguiente">›</button>
+      <span class="paginador-rango texto-suave"></span>`;
+    ancla.after(barra);
+    estados.set(tbody, { pagina: 1, total: -1, barra });
+    barra.addEventListener('click', (e) => {
+      const boton = e.target.closest('[data-pag]');
+      if (!boton) return;
+      irA(tbody, estados.get(tbody).pagina + (boton.dataset.pag === 'siguiente' ? 1 : -1));
+    });
+    observador.observe(tbody, { childList: true });
+    pintar(tbody);
+  }
+
+  // Ir a una página (p. ej. después de "Cargar más", a donde empiezan los nuevos)
+  function irA(tbodyOId, pagina) {
+    const tbody = typeof tbodyOId === 'string' ? document.getElementById(tbodyOId) : tbodyOId;
+    const est = estados.get(tbody);
+    if (!est) return;
+    observador.takeRecords(); // lo pendiente de pintar ya se toma en cuenta aquí
+    est.total = filasDe(tbody).length;
+    est.pagina = pagina;
+    pintar(tbody);
+  }
+
+  return { activar, irA, POR_PAGINA };
+})();
+
+[
+  'cuerpo-productos', 'cuerpo-clientes',
+  'cuerpo-movimientos-caja', 'cuerpo-por-cajero', 'cuerpo-departamentos-corte',
+  'rep-inv-bajo-minimo',
+  'cuerpo-pedidos', 'cuerpo-en-camino',
+  'sup-mov-cuerpo',
+  'cuerpo-departamentos', 'cuerpo-usuarios',
+].forEach(Paginador.activar);

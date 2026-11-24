@@ -115,7 +115,7 @@
         <button id="boton-cobrar" class="boton exito grande"><svg class="icono"><use href="#i-cobrar"/></svg>COBRAR (F12)</button>
         <button id="boton-buscar" class="boton primario"><svg class="icono"><use href="#i-buscar"/></svg>Buscar producto (F3)</button>
         <button id="boton-articulo-comun" class="boton primario"><svg class="icono"><use href="#i-mas"/></svg>Artículo común (Ins)</button>
-        <button id="boton-coctel" class="boton primario" title="Cobrar ampolletas, jeringa y aguja al precio del cóctel"><svg class="icono"><use href="#i-inyeccion"/></svg>Cóctel (F10)</button>
+        <button id="boton-coctel" class="boton primario" title="Agregar un cóctel de inyección al ticket"><svg class="icono"><use href="#i-inyeccion"/></svg>Cóctel (F10)</button>
         <button id="boton-cotizaciones" class="boton boton-cotizaciones"><svg class="icono"><use href="#i-cotizar"/></svg>Cotizaciones<span id="aviso-cotizaciones" class="globo-aviso" hidden></span></button>
         <button id="boton-cancelar-venta" class="boton peligro-suave"><svg class="icono"><use href="#i-x"/></svg>Cancelar venta (F4)</button>
         <hr>
@@ -564,7 +564,6 @@
       </div>
       <div class="tarjeta">
         <h3>Departamentos <button id="boton-nuevo-departamento" class="boton primario chico"><svg class="icono"><use href="#i-mas"/></svg>Nuevo</button></h3>
-        <p><small>Los departamentos son los mismos en todas las sucursales y se eligen al registrar un producto.</small></p>
         <table class="tabla">
           <thead><tr><th>Nombre</th><th></th></tr></thead>
           <tbody id="cuerpo-departamentos"></tbody>
@@ -572,22 +571,20 @@
       </div>
       <div class="tarjeta">
         <h3>Datos del ticket</h3>
-        <p><small>Lo que aparece en tickets, comprobantes y estados de cuenta impresos en esta computadora.</small></p>
         <form id="form-config" class="form-config">
           <label>Nombre del negocio <input type="text" id="cfg-nombre" class="entrada" maxlength="120"></label>
-          <label>Lema (debajo del nombre) <input type="text" id="cfg-encabezado" class="entrada" maxlength="120"></label>
+          <label>Lema <input type="text" id="cfg-encabezado" class="entrada" maxlength="120"></label>
           <label>RFC (opcional) <input type="text" id="cfg-rfc" class="entrada" maxlength="20"></label>
-          <label>Mensaje de agradecimiento <input type="text" id="cfg-mensaje" class="entrada" maxlength="150"></label>
+          <label>Agradecimiento <input type="text" id="cfg-mensaje" class="entrada" maxlength="150"></label>
           <label>Pie del ticket <input type="text" id="cfg-pie" class="entrada" maxlength="200"></label>
           <label>Ancho del papel
             <select id="cfg-ancho" class="entrada">
-              <option value="80">80 mm (el más común)</option><option value="58">58 mm</option><option value="otro">Otro ancho…</option>
+              <option value="80">80 mm</option><option value="58">58 mm</option><option value="otro">Otro ancho…</option>
             </select>
             <input type="number" id="cfg-ancho-otro" class="entrada" min="40" max="120" step="1" placeholder="Ancho en mm (ej. 76)" hidden>
-            <small id="cfg-ancho-nota" hidden>En el programa de esta computadora el ancho se elige junto con la impresora
-              (Programa de esta computadora → Impresoras y opciones).</small>
+            <small id="cfg-ancho-nota" hidden>Se elige en Impresoras y opciones.</small>
           </label>
-          <label>Dirección de la app del celular (https://…)
+          <label>App del celular
             <input type="url" id="cfg-url-movil" class="entrada" maxlength="200" placeholder="https://farmacia-inventario.pages.dev">
           </label>
           <div class="acciones">
@@ -597,7 +594,7 @@
         </form>
       </div>
       <div class="tarjeta" id="tarjeta-sincronizacion">
-        <h3>Sincronización con la central</h3>
+        <h3>Sincronización</h3>
         <div id="admin-sync-estado"><small>Cargando…</small></div>
         <div class="acciones">
           <button type="button" id="boton-sincronizar" class="boton primario"><svg class="icono"><use href="#i-nube"/></svg>Sincronizar ahora</button>
@@ -605,20 +602,19 @@
         <div id="admin-sync-errores"></div>
       </div>
       <div class="tarjeta" id="tarjeta-respaldos">
-        <h3>Respaldos de esta computadora</h3>
-        <p><small>Las ventas, clientes, crédito y cortes viven en esta computadora: cada día se guarda una copia automática.</small></p>
+        <h3>Respaldos</h3>
         <div id="admin-respaldos"><small>Cargando…</small></div>
         <div class="acciones">
           <button type="button" id="boton-respaldar" class="boton primario"><svg class="icono"><use href="#i-archivo"/></svg>Respaldar ahora</button>
-          <button type="button" id="boton-copiar-central" class="boton" hidden><svg class="icono"><use href="#i-nube"/></svg>Copiar la central ahora</button>
+          <button type="button" id="boton-copiar-central" class="boton" hidden><svg class="icono"><use href="#i-nube"/></svg>Copiar central</button>
         </div>
       </div>
       <div class="tarjeta" id="tarjeta-programa" hidden>
-        <h3>Programa de esta computadora</h3>
+        <h3>Programa</h3>
         <div id="admin-programa"></div>
         <div class="acciones">
           <button type="button" id="boton-programa-config" class="boton primario"><svg class="icono"><use href="#i-imprimir"/></svg>Impresoras y opciones</button>
-          <button type="button" id="boton-programa-respaldos" class="boton">Abrir carpeta de respaldos</button>
+          <button type="button" id="boton-programa-respaldos" class="boton">Carpeta de respaldos</button>
           <button type="button" id="boton-programa-actualizar" class="boton">Buscar actualizaciones</button>
         </div>
       </div>

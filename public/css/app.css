@@ -400,9 +400,6 @@ button { cursor: pointer; }
   border-bottom: 1px solid var(--line);
   vertical-align: middle;
 }
-.tabla tbody tr:hover td {
-  background: #f5faf6;
-}
 .tabla:not(.tabla-venta) tbody tr:nth-child(even) td { background: #fbfcfa; }
 .tabla .num, .tabla-simple .num { text-align: right; font-variant-numeric: tabular-nums; }
 
@@ -1236,3 +1233,47 @@ button.sup-chip:hover { border-color: var(--sage); }
 @media (max-width: 380px) {
   .tabla { min-width: 560px; }
 }
+
+/* ---------- Paginación de tablas (10 renglones por página) ---------- */
+.fila-fuera-de-pagina { display: none; }
+.paginador {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--sage-dark);
+}
+.paginador .boton.chico { min-width: 34px; font-size: 16px; line-height: 1; padding: 5px 10px; }
+.paginador .boton:disabled { opacity: 0.4; cursor: default; transform: none; }
+.paginador-rango { margin-left: 6px; font-size: 12px; }
+
+/* ---------- Todas las tablas: el renglón bajo el cursor se marca (y en las búsquedas, el elegido con ↑↓) ----------
+   Los renglones de aviso ("No hay…", "Cargando…": una sola celda que abarca la tabla) no se marcan. */
+.tabla tbody tr td { transition: background 0.12s ease; }
+.tabla tbody tr:not(:has(> td[colspan]:only-child)):hover td,
+.resultados-busqueda .tabla tbody tr.seleccionado td {
+  background: var(--marca-tinte);
+}
+.tabla tbody tr:not(:has(> td[colspan]:only-child)):hover td:first-child,
+.resultados-busqueda .tabla tbody tr.seleccionado td:first-child {
+  box-shadow: inset 4px 0 0 var(--marca-azul);
+}
+
+/* ---------- Cóctel (F10): inyección de siempre, buscador, lo que lleva y precio ---------- */
+/* En esta ventana nada se aplasta: si no cabe, la ventana se desplaza */
+.modal:has(#coctel-buscar) > * { flex-shrink: 0; }
+.formas-pago.opciones-coctel { grid-template-columns: 1fr; }
+.opciones-coctel .forma-pago#coctel-siempre {
+  min-height: 0; padding: 10px 14px; align-items: flex-start; text-align: left;
+}
+.opciones-coctel .forma-pago#coctel-siempre b { font-size: 14px; }
+.opciones-coctel .forma-pago#coctel-siempre span { font-size: 12px; font-weight: 700; color: var(--sage-dark); }
+.formas-pago.precios-coctel { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.precios-coctel .forma-pago { min-height: 0; padding: 8px 6px; }
+.precios-coctel .forma-pago b { font-size: 15px; }
+.subtitulo-coctel { margin: 4px 0 -4px; font-size: 13px; color: var(--sage-dark); }
+#coctel-resultados-caja { min-height: 120px; max-height: 32vh; }
